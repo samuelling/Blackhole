@@ -1,12 +1,12 @@
 # Umbra Garden
 
-A night-time light garden — fairy-lit trees, fields of glowing stalks, frosted globes, a tunnel of arches — with black holes hanging in it.
+A night-time light garden — fairy-lit trees, fields of glowing stalks, frosted globes, a tunnel of arches — with about twenty black holes of different sizes hanging in it: pinholes nesting in tree canopies that drain a single bush, house-sized ones over the paths, and a giant floating over the big meadow that you can walk beneath.
 
-Each void sleeps as a small dark bead. Walk within ~16 m and it wakes: it grows, lenses the scene behind it, twists and pulls nearby lights toward its horizon, drains the light from the ground, trees and globes around it, and draws streams of stolen light spiralling in. It also tugs on you. Walk away and the light seeps back over the next half-minute.
+Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger voids notice you from farther away — ~10 m for a pinhole, ~28 m for the giant): it grows, lenses the scene behind it, twists and pulls nearby lights toward its horizon, drains the light from the ground, trees and globes around it, and draws streams of stolen light spiralling in. It also tugs on you. Walk away and the light seeps back over the next half-minute.
 
 **Play:** open `index.html` (or the GitHub Pages site).
 
-- Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void ahead of you, **M** toggles sound.
+- Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound.
 - Touch: drag the left half to walk, the right half to look, double-tap (or the button) to open a void.
 
 ## How it works

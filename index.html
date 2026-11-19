@@ -45,7 +45,7 @@
   <div class="card">
     <div class="kicker">a night garden</div>
     <h1>Umbra <em>Garden</em></h1>
-    <p class="sub">Most light gardens are about the light. This one is about what eats it. Small dark things hang among the trees. Come close and they wake, pulling the light out of everything around them. Walk away and the light seeps back.</p>
+    <p class="sub">Most light gardens are about the light. This one is about what eats it. Dark things hang among the trees, from pinholes to ones the size of a house. Come close and they wake, pulling the light out of everything around them. Walk away and the light seeps back.</p>
     <button id="enter" disabled>loading…</button>
     <div class="keys" id="keys"></div>
   </div>
@@ -71,12 +71,12 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // ------------------------------------------------------------------ setup
-const MAXV = 8;
+const MAXV = 24;
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one'
-  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E opens a new void · M toggles sound';
+  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E opens a new void (any size) · M toggles sound';
 
 let renderer;
 try {
@@ -456,10 +456,11 @@ const streamMat = new THREE.ShaderMaterial({
     vec4 V = vec4(0.0); vec4 A = vec4(0.0); vec3 C = vec3(1.0);
     for(int i=0;i<MAXV;i++){ if(abs(float(i) - aVoid) < 0.5){ V = uVoid[i]; A = uVoidAux[i]; C = uVoidCol[i]; } }
     float wake = A.y;
-    if(wake < 0.01){ gl_Position = vec4(2.0,2.0,2.0,1.0); gl_PointSize = 0.0; vB = 0.0; vCol = vec3(0.0); return; }
+    float size = A.w;
+    if(wake < 0.01 || fract(aSeed.y*7.31) > 0.25 + 0.75*clamp(size/1.4, 0.0, 1.0)){ gl_Position = vec4(2.0,2.0,2.0,1.0); gl_PointSize = 0.0; vB = 0.0; vCol = vec3(0.0); return; }
     float ph = fract(uTime*(0.07 + 0.13*aSeed.x) + aSeed.y);
     float e = ph*ph*ph;
-    float R0 = max(A.z, 3.0)*(0.3 + 0.7*aSeed.z);
+    float R0 = max(A.z, 2.0)*(0.3 + 0.7*aSeed.z);
     float rho = mix(R0, A.x*1.03, e);
     float ang = aSeed.w*6.2831 + e*9.0 + ph*1.5;
     float h0 = -V.y + 0.1 + aSeed.x*aSeed.z*4.0;
@@ -468,7 +469,7 @@ const streamMat = new THREE.ShaderMaterial({
     vec4 mv = viewMatrix * vec4(p,1.0);
     float dist = -mv.z;
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = clamp((0.09 + 0.07*aSeed.x)*(1.0 + 0.5*e) * uPx / dist, 0.0, 22.0);
+    gl_PointSize = clamp((0.09 + 0.07*aSeed.x)*(1.0 + 0.5*e)*(0.6 + 0.4*min(size, 2.0)) * uPx / dist, 0.0, 22.0);
     float fade = smoothstep(0.0,0.2,ph)*(1.0 - smoothstep(0.92,1.0,ph));
     vB = wake * fade * (0.28 + 1.1*e) * fogF(dist);
     vCol = mix(C, vec3(0.75,0.86,1.0), e*0.8);
@@ -606,15 +607,34 @@ function avgColorNear(p, rad = 16) {
   const v = new THREE.Vector3(r / w, g / w, b / w); return v.multiplyScalar(1.15 / Math.max(v.x, v.y, v.z));
 }
 let spawnCounter = 0;
-function makeVoid(x, y, z, slot, spawned = false) {
-  const v = { home: new THREE.Vector3(x, y, z), pos: new THREE.Vector3(x, y, z), wake: 0, scar: 0, drain: 0, R: 0.22, reach: 2.5,
-    seed: rng() * 10, spawned, born: spawnCounter++, col: avgColorNear(new THREE.Vector3(x, 0.8, z)), wasAwake: false };
+function makeVoid(x, y, z, slot, k = 1, spawned = false) {
+  const v = { home: new THREE.Vector3(x, y, z), pos: new THREE.Vector3(x, y, z), wake: 0, scar: 0, drain: 0, R: 0.18 * k, reach: 2.5, k,
+    seed: rng() * 10, spawned, born: spawnCounter++, col: avgColorNear(new THREE.Vector3(x, 0.8, z), 10 + 8 * k), wasAwake: false };
   voidSlots[slot] = v; return v;
 }
-[[0, 2.6, 50], [0, 2.3, 0], [-50, 2.1, -30], [50, 2.1, 45], [-55, 2.9, 30], [41, 2.4, -24]].forEach((p, i) => makeVoid(...p, i));
+// size k: ~0.35 is a pinhole that drains one bush; 2.6 is a giant that eats a meadow
+const curated = [[0, 2.6, 50, 1.0], [0, 3.2, 0, 1.6], [-50, 6.5, -30, 2.6], [50, 3.0, 45, 1.3], [-55, 3.4, 30, 0.9], [41, 2.6, -24, 1.0]];
+curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
+{
+  const vOk = (x, z, k) => {
+    if (Math.hypot(x, z) > 86 || (z > 64 && Math.abs(x) < 12)) return false;
+    for (const v of voidSlots) if (v && Math.hypot(x - v.home.x, z - v.home.z) < 6 + 5 * (k + v.k)) return false;
+    return true;
+  };
+  let slot = curated.length, tries = 0;
+  while (slot < 20 && tries++ < 4000) {
+    const k = 0.35 + 1.6 * Math.pow(rng(), 2.2);
+    let x, y, z;
+    if (k < 1.0 && rng() < 0.45) { const t = pick(trunks); x = t.x + rr(-1.5, 1.5); z = t.z + rr(-1.5, 1.5); y = t.h + rr(1.0, 2.2); }
+    else { const a = rng() * Math.PI * 2, r = rr(10, 86); x = Math.cos(a) * r; z = Math.sin(a) * r; y = 1.5 + 1.4 * k + rr(0, 1.2); }
+    y = Math.max(y, 1.25 * k + 0.5);
+    if (!vOk(x, z, k)) continue;
+    makeVoid(x, y, z, slot++, k);
+  }
+}
 
 {
-  const PER = 520, N = PER * MAXV, seeds = new Float32Array(N * 4), vid = new Float32Array(N);
+  const PER = 400, N = PER * MAXV, seeds = new Float32Array(N * 4), vid = new Float32Array(N);
   for (let i = 0; i < N; i++) { seeds.set([rng(), rng(), rng(), rng()], i * 4); vid[i] = Math.floor(i / PER); }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
@@ -674,8 +694,8 @@ const lensMat = new THREE.ShaderMaterial({
       uv = L.xy + nd;
       float hole = 1.0 - smoothstep(rh*0.96, rh*1.03, r);
       shade *= 1.0 - hole*behind;
-      float ring = exp(-pow((r - rh*1.07)/(rh*0.05 + 0.0012), 2.0));
-      ringc += uLensC[i] * ring * 0.12 * uLensB[i].y * behind;
+      float ring = exp(-pow((r - rh*1.06)/(rh*0.025 + 0.0012), 2.0));
+      ringc += uLensC[i] * ring * 0.12 / (1.0 + rh*6.0) * uLensB[i].y * behind;
     }
     vec3 col = texture2D(tScene, uv).rgb * shade + ringc;
     float vig = smoothstep(0.3, 1.1, length((vUv - 0.5)*vec2(uAspect, 1.0))*1.25);
@@ -740,13 +760,14 @@ function chime(L) {
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.03 * L, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
   o.connect(g); g.connect(A.master); g.connect(A.send); o.start(t); o.stop(t + 2.3);
 }
-function inhale(vol) {
+function inhale(vol, k = 1) {
   const ac = A.ctx, t = ac.currentTime;
   const s = ac.createBufferSource(); s.buffer = A.noise; s.loop = true;
   const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 6;
-  f.frequency.setValueAtTime(5000, t); f.frequency.exponentialRampToValueAtTime(70, t + 3.2);
-  const g = ac.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32 * vol, t + 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + 3.6);
-  s.connect(f); f.connect(g); g.connect(A.master); g.connect(A.send); s.start(t); s.stop(t + 3.7);
+  const dur = 3.2 * Math.sqrt(k);
+  f.frequency.setValueAtTime(5000 / Math.sqrt(k), t); f.frequency.exponentialRampToValueAtTime(70 / k, t + dur);
+  const g = ac.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32 * vol, t + 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.4);
+  s.connect(f); f.connect(g); g.connect(A.master); g.connect(A.send); s.start(t); s.stop(t + dur + 0.5);
 }
 function setSound(on) {
   A.on = on; $('bSound').textContent = 'sound: ' + (on ? 'on' : 'off');
@@ -804,17 +825,18 @@ const endTouch = e => {
 canvas.addEventListener('touchend', endTouch); canvas.addEventListener('touchcancel', endTouch);
 
 function openVoid() {
+  const k = 0.4 + 1.8 * Math.pow(Math.random(), 1.6);
   const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-  const p = player.clone().addScaledVector(f, 9); p.y = 2.3;
+  const p = player.clone().addScaledVector(f, 6 + 4 * k); p.y = Math.max(2.3, 1.4 + 1.3 * k);
   if (Math.hypot(p.x, p.z) > 90) return;
-  for (const v of voidSlots) if (v && v.pos.distanceTo(p) < 6) return;
+  for (const v of voidSlots) if (v && v.pos.distanceTo(p) < 3 + 2 * (k + v.k)) return;
   let slot = voidSlots.findIndex(v => !v);
-  if (slot < 0) { // reuse the oldest of the voids you've made, else the sleepiest
-    let best = -1, score = 1e9;
-    voidSlots.forEach((v, i) => { const s = (v.spawned ? 0 : 1e6) + v.born; if (s < score) { score = s; best = i; } });
+  if (slot < 0) { // reuse the oldest void you made, else the farthest sleeping one
+    let best = -1, score = -1e9;
+    voidSlots.forEach((v, i) => { const s = v.spawned ? 1e6 - v.born : (v.wake < 0.05 ? v.pos.distanceTo(player) : -1e5); if (s > score) { score = s; best = i; } });
     slot = best;
   }
-  makeVoid(p.x, p.y, p.z, slot, true);
+  makeVoid(p.x, p.y, p.z, slot, k, true);
 }
 $('bVoid').addEventListener('click', e => { e.stopPropagation(); if (started) openVoid(); });
 $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); setSound(!A.on); });
@@ -831,7 +853,6 @@ $('enter').addEventListener('click', () => {
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
 const tmpV = new THREE.Vector3(), tmpP = new THREE.Vector3();
-const WAKE_R = 16;
 let firstWake = false;
 
 function update(dt, t) {
@@ -855,36 +876,40 @@ function update(dt, t) {
   for (const v of voidSlots) {
     if (!v) continue;
     const d = player.distanceTo(v.pos);
-    const target = started && d < WAKE_R ? 1 : 0;
+    const k = v.k, wakeR = 7 + 9 * Math.pow(k, 0.9);
+    const target = started && d < wakeR ? 1 : 0;
     const rate = target > v.wake ? 0.45 : 0.08;
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
     v.scar = Math.max(v.scar - dt / 40, v.wake);
     v.drain = Math.max(v.wake, v.scar * 0.8);
     const w = v.wake * v.wake * (3 - 2 * v.wake);
-    v.R = 0.22 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w;
-    v.reach = 2.5 + 15.5 * v.drain;
-    if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(1); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
+    v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k;
+    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85);
+    if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
     if (v.wake < 0.02) v.wasAwake = false;
     // drift toward the walker, tethered to home
     const desired = tmpP.copy(v.home);
     if (v.wake > 0.2) {
-      tmpV.set(player.x - v.home.x, 0, player.z - v.home.z); if (tmpV.length() > 8) tmpV.setLength(8); desired.add(tmpV);
+      const teth = 8 * Math.sqrt(k), keep = 3.5 + 1.5 * k;
+      tmpV.set(player.x - v.home.x, 0, player.z - v.home.z); if (tmpV.length() > teth) tmpV.setLength(teth); desired.add(tmpV);
       tmpV.set(desired.x - player.x, 0, desired.z - player.z);
-      if (tmpV.length() < 4.5) { tmpV.setLength(4.5); desired.x = player.x + tmpV.x; desired.z = player.z + tmpV.z; }
+      if (tmpV.length() < keep) { tmpV.setLength(keep); desired.x = player.x + tmpV.x; desired.z = player.z + tmpV.z; }
     }
-    desired.y = v.home.y + Math.sin(t * 0.4 + v.seed) * 0.3;
-    tmpV.subVectors(desired, v.pos); const step = (v.wake > 0.2 ? 0.4 * v.wake : 0.25) * dt;
+    desired.y = v.home.y + Math.sin(t * 0.4 + v.seed) * 0.3 * k;
+    tmpV.subVectors(desired, v.pos); const step = (v.wake > 0.2 ? 0.4 * v.wake : 0.25) / Math.sqrt(k) * dt;
     if (tmpV.length() > step) tmpV.setLength(step); v.pos.add(tmpV);
     // gravity on the walker
     tmpV.set(v.pos.x - player.x, 0, v.pos.z - player.z); const dh = tmpV.length();
-    const pull = 2.4 * w * (1 - Math.min(1, Math.max(0, (dh - 2) / 13)));
+    const pull = 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
     if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull);
-    const prox = w * Math.max(0, 1 - d / 18); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
+    const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
+  if (grav.length() > 2.8) grav.setLength(2.8);
   player.addScaledVector(move, dt).addScaledVector(grav, dt);
   // can't cross the horizon
   for (const v of voidSlots) {
     if (!v) continue;
+    if (Math.abs(v.pos.y - 1.65) > v.R + 0.8) continue;   // you can walk beneath the big ones
     tmpV.set(player.x - v.pos.x, 0, player.z - v.pos.z); const dh = tmpV.length(), minD = v.R + 1.0;
     if (dh < minD) { tmpV.setLength(minD); player.x = v.pos.x + tmpV.x; player.z = v.pos.z + tmpV.z; }
   }
@@ -905,7 +930,7 @@ function update(dt, t) {
     const lu = lensMat.uniforms;
     if (!v) { U.uVoid.value[i].set(0, -100, 0, 0); U.uVoidAux.value[i].set(0, 0, 0, 0); lu.uLens.value[i].set(0, 0, 0, 0); return; }
     U.uVoid.value[i].set(v.pos.x, v.pos.y, v.pos.z, v.drain);
-    U.uVoidAux.value[i].set(v.R, v.wake, v.reach, 0);
+    U.uVoidAux.value[i].set(v.R, v.wake, v.reach, v.k);
     U.uVoidCol.value[i].copy(v.col);
     tmpV.copy(v.pos).applyMatrix4(camera.matrixWorldInverse); const dist = -tmpV.z;
     if (dist < 0.05) { lu.uLens.value[i].set(0, 0, 0, 0); return; }
