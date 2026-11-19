@@ -4,11 +4,13 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { makeLayout, createGarden, WATER_Y } from './garden.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
 
 // ------------------------------------------------------------------ setup
-const MAXV = 24;
+const MAXV = 12;
+const QS = new URLSearchParams(location.search), LOW = QS.get('q') === 'low', TEST = QS.has('test');
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
@@ -21,7 +23,9 @@ try {
 } catch (e) {
   $('err').style.display = 'flex'; $('err').textContent = 'This garden needs WebGL, which this browser could not start.'; throw e;
 }
-const PR = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : 1.5);
+const PR_MAX = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : LOW ? 1 : 1.5);
+let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
+const MSAA = isTouch || LOW ? 0 : QS.has('msaa') ? Math.max(0, parseInt(QS.get('msaa')) || 0) : 4;
 renderer.setPixelRatio(PR);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -30,6 +34,12 @@ renderer.setClearColor(0x000000, 1);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.shadowMap.autoUpdate = false;
 document.body.prepend(renderer.domElement);
 const canvas = renderer.domElement;
+
+// scanned textures and models (about 12 MB), with progress on the entry button
+let assets;
+try { assets = await loadAssets(renderer, f => { $('enter').textContent = `loading… ${Math.round(f * 100)}%`; }); }
+catch (e) { $('err').style.display = 'flex'; $('err').textContent = 'The garden could not load its textures (' + e.message + '). Check the connection and reload.'; throw e; }
+$('enter').textContent = 'planting…'; await new Promise(r => setTimeout(r, 30));
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.15, 1000);
@@ -98,7 +108,7 @@ vec3 gshift(vec3 c, vec3 p){
   float z = clamp(log2(dilAt(p) / uPlayerF), -2.0, 2.0);
   return c * (z < 0.0 ? mix(vec3(1.0), vec3(1.0, 0.5, 0.26), min(1.0, -z * 0.55)) : mix(vec3(1.0), vec3(0.62, 0.84, 1.3), min(1.0, z * 0.45)));
 }
-vec3 groundLight(vec2 xz){ return texture2D(uLightMap, vec2(0.5 + xz.x/200.0, 0.5 - xz.y/200.0)).rgb; }
+vec3 groundLight(vec2 xz){ return texture2D(uLightMap, vec2((xz.x - (${MAP.x0.toFixed(1)}))/${MAP.s.toFixed(1)}, 1.0 - (xz.y - (${MAP.z0.toFixed(1)}))/${MAP.s.toFixed(1)})).rgb; }
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
@@ -106,12 +116,12 @@ float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
 const MOON = 'vec3(0.030,0.040,0.072)';
 
 // ------------------------------------------------------------------ light-map canvas (pools of light on the ground)
-const LM = 1024;
+const LM = isTouch ? 1024 : 2048;
 const lmCanvas = document.createElement('canvas'); lmCanvas.width = lmCanvas.height = LM;
 const lm = lmCanvas.getContext('2d'); lm.fillStyle = '#000'; lm.fillRect(0, 0, LM, LM);
 lm.globalCompositeOperation = 'lighter';
 function splat(x, z, r, c, a) {
-  const px = (x + 100) / 200 * LM, pz = (z + 100) / 200 * LM, pr = Math.max(1.5, r / 200 * LM);
+  const px = (x - MAP.x0) / MAP.s * LM, pz = (z - MAP.z0) / MAP.s * LM, pr = Math.max(1.5, r / MAP.s * LM);
   const m = Math.max(c[0], c[1], c[2], 1e-3);
   const col = `${(c[0] / m * 255) | 0},${(c[1] / m * 255) | 0},${(c[2] / m * 255) | 0}`;
   const g = lm.createRadialGradient(px, pz, 0, px, pz, pr);
@@ -122,8 +132,6 @@ function splat(x, z, r, c, a) {
 // ------------------------------------------------------------------ data collectors
 const LP = [], LC = [], LS = [], LSeed = [];
 function light(x, y, z, c, size = 0.3, b = 1.3) { LP.push(x, y, z); LC.push(c[0] * b, c[1] * b, c[2] * b); LS.push(size); LSeed.push(rng()); }
-const LN = [];   // line segments (stems, poles, frames, branches)
-function seg(a, b) { LN.push(a[0], a[1], a[2], b[0], b[1], b[2]); }
 const jit = (c, a = 0.1) => [c[0] * (1 - a + 2 * a * rng()), c[1] * (1 - a + 2 * a * rng()), c[2] * (1 - a + 2 * a * rng())];
 
 const P = {
@@ -131,129 +139,105 @@ const P = {
   cyan: [0.30, 0.80, 1.0], ice: [0.72, 0.86, 1.0], green: [0.45, 1.0, 0.55], magenta: [1.0, 0.25, 0.80], gold: [1.0, 0.82, 0.45],
 };
 
-// ------------------------------------------------------------------ paths (shared with the garden)
+// ------------------------------------------------------------------ layout (shared with the garden)
 const layout = makeLayout();
 const { loopCurve, distToPath, loopLen } = layout;
 const METAL = [];   // [a, b, radius] — drawn as dark metal tubes by the garden
 const metal = (a, b, r) => METAL.push([a, b, r]);
+const BULBS = [];   // [x, y, z, colour] — small glass bulbs under the brightest point lights
+const bulb = (x, y, z, c, size = 0.26, b = 1.5) => { light(x, y, z, c, size, b); BULBS.push([x, y, z, c]); };
 
-// ------------------------------------------------------------------ tunnel of arches (entrance)
+// ------------------------------------------------------------------ tunnel of light arches over the entrance walk
 {
-  const stops = [P.amber, P.rose, P.violet, P.cyan];
-  for (let i = 0; i < 16; i++) {
-    const z = 88 - i * 1.5, t = i / 15 * (stops.length - 1), k = Math.min(Math.floor(t), stops.length - 2), f = t - k;
+  const stops = [P.amber, P.rose, P.violet, P.cyan], T = layout.tunnel;
+  for (let i = 0; i < T.n; i++) {
+    const z = T.z0 - i * T.step, t = i / (T.n - 1) * (stops.length - 1), k = Math.min(Math.floor(t), stops.length - 2), f = t - k;
     const c = stops[k].map((v, j) => v * (1 - f) + stops[k + 1][j] * f);
-    const W = 2.2, H0 = 1.3;
-    for (let y = 0.15; y < H0; y += 0.26) { light(-W, y, z, jit(c, .05), 0.26, 1.5); light(W, y, z, jit(c, .05), 0.26, 1.5); }
+    const W = T.W, H0 = 1.3;
+    for (let y = 0.2; y < H0; y += 0.22) { bulb(-W, y, z, jit(c, .05)); bulb(W, y, z, jit(c, .05)); }
     let prev = [W, H0, z];
-    for (let a = 0; a <= 30; a++) {
-      const ang = a / 30 * Math.PI, pt = [Math.cos(ang) * W, H0 + Math.sin(ang) * W, z];
-      light(pt[0], pt[1], pt[2], jit(c, .05), 0.26, 1.5);
-      if (a) metal(prev, pt, 0.018); prev = pt;
+    for (let a = 0; a <= 32; a++) {
+      const ang = a / 32 * Math.PI, pt = [Math.cos(ang) * W, H0 + Math.sin(ang) * W, z];
+      bulb(pt[0], pt[1], pt[2], jit(c, .05));
+      if (a) metal(prev, pt, 0.016); prev = pt;
     }
-    metal([-W, 0, z], [-W, H0, z], 0.018); metal([W, 0, z], [W, H0, z], 0.018);
-    splat(-W, z, 2.6, c, 0.32); splat(W, z, 2.6, c, 0.32); splat(0, z, 3.4, c, 0.16);
+    metal([-W, 0, z], [-W, H0, z], 0.02); metal([W, 0, z], [W, H0, z], 0.02);
+    splat(-W, z, 2.6, c, 0.3); splat(W, z, 2.6, c, 0.3); splat(0, z, 3.4, c, 0.16);
   }
 }
 
-// ------------------------------------------------------------------ lanterns along the loop
+// ------------------------------------------------------------------ low path lanterns round the loop walk
 {
   const lantern = (x, z, c = P.warm) => {
-    metal([x, 0, z], [x, 1.08, z], 0.028); metal([x, 1.06, z], [x, 1.1, z], 0.06); light(x, 1.16, z, jit(c, .05), 0.6, 1.7); splat(x, z, 3.4, c, 0.42);
+    metal([x, 0, z], [x, 0.62, z], 0.02); metal([x, 0.6, z], [x, 0.66, z], 0.05); metal([x, 0.78, z], [x, 0.8, z], 0.06);
+    light(x, 0.72, z, jit(c, .05), 0.42, 1.6); splat(x, z, 2.6, c, 0.34);
   };
-  lantern(-3, 91); lantern(3, 91);
-  const n = Math.floor(loopLen / 5.5);
+  const n = Math.floor(loopLen / 7.5);
   for (let i = 0; i < n; i++) {
-    const t = i / n, p = loopCurve.getPointAt(t), tg = loopCurve.getTangentAt(t);
-    const side = i % 2 ? 1 : -1;
-    lantern(p.x + -tg.z * 2.0 * side, p.z + tg.x * 2.0 * side, i % 7 === 0 ? P.gold : P.warm);
+    const s = layout.loopS[Math.floor((i + 0.5) / n * layout.loopS.length)];
+    if (Math.abs(s.x) < 5 && s.z > 45) continue;
+    lantern(s.x - s.ox * 1.72, s.z - s.oz * 1.72, i % 5 === 0 ? P.gold : P.warm);   // on the lawn side of the walk
   }
+  for (const s of [-1, 1]) for (let z = layout.canal.z0 + 0.2; z <= layout.canal.z1; z += 3.2) lantern(s * 3.3, z, P.ice);
+  for (const [x, z] of layout.lamps) { light(x, 2.79, z, P.warm, 0.75, 2.0); splat(x, z, 6.5, P.warm, 0.5); splat(x, z, 2.2, P.gold, 0.35); }   // heads of the cast-iron lamp posts
 }
 
-// ------------------------------------------------------------------ meadows of light stalks
+// ------------------------------------------------------------------ fields of light stalks
 const meadows = [
-  { x: -50, z: -30, r: 22, n: 2200, pal: [P.amber, P.rose, P.violet, P.warm, P.magenta] },
-  { x: 50, z: 45, r: 18, n: 1400, pal: [P.cyan, P.ice, P.ice, P.violet, P.green] },
+  { ...layout.meadows[0], n: 950, pal: [P.amber, P.rose, P.violet, P.warm, P.magenta] },
+  { ...layout.meadows[1], n: 520, pal: [P.cyan, P.ice, P.ice, P.violet, P.green] },
 ];
 for (const m of meadows) {
   for (let i = 0; i < m.n; i++) {
     const a = rng() * Math.PI * 2, r = m.r * Math.sqrt(rng());
     const x = m.x + Math.cos(a) * r, z = m.z + Math.sin(a) * r;
-    if (distToPath(x, z) < 2.2) continue;
-    const h = rr(0.5, 1.25), c = jit(pick(m.pal), .08);
-    seg([x, 0, z], [x, h, z]); light(x, h + 0.03, z, c, 0.3, 1.35); splat(x, z, 1.15, c, 0.06);
+    if (distToPath(x, z) < 1.9 || Math.hypot(x - m.x, z - m.z) < 0.7) continue;
+    const h = rr(0.45, 1.2), c = jit(pick(m.pal), .08), lx = rr(-0.05, 0.05) * h, lz = rr(-0.05, 0.05) * h;
+    metal([x, 0, z], [x + lx, h, z + lz], 0.0035); light(x + lx, h + 0.02, z + lz, c, 0.28, 1.35); splat(x, z, 1.1, c, 0.055);
   }
 }
 
 // ------------------------------------------------------------------ trees wrapped in light
 const trunks = [];
-const treeSpots = [];
 const treeSpecs = [];
-function okTree(x, z, minSep) {
-  if (Math.hypot(x, z) > 88 || Math.hypot(x, z) < 19) return false;
-  if (distToPath(x, z) < 4.5) return false;
-  if (layout.isFormal(x, z) || layout.borderBand(x, z)) return false;
-  for (const m of meadows) if (Math.hypot(x - m.x, z - m.z) < m.r + 3) return false;
-  for (const t of treeSpots) if (Math.hypot(x - t[0], z - t[1]) < minSep) return false;
-  return true;
-}
-function tree(x, z, kind, c1, c2) {
-  treeSpots.push([x, z]);
-  const h = rr(2.2, 3.6), s = rr(0.8, 1.35);
+function tree(x, z, kind, c1, c2, big = 1) {
+  const h = rr(2.5, 3.4) * big, s = rr(0.95, 1.35) * big;
   trunks.push({ x, z, h, s });
-  const cy = h + rr(1.2, 2.0), A = rr(2.4, 3.8), B = rr(1.8, 2.8);
+  const cy = h + rr(1.4, 2.0) * big, A = rr(2.9, 3.6) * big, B = rr(2.1, 2.7) * big;
   const spec = { x, z, h, s, cy, A, B, kind, strands: [] }; treeSpecs.push(spec);
   const dir = () => { const v = new THREE.Vector3(rr(-1, 1), rr(-1, 1), rr(-1, 1)); return v.lengthSq() > 1 || v.lengthSq() < 1e-4 ? dir() : v.normalize(); };
-
   if (kind === 'round') {
-    for (let i = 0; i < 330; i++) {
-      const d = dir(), k = 0.72 + 0.28 * rng();
-      light(x + d.x * A * k, cy + d.y * B * k, z + d.z * A * k, jit(rng() < 0.82 ? c1 : c2, .08), 0.27, 1.45);
+    for (let i = 0; i < 300; i++) {
+      const d = dir(), k = 0.78 + 0.26 * rng();
+      light(x + d.x * A * k, cy + d.y * B * k, z + d.z * A * k, jit(rng() < 0.82 ? c1 : c2, .08), 0.25, 1.45);
     }
   } else {
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 130; i++) {
       const d = dir(); if (d.y < -0.1) d.y = -d.y * 0.5;
-      const k = 0.8 + 0.2 * rng();
-      light(x + d.x * A * k, cy + d.y * B * k, z + d.z * A * k, jit(c1, .08), 0.26, 1.4);
+      const k = 0.84 + 0.2 * rng();
+      light(x + d.x * A * k, cy + d.y * B * k, z + d.z * A * k, jit(c1, .08), 0.24, 1.4);
     }
-    for (let sI = 0; sI < 26; sI++) {
+    for (let sI = 0; sI < 24; sI++) {
       const ang = rng() * Math.PI * 2, el = rr(-0.15, 0.45);
       const sx = x + Math.cos(ang) * Math.cos(el) * A, sz = z + Math.sin(ang) * Math.cos(el) * A, sy = cy + Math.sin(el) * B;
-      const bot = rr(0.35, 1.2), N = 15;
-      let prev = [sx, sy, sz]; const strand = [prev]; spec.strands.push(strand);
+      const bot = rr(0.5, 1.3), N = 15;
+      const strand = [[sx, sy, sz]]; spec.strands.push(strand);
       for (let k = 1; k <= N; k++) {
         const u = k / N, bulge = Math.sin(u * Math.PI) * 0.35;
         const pt = [sx + Math.cos(ang) * bulge, sy + (bot - sy) * u, sz + Math.sin(ang) * bulge];
-        light(pt[0], pt[1], pt[2], jit(rng() < 0.7 ? c1 : c2, .06), 0.24, 1.4);
-        strand.push(pt); prev = pt;
+        light(pt[0], pt[1], pt[2], jit(rng() < 0.7 ? c1 : c2, .06), 0.22, 1.4);
+        metal(strand[strand.length - 1], pt, 0.003); strand.push(pt);
       }
     }
   }
   splat(x, z, A * 2.1, c1, 0.22);
 }
-const treePals = [[P.warm, P.gold], [P.magenta, P.violet], [P.green, P.cyan], [P.cyan, P.ice], [P.gold, P.amber], [P.violet, P.rose]];
 {
-  // a grove
-  let tries = 0, n = 0;
-  while (n < 13 && tries++ < 2000) {
-    const a = rng() * Math.PI * 2, r = 16 * Math.sqrt(rng()), x = -55 + Math.cos(a) * r, z = 30 + Math.sin(a) * r;
-    if (!okTree(x, z, 5.5)) continue;
-    tree(x, z, rng() < 0.55 ? 'weep' : 'round', ...(rng() < 0.6 ? [P.green, P.cyan] : [P.ice, P.cyan])); n++;
-  }
-  // a little stand near the east void
-  const east = [[48, -33], [36, -33], [52, -20]];
-  for (const [x, z] of east) if (okTree(x, z, 5)) tree(x, z, 'round', P.gold, P.amber);
-  // scattered
-  tries = 0; n = 0;
-  while (n < 20 && tries++ < 4000) {
-    const a = rng() * Math.PI * 2, r = rr(22, 88), x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x + 55, z - 30) < 20) continue;
-    if (!okTree(x, z, 7)) continue;
-    const pal = pick(treePals); tree(x, z, rng() < 0.6 ? 'round' : 'weep', pal[0], pal[1]); n++;
-  }
+  const pals = [[P.warm, P.gold], [P.green, P.cyan], [P.cyan, P.ice], [P.violet, P.rose], [P.magenta, P.violet], [P.gold, P.amber]];
+  layout.trees.forEach((t, i) => tree(t.x, t.z, t.kind, pals[i % pals.length][0], pals[i % pals.length][1], t.kind === 'weep' ? 0.92 : 1));
 }
 
-// ------------------------------------------------------------------ globe garden + hedge ring
+// ------------------------------------------------------------------ globe lawn, and globes tucked into the borders
 const globes = [];
 function addGlobe(x, z, r, c) { globes.push({ x, y: r * 0.92, z, r, c }); splat(x, z, r * 3.0, c, 0.3); }
 function globeOk(x, z, r) { for (const g of globes) if (Math.hypot(x - g.x, z - g.z) < r + g.r + 0.3) return false; return true; }
@@ -261,32 +245,24 @@ function globeOk(x, z, r) { for (const g of globes) if (Math.hypot(x - g.x, z - 
   const pal = [P.cyan, P.violet, P.magenta, P.ice, P.rose];
   let tries = 0;
   const gl = layout.globeLawn;
-  while (globes.length < 42 && tries++ < 5000) {
-    const a = rng() * Math.PI * 2, rad = (gl.r - 1) * Math.sqrt(rng()), x = gl.x + Math.cos(a) * rad, z = gl.z + Math.sin(a) * rad, r = rr(0.25, 0.85);
-    if (globeOk(x, z, r)) addGlobe(x, z, r, jit(pick(pal), .06));
+  while (globes.length < 26 && tries++ < 5000) {
+    const a = rng() * Math.PI * 2, rad = (gl.r - 0.8) * Math.sqrt(rng()), x = gl.x + Math.cos(a) * rad, z = gl.z + Math.sin(a) * rad, r = rr(0.22, 0.8);
+    if (globeOk(x, z, r) && distToPath(x, z) > 1.8 + r) addGlobe(x, z, r, jit(pick(pal), .06));
   }
-  // clusters along the path
-  const clusterAt = (cx, cz, c) => { for (let i = 0, t = 0; i < 7 && t < 80; t++) { const x = cx + rr(-2.2, 2.2), z = cz + rr(-2.2, 2.2), r = rr(0.25, 0.65); if (globeOk(x, z, r) && distToPath(x, z) > 1.8) { addGlobe(x, z, r, jit(c, .06)); i++; } } };
-  clusterAt(46, -27, P.amber);
-  for (let k = 0; k < 9; k++) {
-    const t = (k + 0.37) / 9, p = loopCurve.getPointAt(t), tg = loopCurve.getTangentAt(t), side = k % 2 ? 1 : -1, off = rr(4, 6);
-    clusterAt(p.x - tg.z * off * side, p.z + tg.x * off * side, pick([P.rose, P.gold, P.cyan, P.violet, P.green]));
-  }
+  const clusterAt = (cx, cz, c) => { for (let i = 0, t = 0; i < 4 && t < 60; t++) { const x = cx + rr(-1.3, 1.3), z = cz + rr(-1.3, 1.3), r = rr(0.2, 0.5); if (globeOk(x, z, r) && distToPath(x, z) > 1.8 + r && layout.inWalls(x, z, 0.8)) { addGlobe(x, z, r, jit(c, .06)); i++; } } };
+  for (const [x, z, c] of [[24.2, 44, P.rose], [-24.3, -2, P.gold], [24.3, 10, P.cyan], [-24.2, 28, P.violet], [12, -28.4, P.green], [-12, -28.4, P.amber], [24, -24, P.magenta]]) clusterAt(x, z, c);
 }
-const hedges = [];
+// fairy lights draped along the yew ring round the great fountain
 {
-  const R = 15.5, N = 52;
+  const R = layout.ring.r, N = 46;
   for (let i = 0; i < N; i++) {
     const a = (i + 0.5) / N * Math.PI * 2, q = ((a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
-    if (q < 0.13 || q > Math.PI / 2 - 0.13) continue;
-    const x = Math.cos(a) * R, z = Math.sin(a) * R, th = -a - Math.PI / 2;
-    hedges.push({ x, z, th });
-    const tx = Math.cos(th), tz = -Math.sin(th);
-    for (let k = 0; k < 7; k++) {
-      const u = k / 6 - 0.5, droop = 0.07 * Math.sin((u + 0.5) * Math.PI);
-      light(x + tx * u * 1.85, 1.74 - droop, z + tz * u * 1.85, jit(rng() < 0.85 ? P.gold : P.warm, .05), 0.22, 1.3);
+    if (q < layout.ring.gap + 0.02 || q > Math.PI / 2 - layout.ring.gap - 0.02) continue;
+    for (const side of [-1, 1]) for (let k = 0; k < 6; k++) {
+      const aa = a + (k / 6 - 0.5) * (Math.PI * 2 / N), droop = 0.1 * Math.sin((k + 0.5) / 6 * Math.PI), rad = R + side * 0.5;
+      light(Math.cos(aa) * rad, 1.56 - droop, Math.sin(aa) * rad, jit(rng() < 0.85 ? P.gold : P.warm, .05), 0.2, 1.3);
     }
-    splat(x, z, 2.1, P.gold, 0.12);
+    splat(Math.cos(a) * R, Math.sin(a) * R, 2.0, P.gold, 0.12);
   }
 }
 
@@ -373,7 +349,7 @@ const streamMat = new THREE.ShaderMaterial({
   uniforms: { ...U },
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   vertexShader: COMMON + /* glsl */`
-  uniform float uPx;
+  uniform float uPx; uniform float uDay;
   attribute vec4 aSeed; attribute float aVoid;
   varying vec3 vCol; varying float vB;
   void main(){
@@ -395,7 +371,7 @@ const streamMat = new THREE.ShaderMaterial({
     gl_Position = projectionMatrix * mv;
     gl_PointSize = clamp((0.09 + 0.07*aSeed.x)*(1.0 + 0.5*e)*(0.6 + 0.4*min(size, 2.0)) * uPx / dist, 0.0, 22.0);
     float fade = smoothstep(0.0,0.2,ph)*(1.0 - smoothstep(0.92,1.0,ph));
-    vB = wake * fade * (0.28 + 1.1*e) * fogF(dist) * (0.6 + 0.4*uLightGain);
+    vB = wake * fade * (0.28 + 1.1*e) * fogF(dist) * (0.6 + 0.4*uLightGain) * mix(1.0, 0.3, uDay);   // faint by day
     vCol = mix(C, vec3(0.75,0.86,1.0), e*0.8);
   }`,
   fragmentShader: pointsMat.fragmentShader,
@@ -445,10 +421,6 @@ const globeMat = new THREE.ShaderMaterial({
   const pts = new THREE.Points(g, pointsMat); pts.frustumCulled = false; pts.renderOrder = 2; scene.add(pts);
 }
 {
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(LN, 3));
-  scene.add(new THREE.LineSegments(g, silhouetteMat([0.13, 0.12, 0.10])));
-}
-{
   const im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 28, 18), globeMat, globes.length);
   const m = new THREE.Matrix4(), col = new THREE.Color();
   globes.forEach((g, i) => { m.compose(new THREE.Vector3(g.x, g.y, g.z), new THREE.Quaternion(), new THREE.Vector3(g.r, g.r, g.r)); im.setMatrixAt(i, m); im.setColorAt(i, col.setRGB(...g.c)); });
@@ -456,18 +428,26 @@ const globeMat = new THREE.ShaderMaterial({
 }
 
 // sky, stars, moon
+const starPR = { value: PR };
+const CLOUD_GLSL = `
+    float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
+    float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
+      return smoothstep(0.47, 0.74, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }`;
 let moon, envSkyMat;
 const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
-    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF;
+    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF; uniform float uTime;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+    float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
+    float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
+      return smoothstep(0.47, 0.74, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }
     void main(){
       vec3 d = normalize(vD);
       vec3 c = mix(vec3(0.014,0.018,0.032), vec3(0.0015,0.002,0.006), smoothstep(-0.02, 0.55, d.y));
@@ -480,13 +460,21 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
       c += (vec3(1.0,0.42,0.16)*pow(sd, 4.0) + vec3(0.32,0.16,0.30)*0.5) * low * uTwi;
       float up = smoothstep(-0.03, 0.02, uSunDir.y);
       c += vec3(1.0,0.9,0.75) * (pow(sd, 1400.0)*40.0*(1.0 - uNoSun) + pow(sd, 14.0)*0.35*uDay + pow(sd, 3.0)*0.08*uDay) * up;
+      { // broken cloud: lit and self-shadowed from the sun (or faintly by the moon), warm underneath at dusk
+        float cl = cloudAt(d, uTime);
+        if (cl > 0.0) { vec3 Ld = uSunDir.y > -0.05 ? uSunDir : normalize(vec3(-0.25, 0.38, -1.0));
+          float sh = cloudAt(normalize(d + Ld*0.07), uTime), lit = 1.0 - 0.6*sh;
+          vec3 cd = mix(vec3(0.5, 0.55, 0.63), vec3(1.0, 0.98, 0.95), lit) * (0.75 + 0.5*pow(sd, 3.0));
+          vec3 cn = vec3(0.011, 0.014, 0.024) * (0.5 + 0.9*lit);
+          vec3 cc = mix(cn, cd, uDay) + vec3(1.0, 0.45, 0.2) * lit * uTwi * (0.35 + 0.9*pow(sd, 2.0));
+          c = mix(c, cc, cl * 0.9); } }
       c *= mix(vec3(1.0), vec3(0.8, 0.93, 1.35), clamp(log2(1.0 / uPlayerF) * 0.35, 0.0, 1.0));   // the sky, blueshifted when you sit deep in a well
       gl_FragColor = vec4(c, 1.0);
     }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 } };
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime };
 
   const N = 2200, pos = [], col = [], sz = [], sd = [];
   for (let i = 0; i < N; i++) {
@@ -501,9 +489,12 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
   g.setAttribute('aSize', new THREE.Float32BufferAttribute(sz, 1));
   g.setAttribute('aSeed', new THREE.Float32BufferAttribute(sd, 1));
   const stars = new THREE.Points(g, new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uPR: { value: PR }, uStarGain: U.uStarGain }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; attribute vec3 aColor; attribute float aSize; attribute float aSeed; varying vec3 vC;
-      void main(){ vC = aColor*(0.7+0.3*sin(uTime*(1.0+aSeed*3.0)+aSeed*90.0)) * smoothstep(-0.05, 0.12, normalize(position).y) * uStarGain;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+    float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }` + CLOUD_GLSL + `
+      void main(){ vC = aColor*(0.7+0.3*sin(uTime*(1.0+aSeed*3.0)+aSeed*90.0)) * smoothstep(-0.05, 0.12, normalize(position).y) * uStarGain * (1.0 - 0.94*cloudAt(normalize(position), uTime));
       gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize = aSize*uPR; }`,
     fragmentShader: `varying vec3 vC; void main(){ vec2 q=gl_PointCoord*2.0-1.0; float r2=dot(q,q); if(r2>1.0) discard; gl_FragColor=vec4(vC*exp(-r2*3.0),1.0); }`,
   }));
@@ -516,11 +507,11 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
 
 // ------------------------------------------------------------------ the garden itself
 scene.fog = new THREE.FogExp2(0x000000, U.uFogDensity.value);
-const garden = createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, metalSegs: METAL, isTouch });
+const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, isTouch, low: LOW, grassScale: parseFloat(QS.get('grass')) || 1 });
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true; sunLight.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
-Object.assign(sunLight.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 320 });
-sunLight.shadow.bias = -0.0005; sunLight.shadow.normalBias = 0.03;
+Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
+sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.024;
 scene.add(sunLight, sunLight.target);
 const hemi = new THREE.HemisphereLight(0x5a6a90, 0x1a1612, 0.15); scene.add(hemi);
 const MOON_DIR = new THREE.Vector3(-0.25, 0.38, -1).normalize();
@@ -552,26 +543,9 @@ function makeVoid(x, y, z, slot, k = 1, spawned = false) {
   voidSlots[slot] = v; return v;
 }
 // size k: ~0.35 is a pinhole that drains one bush; 2.6 is a giant that eats a meadow
-const curated = [[0, 2.6, 50, 1.0], [0, 12.5, 0, 3.4], [-50, 6.5, -30, 2.6], [50, 3.0, 45, 1.3], [-55, 3.4, 30, 0.9], [41, 2.6, -24, 1.0]];
+const curated = layout.voids;
 curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
 const GIANT = 1; voidSlots[GIANT].giant = true;   // the great one, above the grand fountain
-{
-  const vOk = (x, z, k) => {
-    if (Math.hypot(x, z) > 86 || (z > 64 && Math.abs(x) < 12)) return false;
-    for (const v of voidSlots) if (v && Math.hypot(x - v.home.x, z - v.home.z) < 6 + 5 * (k + v.k)) return false;
-    return true;
-  };
-  let slot = curated.length, tries = 0;
-  while (slot < 20 && tries++ < 4000) {
-    const k = 0.35 + 1.6 * Math.pow(rng(), 2.2);
-    let x, y, z;
-    if (k < 1.0 && rng() < 0.45) { const t = pick(trunks); x = t.x + rr(-1.5, 1.5); z = t.z + rr(-1.5, 1.5); y = t.h + rr(1.0, 2.2); }
-    else { const a = rng() * Math.PI * 2, r = rr(10, 86); x = Math.cos(a) * r; z = Math.sin(a) * r; y = 1.5 + 1.4 * k + rr(0, 1.2); }
-    y = Math.max(y, 1.25 * k + 0.5);
-    if (!vOk(x, z, k)) continue;
-    makeVoid(x, y, z, slot++, k);
-  }
-}
 
 {
   const counts = Array.from({ length: MAXV }, (_, i) => i === GIANT ? (isTouch ? 1500 : 3200) : 400), N = counts.reduce((a, b) => a + b, 0), seeds = new Float32Array(N * 4), vid = new Float32Array(N);
@@ -623,17 +597,63 @@ function drainAtJS(p) {
 }
 
 // ------------------------------------------------------------------ post: gravitational lensing → bloom → output
-let rt;
+let rt, aoRT, aoRT2, bufW = 1, bufH = 1;
 function makeRT() {
-  if (rt) { rt.depthTexture.dispose(); rt.dispose(); }
-  const w = Math.floor(innerWidth * PR), h = Math.floor(innerHeight * PR);
-  rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType });
+  if (rt) { rt.depthTexture.dispose(); rt.dispose(); aoRT.dispose(); aoRT2.dispose(); }
+  const w = bufW = Math.floor(innerWidth * PR), h = bufH = Math.floor(innerHeight * PR);
+  rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: MSAA });   // multisampled: with alpha-to-coverage this smooths every leaf edge
   rt.depthTexture = new THREE.DepthTexture(w, h); rt.depthTexture.type = THREE.UnsignedIntType;
+  const o = { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+  aoRT = new THREE.WebGLRenderTarget(Math.ceil(w / 2), Math.ceil(h / 2), o); aoRT2 = new THREE.WebGLRenderTarget(Math.ceil(w / 2), Math.ceil(h / 2), o);
 }
 makeRT();
+// ambient occlusion from the depth buffer alone (half resolution): darkens creases, the foot of walls, the inside of hedges and borders
+const AO_ON = !isTouch && !LOW && QS.get('ao') !== '0';
+const FS_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+const aoMat = new THREE.ShaderMaterial({
+  uniforms: { tDepth: { value: rt.depthTexture }, uTexel: { value: new THREE.Vector2() }, uProj: { value: new THREE.Vector2() }, uNear: { value: camera.near }, uFar: { value: camera.far } },
+  depthTest: false, depthWrite: false, vertexShader: FS_VS,
+  fragmentShader: /* glsl */`
+  uniform sampler2D tDepth; uniform vec2 uTexel, uProj; uniform float uNear, uFar; varying vec2 vUv;
+  float lin(vec2 uv){ return (uNear*uFar)/(uFar - (uFar - uNear)*texture2D(tDepth, uv).x); }
+  vec3 posAt(vec2 uv){ float z = lin(uv); return vec3((uv*2.0 - 1.0)*uProj*z, -z); }
+  void main(){
+    vec3 pc = posAt(vUv); float z = -pc.z;
+    if (z > 70.0) { gl_FragColor = vec4(1.0, z, 0.0, 1.0); return; }
+    vec3 pr = posAt(vUv + vec2(uTexel.x, 0.0)), pl = posAt(vUv - vec2(uTexel.x, 0.0)), pu = posAt(vUv + vec2(0.0, uTexel.y)), pd = posAt(vUv - vec2(0.0, uTexel.y));
+    vec3 dx = abs(pr.z - pc.z) < abs(pc.z - pl.z) ? pr - pc : pc - pl, dy = abs(pu.z - pc.z) < abs(pc.z - pd.z) ? pu - pc : pc - pd;
+    vec3 n = normalize(cross(dx, dy));
+    float R = 0.6, rs = R / (z * 2.0 * uProj.y);                                  // sample disc radius in uv (y)
+    float ang = 6.2831 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))), occ = 0.0;
+    for (int i = 0; i < 12; i++) {
+      float fi = (float(i) + 0.5) / 12.0, a = ang + fi * 6.2831 * 3.3, rr = rs * sqrt(fi);
+      vec3 v = posAt(vUv + vec2(cos(a) * rr * uProj.y / uProj.x, sin(a) * rr)) - pc;
+      float d2 = dot(v, v);
+      occ += max(dot(v, n) - 0.012 * z - 0.01, 0.0) / (d2 + 0.004) * max(0.0, 1.0 - d2 / (R * R));
+    }
+    float ao = clamp(1.0 - occ * (0.8 / 12.0), 0.0, 1.0);
+    gl_FragColor = vec4(mix(ao, 1.0, smoothstep(40.0, 70.0, z)), z, 0.0, 1.0);
+  }`,
+});
+const aoBlurMat = new THREE.ShaderMaterial({
+  uniforms: { tAO: { value: null }, uTexel: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false, vertexShader: FS_VS,
+  fragmentShader: `uniform sampler2D tAO; uniform vec2 uTexel; varying vec2 vUv;
+    void main(){ vec2 c = texture2D(tAO, vUv).rg; float s = 0.0, w = 0.0;
+      for (int j = -2; j < 2; j++) for (int i = -2; i < 2; i++) { vec2 q = texture2D(tAO, vUv + (vec2(float(i), float(j)) + 0.5) * uTexel).rg; float k = exp(-abs(q.g - c.g) / (0.04 * c.g + 0.02)); s += q.r * k; w += k; }
+      gl_FragColor = vec4(s / max(w, 1e-4), c.g, 0.0, 1.0); }`,
+});
+const aoQuad = new FullScreenQuad(aoMat), aoBlurQuad = new FullScreenQuad(aoBlurMat);
+function renderAO() {
+  if (!AO_ON) return;
+  const th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  aoMat.uniforms.uProj.value.set(th * camera.aspect, th); aoMat.uniforms.uTexel.value.set(1 / aoRT.width, 1 / aoRT.height); aoBlurMat.uniforms.uTexel.value.copy(aoMat.uniforms.uTexel.value);
+  aoMat.uniforms.tDepth.value = rt.depthTexture;
+  renderer.setRenderTarget(aoRT); aoQuad.render(renderer);
+  aoBlurMat.uniforms.tAO.value = aoRT.texture; renderer.setRenderTarget(aoRT2); aoBlurQuad.render(renderer);
+}
 const lensMat = new THREE.ShaderMaterial({
   uniforms: {
-    tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture },
+    tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture }, tAO: { value: aoRT2.texture }, uAO: { value: AO_ON ? 0.85 : 0 },
     uLens: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensB: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensC: { value: Array.from({ length: MAXV }, () => new THREE.Vector3()) },
@@ -642,7 +662,7 @@ const lensMat = new THREE.ShaderMaterial({
   depthTest: false, depthWrite: false,
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform sampler2D tDepth;
+  uniform sampler2D tScene; uniform sampler2D tDepth; uniform sampler2D tAO; uniform float uAO;
   uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform vec3 uLensC[${MAXV}];
   uniform float uAspect, uNear, uFar, uDark;
   varying vec2 vUv;
@@ -668,7 +688,10 @@ const lensMat = new THREE.ShaderMaterial({
       float ring = exp(-pow((r - rh*1.06)/(rh*0.025 + 0.0012), 2.0));
       ringc += uLensC[i] * ring * 0.12 / (1.0 + rh*6.0) * uLensB[i].y * behind;
     }
-    vec3 col = texture2D(tScene, uv).rgb * shade + ringc;
+    uv = 1.0 - abs(1.0 - abs(uv));   // light bent in from beyond the frame: mirror, rather than smear the edge pixels
+    vec3 col = texture2D(tScene, uv).rgb;
+    if (uAO > 0.0) { float lum = max(col.r, max(col.g, col.b)); col *= mix(mix(1.0, texture2D(tAO, uv).r, uAO), 1.0, smoothstep(0.9, 2.8, lum)); }   // lights and glows are not occluded
+    col = col * shade + ringc;
     float vig = smoothstep(0.3, 1.1, length((vUv - 0.5)*vec2(uAspect, 1.0))*1.25);
     col *= 1.0 - vig*(0.3 + 0.6*uDark);
     gl_FragColor = vec4(col, 1.0);
@@ -689,7 +712,11 @@ const holeMat = new THREE.ShaderMaterial({
       for(int i=0;i<${MAXV};i++){ vec4 L = uLens[i]; if(L.z <= 0.0) continue; float wR = uLensB[i].x;
         float behind = smoothstep(L.w - wR*1.2, L.w + wR*0.4, pz); vec2 d = vUv - L.xy; d.x *= uAspect;
         shade *= 1.0 - (1.0 - smoothstep(L.z*0.8, L.z*0.99, length(d))) * behind; }
-      gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb * shade, 1.0);
+      vec3 c = texture2D(tDiffuse, vUv).rgb * shade;
+      // grade: a touch more colour, cool shadows and warm highlights
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = max(mix(vec3(l), c, 1.1), 0.0);
+      c *= mix(vec3(0.95, 1.0, 1.06), vec3(1.04, 1.0, 0.95), smoothstep(0.015, 0.7, l));
+      gl_FragColor = vec4(c, 1.0);
     }`,
 });
 composer.addPass(new ShaderPass(holeMat));
@@ -699,7 +726,7 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   bloom.resolution.set(innerWidth / 2, innerHeight / 2);
-  makeRT(); lensMat.uniforms.tScene.value = rt.texture; lensMat.uniforms.tDepth.value = rt.depthTexture; holeMat.uniforms.tDepth.value = rt.depthTexture;
+  makeRT(); lensMat.uniforms.tScene.value = rt.texture; lensMat.uniforms.tDepth.value = rt.depthTexture; lensMat.uniforms.tAO.value = aoRT2.texture; holeMat.uniforms.tDepth.value = rt.depthTexture;
 }
 addEventListener('resize', onResize);
 
@@ -763,7 +790,7 @@ function setSound(on) {
 }
 
 // ------------------------------------------------------------------ controls
-const player = new THREE.Vector3(0, 1.65, 93);
+const player = new THREE.Vector3(layout.start.x, 1.65, layout.start.z);
 let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
 const keys = new Set();
 const grav = new THREE.Vector3();
@@ -953,7 +980,7 @@ function update(dt, t) {
   for (const v of voidSlots) {
     if (!v) continue;
     const d = player.distanceTo(v.pos);
-    const k = v.k, wakeR = v.giant ? 42 : 7 + 9 * Math.pow(k, 0.9);
+    const k = v.k, wakeR = v.giant ? 25 : 5.5 + 7 * Math.pow(k, 0.9);
     let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
     const rate = target > v.wake ? 0.45 : 0.08;
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
@@ -961,7 +988,7 @@ function update(dt, t) {
     v.drain = Math.max(v.wake, v.scar * 0.8);
     const w = v.wake * v.wake * (3 - 2 * v.wake);
     v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k;
-    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); if (v.giant) v.reach = Math.min(v.reach, 38);
+    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); v.reach = Math.min(v.reach, v.giant ? 21 : 13);
     if (v.giant) { if (!v.wasAwake && v.wake > 0.6) { v.wasAwake = true; if (A.ctx && A.on) inhale(1.4, 3.5); } if (v.wake < 0.5) v.wasAwake = false; }
     else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
     if (v.wake < 0.02) v.wasAwake = false;
@@ -978,7 +1005,7 @@ function update(dt, t) {
     if (tmpV.length() > step) tmpV.setLength(step); v.pos.add(tmpV);
     // gravity on the walker
     tmpV.set(v.pos.x - player.x, 0, v.pos.z - player.z); const dh = tmpV.length();
-    const pull = v.giant ? 1.25 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 30))) : 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
+    const pull = v.giant ? 1.25 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 19))) : 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
     if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull);
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
@@ -996,8 +1023,7 @@ function update(dt, t) {
     tmpV.set(player.x - v.pos.x, 0, player.z - v.pos.z); const dh = tmpV.length(), minD = v.R + 1.0;
     if (dh < minD) { tmpV.setLength(minD); player.x = v.pos.x + tmpV.x; player.z = v.pos.z + tmpV.z; }
   }
-  const pr = Math.hypot(player.x, player.z); if (pr > 92) { player.x *= 92 / pr; player.z *= 92 / pr; }
-  if (player.z > 95) player.z = 95;
+  player.x = Math.max(layout.B.x0 + 0.4, Math.min(layout.B.x1 - 0.4, player.x)); player.z = Math.max(layout.B.z0 + 0.4, Math.min(layout.B.z1 - 0.4, player.z));
 
   const moving = Math.min(1, Math.hypot(mx, mz));
   bobPhase += dt * moving * speed * 2.2;
@@ -1006,7 +1032,7 @@ function update(dt, t) {
   camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
   U.uGust.value = 0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0);
-  { const S = 68 / sunLight.shadow.mapSize.x;
+  { const S = 52 / sunLight.shadow.mapSize.x;
     sunLight.target.position.set(Math.round(player.x / S) * S, 0, Math.round(player.z / S) * S);
     sunLight.position.copy(sunLight.target.position).addScaledVector(lightDir, 160); sunLight.target.updateMatrixWorld(); }
   U.uPx.value = (innerHeight * PR) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
@@ -1054,17 +1080,23 @@ function update(dt, t) {
   }
 }
 
+let slowT = 1 / 60, prAt = 0;
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
   applyTimeOfDay();
   if (!started) { yaw = Math.sin(t * 0.07) * 0.12; pitch = 0.04 + Math.sin(t * 0.05) * 0.02; }
   update(dt, t);
   garden.update(dt, t, camera);
-  garden.preRender(camera);
+  garden.preRender(camera, bufW, bufH);
   renderer.shadowMap.needsUpdate = true;
-  renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  renderer.setRenderTarget(rt); renderer.render(scene, camera);
+  renderAO();
+  renderer.setRenderTarget(null);
   composer.render(dt);
+  // adaptive resolution: if frames run slow for a while, render fewer pixels (never under test)
+  if (started && !TEST) { slowT = slowT * 0.97 + rawDt * 0.03; if (t - prAt > 2.5 && slowT > 1 / 40 && PR > 0.7) { PR = Math.max(0.7, PR * 0.86); prAt = t; slowT = 1 / 60;
+    renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); } } else prAt = t + 3;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
