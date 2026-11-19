@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
+import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -63,6 +64,9 @@ attribute vec4 aRect;
 #ifdef DISC
 attribute vec2 aShape;
 #endif
+#ifdef FLORET
+attribute vec3 aCol2; varying vec3 vCol2;
+#endif
 `;
   const VPROJ = `
 vec4 wp = vec4(transformed, 1.0);
@@ -89,20 +93,42 @@ if (uSway > 0.0) {
 vWPos = wp.xyz;
 vec4 mvPosition = viewMatrix * wp;
 gl_Position = projectionMatrix * mvPosition;`;
-  const FHEAD = COMMON + `\nuniform float uExhibit; varying vec3 vWPos;\n`;
-  const FDRAIN = `{
+  const FHEAD = COMMON + `\nuniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; varying vec3 vWPos;\n#ifdef FLORET\nvarying vec3 vCol2;\n#endif\n`;
+  const FDRAIN = `
+#ifdef TRANSLUCENT
+{ vec3 Lv = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+  float bl = max(dot(-normal, Lv), 0.0);
+  float fw = pow(max(dot(normalize(vWPos - cameraPosition), uSunDir), 0.0), 4.0);
+  outgoingLight += diffuseColor.rgb * uSunCol * (0.05 * bl + 0.16 * fw) * step(0.0, uSunDir.y); }
+#endif
+{
   float Ld = drainAt(vWPos);
   vec3 exh = groundLight(vWPos.xz) * uExhibit * uLightGain * clamp(1.25 - vWPos.y * 0.12, 0.35, 1.25);
   outgoingLight = outgoingLight * mix(1.0, Ld, 0.93) + diffuseColor.rgb * exh * Ld;
+  vec3 dd = uDiskPos - vWPos; float dl = length(dd);
+  outgoingLight += diffuseColor.rgb * uDiskGlow * (0.35 + 0.65 * max(dot(normalize((viewMatrix * vec4(dd / dl, 0.0)).xyz), normal), 0.0)) / (1.0 + dl * dl / 180.0);
 }`;
   function patch(m, o = {}) {
-    m.defines = Object.assign(m.defines || {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {});
-    const key = ['g', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.key || ''].join('|');
+    m.defines = Object.assign(m.defines || {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {}, o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.barkUV ? { BARKUV: '' } : {});
+    const key = ['g', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.barkUV ? 'k' : '', o.key || ''].join('|');
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.uniforms.uSway = { value: o.sway || 0 }; sh.uniforms.uSwayH = { value: o.swayH || 0.9 };
       let v = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VHEAD).replace('#include <project_vertex>', VPROJ);
       if (o.atlas) v = v.replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef ATLAS\nvMapUv = vMapUv * aRect.zw + aRect.xy;\n#endif');
+      if (o.barkUV) v = v.replace('#include <uv_vertex>', `#include <uv_vertex>
+#ifdef BARKUV
+{ float bl = length(instanceMatrix[1].xyz), br = length(instanceMatrix[0].xyz);
+  vec2 bs = vec2(max(1.0, floor(br * 6.2832 / 0.5 + 0.5)), max(0.25, bl));
+  #ifdef USE_MAP
+  vMapUv = uv * bs;
+  #endif
+  #ifdef USE_NORMALMAP
+  vNormalMapUv = uv * bs;
+  #endif
+}
+#endif`);
+      if (o.floret) v = v.replace('#include <color_vertex>', '#include <color_vertex>\nvCol2 = aCol2;');
       if (o.disc) {
         v = v.replace('#include <begin_vertex>', `#include <begin_vertex>
 #ifdef DISC
@@ -114,7 +140,21 @@ objectNormal = normalize(vec3(-4.0 * aShape.x * position.x, 1.0, -4.0 * aShape.x
 #endif`);
       }
       sh.vertexShader = v;
-      if (!o.depth) sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + FHEAD).replace('#include <opaque_fragment>', FDRAIN + '\n#include <opaque_fragment>');
+      if (!o.depth) {
+        let f = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + FHEAD).replace('#include <opaque_fragment>', FDRAIN + '\n#include <opaque_fragment>');
+        if (o.floret) f = f.replace('#include <map_fragment>', '').replace('#include <color_fragment>', `#include <color_fragment>
+{ vec4 fm = texture2D(map, vMapUv);
+#ifdef BELL
+  if (gl_FrontFacing) diffuseColor.rgb *= fm.r * 1.25;
+  else { diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), 0.72); diffuseColor.rgb = mix(diffuseColor.rgb, vCol2, fm.b * 0.92); }
+#else
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), fm.g);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vCol2, fm.b);
+  diffuseColor.rgb *= fm.r * 1.25;
+#endif
+}`);
+        sh.fragmentShader = f;
+      }
       if (o.extra) o.extra(sh);
     };
     m.customProgramCacheKey = () => key;
@@ -153,36 +193,98 @@ function leafCard(g, x, y, ang, len, wid, shade) {
   g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = Math.max(0.6, wid * 0.12); g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -len * 0.92); g.stroke();
   g.restore();
 }
+function normalFrom(c, strength = 3, renderer) {
+  const w = c.width, h = c.height, d = c.getContext('2d').getImageData(0, 0, w, h).data, H = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) H[i] = (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) / 255 * (d[i * 4 + 3] / 255);
+  const [o, og] = canvas(w, h), img = og.createImageData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = H[y * w + (x + 1) % w] - H[y * w + (x - 1 + w) % w], dy = H[((y + 1) % h) * w + x] - H[((y - 1 + h) % h) * w + x];
+    let nx = -dx * strength, ny = dy * strength, nz = 1; const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+    const k = (y * w + x) * 4; img.data[k] = (nx * 0.5 + 0.5) * 255; img.data[k + 1] = (ny * 0.5 + 0.5) * 255; img.data[k + 2] = (nz * 0.5 + 0.5) * 255; img.data[k + 3] = 255;
+  }
+  og.putImageData(img, 0, 0); return texOf(o, renderer, { srgb: false });
+}
+function needle(g, x, y, ang, len, wid, shade) {   // a flat, slightly sickle-shaped yew needle with a pale midrib
+  g.save(); g.translate(x, y); g.rotate(ang);
+  g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(wid * 1.3, -len * 0.5, wid * 0.25, -len); g.lineTo(-wid * 0.15, -len * 0.98); g.quadraticCurveTo(-wid * 0.9, -len * 0.5, 0, 0);
+  const s = shade | 0; g.fillStyle = `rgb(${s},${s},${s})`; g.fill();
+  g.strokeStyle = `rgba(255,255,255,0.28)`; g.lineWidth = 0.7; g.beginPath(); g.moveTo(0, -1); g.lineTo(wid * 0.2, -len * 0.9); g.stroke();
+  g.restore();
+}
 function sprigTex(kind) {
-  const [c, g] = canvas(128, 128), r = PlantArt.rngOf(kind === 'yew' ? 3 : 9);
+  // yew (Taxus baccata): flat needles 1–3.5 cm, two ranks angled forward in a V, dark glossy above, pale beneath,
+  // lighter new growth at the tips. box (Buxus sempervirens): opposite, ovate, glossy leaves ~1–2.5 cm.
+  const S = 256, [c, g] = canvas(S, S), r = PlantArt.rngOf(kind === 'yew' ? 3 : 9);
   if (kind === 'yew') {
-    for (let k = 0; k < 6; k++) {
-      const x0 = 20 + r() * 88, y0 = 118, a = -Math.PI / 2 + (r() - 0.5) * 1.4, L = 70 + r() * 40;
-      const x1 = x0 + Math.cos(a) * L, y1 = y0 + Math.sin(a) * L;
-      g.strokeStyle = '#6a6a5a'; g.lineWidth = 2; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
-      for (let i = 0; i < 26; i++) { const t = i / 26, px = lerp(x0, x1, t), py = lerp(y0, y1, t);
-        for (const s of [-1, 1]) leafCard(g, px, py, a + Math.PI / 2 + s * (1.25 + r() * 0.2), 13 - t * 4, 1.8, 150 + r() * 90); }
+    for (let k = 0; k < 8; k++) {
+      const x0 = 30 + r() * 196, y0 = 250, a = -Math.PI / 2 + (r() - 0.5) * 1.3, L = 130 + r() * 90, curve = (r() - 0.5) * 0.4;
+      let px = x0, py = y0, ang = a; const pts = [];
+      for (let i = 0; i <= 40; i++) { pts.push([px, py, ang]); ang += curve / 40; px += Math.cos(ang) * L / 40; py += Math.sin(ang) * L / 40; }
+      g.strokeStyle = '#8a8a70'; g.lineWidth = 2.2; g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke();
+      for (let i = 2; i < pts.length; i++) { const [x, y, an] = pts[i], t = i / pts.length, young = t > 0.72 ? 55 : 0;
+        for (const sd of [-1, 1]) { const under = r() < 0.28; needle(g, x, y, an + Math.PI / 2 + sd * (1.0 + r() * 0.25), (24 + r() * 12) * (1 - t * 0.25), 3.2, (under ? 200 + r() * 40 : 105 + r() * 45) + young); } }
     }
   } else {
-    for (let i = 0; i < 70; i++) { const a = r() * TAU, d = Math.sqrt(r()) * 50; leafCard(g, 64 + Math.cos(a) * d, 64 + Math.sin(a) * d, r() * TAU, 13 + r() * 5, 5.5, 150 + r() * 100); }
+    for (let k = 0; k < 7; k++) {
+      const x0 = 20 + r() * 216, y0 = 250, a = -Math.PI / 2 + (r() - 0.5) * 1.5, L = 140 + r() * 80;
+      const x1 = x0 + Math.cos(a) * L, y1 = y0 + Math.sin(a) * L;
+      g.strokeStyle = '#9a9a7a'; g.lineWidth = 2; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+      for (let t = 0.12, i = 0; t < 1; t += 0.11, i++) { const x = lerp(x0, x1, t), y = lerp(y0, y1, t);
+        for (const sd of [-1, 1]) { const under = r() < 0.2, sh = under ? 205 + r() * 35 : 120 + r() * 50, ang = a + Math.PI / 2 + sd * (1.2 + r() * 0.25) + i * 0.0;
+          leafCard(g, x, y, ang, 26 + r() * 14 - t * 6, 9 + r() * 3, sh);
+          if (!under) { g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = 'rgba(255,255,255,0.32)'; g.beginPath(); g.ellipse(2.5, -14, 1.6, 8, 0.15, 0, TAU); g.fill(); g.restore(); } } }
+    }
   }
   return c;
 }
+function heartLeaf(g, x, y, ang, len, wid, shade, r) {   // small-leaved lime: heart-shaped, finely serrated, pointed tip
+  g.save(); g.translate(x, y); g.rotate(ang);
+  const N = 22, L = [], Rt = [];
+  for (let i = 0; i <= N; i++) { const t = i / N, w = wid * (0.82 * Math.sin(Math.PI * Math.pow(t, 0.75)) + 0.32 * Math.exp(-(((t - 0.1) / 0.09) ** 2))) * (1 - 0.15 * t) + (i % 2 ? 0.9 : -0.3);
+    const yy = -len * t + len * 0.07 * Math.exp(-(((t - 0.04) / 0.06) ** 2)); L.push([-w, yy]); Rt.push([w, yy]); }
+  g.beginPath(); g.moveTo(0, -len * 0.02); L.forEach(([a, b]) => g.lineTo(a, b)); g.lineTo(0, -len * 1.05); for (let i = N; i >= 0; i--) g.lineTo(Rt[i][0], Rt[i][1]); g.closePath();
+  const gr = g.createLinearGradient(-wid, 0, wid, 0), s = shade | 0;
+  gr.addColorStop(0, `rgb(${s * 0.66 | 0},${s * 0.66 | 0},${s * 0.66 | 0})`); gr.addColorStop(0.5, `rgb(${s},${s},${s})`); gr.addColorStop(1, `rgb(${s * 0.74 | 0},${s * 0.74 | 0},${s * 0.74 | 0})`);
+  g.fillStyle = gr; g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 1.1; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -len); g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,0.2)'; g.lineWidth = 0.7;
+  for (let k = 1; k <= 4; k++) { const yy = -len * k / 5.5; for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(0, yy); g.quadraticCurveTo(sd * wid * 0.4, yy - len * 0.06, sd * wid * 0.75, yy - len * 0.16); g.stroke(); } }
+  g.strokeStyle = '#7a7a6a'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, len * 0.22); g.stroke();
+  g.restore(); void r;
+}
 function clusterTex(kind) {
-  const [c, g] = canvas(256, 256), r = PlantArt.rngOf(kind === 'willow' ? 21 : 13);
+  const S = 512, [c, g] = canvas(S, S), r = PlantArt.rngOf(kind === 'willow' ? 21 : 13);
   if (kind === 'willow') {
     for (let k = 0; k < 9; k++) {
-      const x = 20 + k * 27 + r() * 8; g.strokeStyle = '#7a7460'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, 0); g.quadraticCurveTo(x + (r() - 0.5) * 20, 128, x + (r() - 0.5) * 16, 250); g.stroke();
-      for (let i = 0; i < 22; i++) { const y = 8 + i * 11 + r() * 4; leafCard(g, x + (r() - 0.5) * 6, y, Math.PI + (r() - 0.5) * 0.9, 30 + r() * 10, 3.2, 140 + r() * 110); }
+      const x = 40 + k * 54 + r() * 16; g.strokeStyle = '#7a7460'; g.lineWidth = 2.4; g.beginPath(); g.moveTo(x, 0); g.quadraticCurveTo(x + (r() - 0.5) * 40, 256, x + (r() - 0.5) * 32, 500); g.stroke();
+      for (let i = 0; i < 24; i++) { const y = 14 + i * 20 + r() * 8; leafCard(g, x + (r() - 0.5) * 10, y, Math.PI + (r() - 0.5) * 0.9, 58 + r() * 20, 6, 140 + r() * 110); }
     }
   } else {
-    g.strokeStyle = '#6a5a48'; g.lineWidth = 3; g.beginPath(); g.moveTo(128, 250); g.lineTo(128, 120); g.stroke();
-    for (let i = 0; i < 9; i++) { const a = -Math.PI / 2 + (r() - 0.5) * 2.4; g.lineWidth = 1.6; g.beginPath(); g.moveTo(128, 170 - r() * 40); g.lineTo(128 + Math.cos(a) * 90, 140 + Math.sin(a) * 90); g.stroke(); }
-    const pts = []; for (let i = 0; i < 64; i++) { const a = r() * TAU, d = Math.pow(r(), 0.6) * 104; pts.push([128 + Math.cos(a) * d, 120 + Math.sin(a) * d * 0.9, a]); }
+    g.strokeStyle = '#6a5a48'; g.lineWidth = 5; g.beginPath(); g.moveTo(256, 505); g.lineTo(256, 240); g.stroke();
+    for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (r() - 0.5) * 2.4; g.lineWidth = 2.4; g.beginPath(); g.moveTo(256, 340 - r() * 80); g.lineTo(256 + Math.cos(a) * 190, 280 + Math.sin(a) * 190); g.stroke(); }
+    const pts = []; for (let i = 0; i < 58; i++) { const a = r() * TAU, d = Math.pow(r(), 0.6) * 205; pts.push([256 + Math.cos(a) * d, 240 + Math.sin(a) * d * 0.9, a]); }
     pts.sort((a, b) => a[1] - b[1]);
-    for (const [x, y, a] of pts) leafCard(g, x, y, a + Math.PI / 2 + (r() - 0.5) * 0.9, 30 + r() * 12, 11 + r() * 4, 130 + r() * 120);
+    for (const [x, y, a] of pts) heartLeaf(g, x, y, a + Math.PI / 2 + (r() - 0.5) * 0.9, 56 + r() * 26, 24 + r() * 8, 125 + r() * 125, r);
   }
   return c;
+}
+function barkTex() {   // lime-like bark: long fissures and lumpy vertical ridges, grey-brown, with lichen
+  const W = 512, Hh = 1024, [c, g] = canvas(W, Hh), [hc, hg] = canvas(W, Hh), img = g.createImageData(W, Hh), him = hg.createImageData(W, Hh);
+  const r = PlantArt.rngOf(77), lich = []; for (let i = 0; i < 40; i++) lich.push([r(), r(), 0.015 + r() * 0.04]);
+  for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
+    const u = x / W, v = y / Hh;
+    const warp = 0.05 * Math.sin(TAU * (u * 2) + v * 7) + 0.03 * Math.sin(TAU * u * 3 + v * 17) + 0.09 * (vn2(u * 16, v * 10, 5) - 0.5) + 0.04 * (vn2(u * 48, v * 30, 6) - 0.5);
+    const ridge = 1 - Math.abs(Math.sin(Math.PI * 8 * (u + warp)));
+    const plate = (v * 14 + 0.6 * Math.sin(TAU * u * 3) + 0.4 * vn2(u * 11, v * 6, 2)) % 1, crack = plate < 0.06 ? 1 - plate / 0.06 : 0;
+    let h = Math.pow(ridge, 0.55) * (1 - 0.55 * crack) * (0.85 + 0.3 * vn2(u * 40, v * 80, 9)) + 0.08 * vn2(u * 120, v * 240, 3);
+    h = Math.max(0, Math.min(1, h));
+    let lic = 0; for (const [lu, lv, lr] of lich) { const du = Math.min(Math.abs(u - lu), 1 - Math.abs(u - lu)), d = Math.hypot(du, (v - lv) * 0.5); if (d < lr) lic = Math.max(lic, (1 - d / lr) * (vn2(u * 200, v * 200, 7) > 0.45 ? 1 : 0.3)); }
+    const fiss = 1 - h, tone = 0.9 + 0.2 * vn2(u * 6, v * 4, 8), base = [lerp(112, 40, fiss) * tone, lerp(102, 33, fiss) * tone, lerp(90, 27, fiss) * tone];
+    const col = lic > 0.2 && h > 0.45 ? [lerp(base[0], 150, lic * 0.6), lerp(base[1], 158, lic * 0.6), lerp(base[2], 120, lic * 0.6)] : base;
+    const k = (y * W + x) * 4; img.data[k] = col[0]; img.data[k + 1] = col[1]; img.data[k + 2] = col[2]; img.data[k + 3] = 255;
+    him.data[k] = him.data[k + 1] = him.data[k + 2] = h * 255; him.data[k + 3] = 255;
+  }
+  g.putImageData(img, 0, 0); hg.putImageData(him, 0, 0); return [c, hc];
 }
 
 // ======================================================================= the garden
@@ -300,7 +402,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   }
 
   // ---------------------------------------------------------------- plant atlases
-  const CELL = 256, PAD = 6;
+  const CELL = isTouch ? 256 : 384, PAD = isTouch ? 6 : 9, SUPER = isTouch ? 1 : 2;
   const atlas = (items, cols, draw) => {
     const rows = Math.ceil(items.length / cols), W = cols * CELL, H = rows * CELL, [c, g] = canvas(W, H), rects = {};
     items.forEach((k, i) => {
@@ -311,9 +413,9 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     return { tex: texOf(c, renderer, { repeat: false }), rects };
   };
   const leafKeys = Object.keys(PlantArt.LEAF);
-  const leafAtlas = atlas(leafKeys, 5, k => { const [w, h, draw] = PlantArt.LEAF[k], [c, g] = canvas(w, h); draw(g, w, h); return c; });
+  const leafAtlas = atlas(leafKeys, 5, k => { const [w, h, draw] = PlantArt.LEAF[k], [c, g] = canvas(w * SUPER, h * SUPER); g.scale(SUPER, SUPER); draw(g, w, h); return c; });
   const speciesKeys = Object.keys(LOOKS).filter(k => SIZE[k] && PlantArt.FL[LOOKS[k].flStyle]);
-  const flAtlas = atlas(speciesKeys, 8, k => { const L = LOOKS[k], F = PlantArt.FL[L.flStyle], [w, h] = F.size || [256, 256], [c, g] = canvas(w, h); g.save(); F.paint(g, L, w, h); g.restore(); return c; });
+  const flAtlas = atlas(speciesKeys, 8, k => { const L = LOOKS[k], F = PlantArt.FL[L.flStyle], [w, h] = F.size || [256, 256], [c, g] = canvas(w * SUPER, h * SUPER); g.scale(SUPER, SUPER); g.save(); F.paint(g, L, w, h); g.restore(); return c; });
 
   const art = PlantArt.make(THREE);
   const discGeo = (() => {   // flat polar mesh, double-sided with upper normals; the shader cups/reflexes it per species
@@ -331,25 +433,67 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     ball: PlantArt.crossGeo(THREE, 3, true, true), sphere: new THREE.IcosahedronGeometry(0.5, 1), spike: PlantArt.crossGeo(THREE, 3, false, false),
     stem: new THREE.CylinderGeometry(1, 1, 1, 5, 1, true).translate(0, 0.5, 0),
   };
-  const leafMat = P.std({ map: leafAtlas.tex, alphaTest: 0.4, roughness: 0.72, side: THREE.DoubleSide }, { sway: 1, atlas: true });
-  const flMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true });
-  const flDiscMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, disc: true });
+  const leafMat = P.std({ map: leafAtlas.tex, alphaTest: 0.4, roughness: 0.72, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true });
+  const flMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true });
+  const flDiscMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, disc: true, translucent: true });
   const stemMat = P.std({ roughness: 0.8 }, { sway: 1 });
   const MATS = { leafC: leafMat, leafS: leafMat, disc: flDiscMat, ball: flMat, sphere: flMat, spike: flMat, stem: stemMat };
   const DEPTHS = { leafC: P.depth(leafAtlas.tex, { sway: 1, atlas: true }), leafS: null, disc: P.depth(flAtlas.tex, { sway: 1, atlas: true, disc: true }), ball: P.depth(flAtlas.tex, { sway: 1, atlas: true }), sphere: null, spike: null, stem: P.depth(null, { sway: 1 }) };
   DEPTHS.leafS = DEPTHS.leafC; DEPTHS.sphere = DEPTHS.spike = DEPTHS.ball;
+  const FL3 = buildFlowers3D(), F3TYPES = Object.keys(FL3);
+  for (const t of F3TYPES) {
+    GEOS[t] = FL3[t].geo;
+    MATS[t] = P.std({ map: FL3[t].mask, side: THREE.DoubleSide, roughness: t === 'rose' || t === 'peony' ? 0.6 : 0.5 }, { sway: 1, floret: true, bell: t === 'bell', translucent: true, key: 'f3' + t });
+    DEPTHS[t] = DEPTHS.stem;
+  }
   const TYPES = Object.keys(GEOS);
 
   const CH = 16, buckets = new Map();
   const bucket = (x, z) => {
     const i = Math.floor(x / CH), j = Math.floor(z / CH), k = i + ',' + j;
-    let b = buckets.get(k); if (!b) { b = { x: (i + 0.5) * CH, z: (j + 0.5) * CH }; for (const t of TYPES) b[t] = { m: [], c: [], r: [], s: [], n: 0 }; buckets.set(k, b); }
+    let b = buckets.get(k); if (!b) { b = { x: (i + 0.5) * CH, z: (j + 0.5) * CH }; for (const t of TYPES) b[t] = { m: [], c: [], r: [], s: [], c2: [], n: 0 }; buckets.set(k, b); }
     return b;
   };
   const _m = new THREE.Matrix4(), _p = new V3(), _a = new V3(), _b = new V3(), _s = new V3(), _q = new Q(), _qr = new Q(), _c = new THREE.Color();
-  function push(B, p, q, s, c, rect, shape) {
+  function push(B, p, q, s, c, rect, shape, c2) {
     _m.compose(p, q, s); const e = _m.elements; for (let i = 0; i < 16; i++) B.m.push(e[i]);
-    B.c.push(c.r, c.g, c.b); if (rect) B.r.push(rect[0], rect[1], rect[2], rect[3]); if (shape) B.s.push(shape[0], shape[1]); B.n++;
+    B.c.push(c.r, c.g, c.b); if (rect) B.r.push(rect[0], rect[1], rect[2], rect[3]); if (shape) B.s.push(shape[0], shape[1]); if (c2) B.c2.push(c2.r, c2.g, c2.b); B.n++;
+  }
+  // florets along a spire (delphinium, lupine, foxglove) — see flowers3d.js for the morphology
+  const _mb = new THREE.Matrix4(), _ex = new V3(), _ey = new V3(), _ez = new V3(), _e1 = new V3(), _e2 = new V3(), _O = new V3(), _F = new V3(), _P = new V3(), _X = new V3(1, 0, 0);
+  const GREEN = new THREE.Color('#6a8a4a'), _c3 = new THREE.Color(), _c4 = new THREE.Color();
+  function frameZ(z, yHint, out) { _ez.copy(z).normalize(); _ey.copy(yHint).addScaledVector(_ez, -yHint.dot(_ez)).normalize(); _ex.crossVectors(_ey, _ez); _mb.makeBasis(_ex, _ey, _ez); return out.setFromRotationMatrix(_mb); }
+  function frameY(y, zHint, out) { _ey.copy(y).normalize(); _ez.copy(zHint).addScaledVector(_ey, -zHint.dot(_ey)).normalize(); _ex.crossVectors(_ey, _ez); _mb.makeBasis(_ex, _ey, _ez); return out.setFromRotationMatrix(_mb); }
+  function spireFlorets(type, bk, P0, A, Ls, c1, c2, r, stemCol) {
+    _q.setFromUnitVectors(_Y, A); _s.set(0.0042, Ls, 0.0042); push(bk.stem, P0, _q, _s, stemCol);
+    _e1.crossVectors(A, Math.abs(A.y) < 0.95 ? _Y : _X).normalize(); _e2.crossVectors(A, _e1);
+    const out = phi => _O.copy(_e1).multiplyScalar(Math.cos(phi)).addScaledVector(_e2, Math.sin(phi));
+    const budCol = _c4.copy(c1).lerp(GREEN, 0.55);
+    const budAt = (t, phi, sz) => { out(phi); _P.copy(P0).addScaledVector(A, Ls * (0.05 + 0.95 * t)).addScaledVector(_O, 0.005); frameY(_F.copy(A).addScaledVector(_O, 0.25), _O, _q); _s.set(sz, sz * 2.4, sz); push(bk.bud, _P, _q, _s, budCol, null, null, c2); };
+    if (type === 'delph') {
+      const n = clamp(Math.round(Ls / 0.02), 12, 40);
+      for (let i = 0; i < n; i++) { const t = i / n, phi = i * 2.39996;
+        if (t > 0.86) { budAt(t, phi, 0.014 * (1 - (t - 0.86) * 2)); continue; }
+        out(phi); _F.copy(_O).multiplyScalar(0.94).addScaledVector(A, 0.34);
+        _P.copy(P0).addScaledVector(A, Ls * (0.05 + 0.95 * t)).addScaledVector(_O, 0.012); frameZ(_F, A, _q);
+        const d = 0.056 * (1 - 0.42 * t) * (0.9 + 0.2 * r()); _s.set(d, d, d); push(bk.delph, _P, _q, _s, _c3.copy(c1).multiplyScalar(0.88 + 0.24 * r()), null, null, c2); }
+    } else if (type === 'lupin') {
+      const nW = clamp(Math.round(Ls / 0.022), 8, 18);
+      for (let w = 0; w < nW; w++) { const t = w / nW, m = t < 0.6 ? 5 : 4;
+        for (let k = 0; k < m; k++) { const phi = k / m * TAU + w * 0.62;
+          if (t > 0.8) { budAt(t, phi, 0.007); continue; }
+          out(phi); _F.copy(_O).multiplyScalar(0.97).addScaledVector(A, -0.22);
+          _P.copy(P0).addScaledVector(A, Ls * (0.04 + 0.96 * t)).addScaledVector(_O, 0.011); frameZ(_F, A, _q);
+          const d = 0.024 * (1 - 0.35 * t); _s.set(d, d, d); push(bk.lupin, _P, _q, _s, _c3.copy(c1).multiplyScalar(0.9 + 0.2 * r()), null, null, c2); } }
+    } else {
+      const n = clamp(Math.round(Ls / 0.028), 12, 34), side = r() * TAU;
+      for (let i = 0; i < n; i++) { const t = i / n, phi = side + (r() - 0.5) * 1.9;
+        if (t > 0.82) { budAt(t, phi, 0.011); continue; }
+        out(phi); _P.copy(P0).addScaledVector(A, Ls * (0.05 + 0.95 * t)).addScaledVector(_O, 0.01);
+        _F.copy(A).multiplyScalar(0.78).addScaledVector(_O, -0.62);   // -hang direction (bell local +y)
+        frameY(_F, _O, _q); const d = 0.055 * (1 - 0.35 * t) * (0.9 + 0.2 * r()); _s.set(d, d, d);
+        push(bk.bell, _P, _q, _s, _c3.copy(c1).multiplyScalar(0.92 + 0.16 * r()), null, null, c2); }
+    }
   }
   let plantCount = 0;
   const placed = new Map();   // spatial hash for spacing
@@ -384,11 +528,15 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
       Wp(pts[i], _a); Wp(pts[i + 1], _b); _b.sub(_a); const len = _b.length(); if (len < 0.01) continue;
       _q.setFromUnitVectors(_Y, _b.multiplyScalar(1 / len)); _s.set(rad * (1 - i * 0.18), len, rad * (1 - i * 0.18)); push(bk.stem, _a, _q, _s, stemCol);
     }
+    const head3 = HEAD3D[k], spire3 = SPIRE3D[k], pal = PALETTES[k], pc = pal ? pal[Math.floor(r() * pal.length)] : null;
+    const col1 = pc ? new THREE.Color(pc[0]) : null, col2 = pc ? new THREE.Color(pc[1]) : null;
     if (fr && F.kind !== 'none' && GEOS[F.kind]) {
       const shape = F.kind === 'disc' ? [L.curve != null ? L.curve : (F.curve || 0), F.cone || 0] : null, fsc = Math.sqrt(sc);
       const nF = G.fls.length > 24 ? Math.ceil(G.fls.length * 0.6) : G.fls.length;
       for (let fi = 0; fi < nF; fi++) { const f = G.fls[fi];
         Wp(f.p, _p); _q.copy(_qr).multiply(f.q);
+        if (spire3 && F.kind === 'spike') { const hs = f.hs ? H / (sz[0] * IN) : 1; spireFlorets(spire3, bk, _p.clone(), new V3(0, 1, 0).applyQuaternion(_q), L.flIn[1] * f.s * IN * hs * fsc, col1, col2, r, stemCol); continue; }
+        if (head3) { const d = (Array.isArray(L.flIn) ? L.flIn[0] : L.flIn) * f.s * IN * fsc * (head3 === 'allium' ? 1 : 1.08); _s.set(d, d, d); push(bk[head3], _p, _q, _s, _c3.copy(col1).multiplyScalar(0.92 + 0.16 * r()), null, null, col2); continue; }
         if (F.kind === 'spike') { const hs = f.hs ? H / (sz[0] * IN) : 1; _s.set(L.flIn[0] * f.s * IN * fsc, L.flIn[1] * f.s * IN * hs * fsc, L.flIn[0] * f.s * IN * fsc); }
         else { const d = (Array.isArray(L.flIn) ? L.flIn[0] : L.flIn) * f.s * IN * fsc; _s.set(d, d, d); }
         _c.setScalar(0.9 + 0.15 * r()); push(bk[F.kind], _p, _q, _s, _c, fr, shape);
@@ -403,6 +551,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     _q.setFromUnitVectors(_Y, _b.clone().normalize()); _s.set(0.0022, len, 0.0022); push(bk.stem, _a, _q, _s, _c.set(L.stemCol));
     _q.setFromEuler(new THREE.Euler(rr(-0.4, 0.4), rr(0, TAU), rr(-0.4, 0.4)));
     const d = (Array.isArray(L.flIn) ? L.flIn[0] : L.flIn) * IN * s; _s.set(d, F.kind === 'spike' ? L.flIn[1] * IN * s : d, d);
+    if (HEAD3D[k]) { const pc = PALETTES[k][Math.floor(rng() * PALETTES[k].length)]; push(bk[HEAD3D[k]], _p, _q, _s, _c.set(pc[0]), null, null, new THREE.Color(pc[1])); return; }
     push(bk[F.kind], _p, _q, _s, _c.setScalar(0.95), fr, F.kind === 'disc' ? [L.curve != null ? L.curve : (F.curve || 0), F.cone || 0] : null);
   }
   // drift planting: Worley cells pick a species so plants come in natural-looking groups
@@ -432,10 +581,12 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   // ---------------------------------------------------------------- hedges & topiary
   const hedgeBase = texOf(noiseTex(512, 512, '#1e3219', [[16000, ['#2b4322', '#1a2b15', '#365229', '#1d3318', '#41602f', '#253c1d'], [1.5, 4], 'chip']], 5), renderer);
   const boxBase = texOf(noiseTex(512, 512, '#2e4a1e', [[16000, ['#3e6026', '#2a4419', '#4a7230', '#355420', '#557c34'], [1.5, 3.5], 'chip']], 6), renderer);
-  const yewCard = texOf(sprigTex('yew'), renderer, { repeat: false }), boxCard = texOf(sprigTex('box'), renderer, { repeat: false });
+  const yewC = sprigTex('yew'), boxC = sprigTex('box');
+  const yewCard = texOf(yewC, renderer, { repeat: false }), boxCard = texOf(boxC, renderer, { repeat: false }), yewN = normalFrom(yewC, 4, renderer), boxN = normalFrom(boxC, 4, renderer);
+  const hedgeN = normalFrom(noiseTex(256, 256, '#808080', [[5000, ['#ffffff', '#202020', '#a0a0a0'], [1.5, 4], 'chip']], 11), 2, renderer);
   const HK = {
-    yew: { base: P.std({ map: hedgeBase, roughness: 0.92, color: 0xb8c4b4 }), card: P.std({ map: yewCard, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 }, { sway: 0.025, swayH: 2 }), depth: P.depth(yewCard, {}), size: 0.2, dens: 34, colA: new THREE.Color('#2c4a26'), colB: new THREE.Color('#40633a') },
-    box: { base: P.std({ map: boxBase, roughness: 0.85, color: 0xc8d0bc }), card: P.std({ map: boxCard, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.02, swayH: 1 }), depth: P.depth(boxCard, {}), size: 0.12, dens: 75, colA: new THREE.Color('#4c7a2e'), colB: new THREE.Color('#6a9a3a') },
+    yew: { base: P.std({ map: hedgeBase, normalMap: hedgeN, roughness: 0.9, color: 0x9aa898 }), card: P.std({ map: yewCard, normalMap: yewN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.46 }, { sway: 0.025, swayH: 2, translucent: true }), depth: P.depth(yewCard, {}), size: 0.24, dens: 44, colA: new THREE.Color('#22401f'), colB: new THREE.Color('#3c5e32') },
+    box: { base: P.std({ map: boxBase, normalMap: hedgeN, roughness: 0.85, color: 0xb0bca6 }), card: P.std({ map: boxCard, normalMap: boxN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.38 }, { sway: 0.02, swayH: 1, translucent: true }), depth: P.depth(boxCard, {}), size: 0.14, dens: 88, colA: new THREE.Color('#3f6e26'), colB: new THREE.Color('#62903a') },
   };
   function sweepGeo(pts, closed, W, H, kind) {
     const w = W / 2, rt = kind === 'box' ? w * 0.95 : Math.min(w * 0.55, H * 0.25), prof = [];
@@ -473,7 +624,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     let area = 0; const A = new V3(), B = new V3(), C = new V3(), N = new V3(), E1 = new V3(), E2 = new V3();
     for (let t = 0; t < I.length; t += 3) { A.fromBufferAttribute(P0, I[t]); B.fromBufferAttribute(P0, I[t + 1]); C.fromBufferAttribute(P0, I[t + 2]);
       E1.subVectors(B, A); E2.subVectors(C, A); N.crossVectors(E1, E2); const a = N.length() / 2; if (a < 1e-5) continue; N.normalize(); if (N.y < -0.3) continue; area += a; tris.push([area, I[t], I[t + 1], I[t + 2], N.clone()]); }
-    const n = Math.min(60000, Math.floor(area * K.dens * (isTouch ? 0.5 : 1)));
+    const n = Math.min(70000, Math.floor(area * K.dens * (isTouch ? 0.5 : 1)));
     const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), K.card, n);
     const m = new THREE.Matrix4(), q = new Q(), q2 = new Q(), s = new V3(), p = new V3(), dir = new V3(), c = new THREE.Color(), z = new V3(0, 0, 1);
     for (let i = 0; i < n; i++) {
@@ -675,7 +826,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     }
     for (let i = 4; i <= 20; i += 2) tubeSegs.push([frames[0][i].toArray(), frames[1][i].toArray(), 0.014]);
     // the climbing rose itself
-    const L = LOOKS.roseDA, lr = leafAtlas.rects[L.leaf], fr = flAtlas.rects.roseDA, lc = new THREE.Color(L.leafCol);
+    const L = LOOKS.roseDA, lr = leafAtlas.rects[L.leaf], lc = new THREE.Color(L.leafCol), archPal = pick(PALETTES.roseDA);
     for (let i = 0; i < (isTouch ? 170 : 300); i++) {
       const fi = rng() < 0.5 ? 0 : 1, u = rng() * 24, a = frames[fi][Math.floor(u)], b = frames[fi][Math.min(24, Math.floor(u) + 1)];
       _p.copy(a).lerp(b, u % 1).add(new V3(rr(-0.25, 0.25), rr(-0.2, 0.25), rr(-0.25, 0.25)));
@@ -686,8 +837,8 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     for (let i = 0; i < 55; i++) {
       const fi = rng() < 0.5 ? 0 : 1, u = 3 + rng() * 18, a = frames[fi][Math.floor(u)], b = frames[fi][Math.floor(u) + 1];
       _p.copy(a).lerp(b, u % 1).add(new V3(rr(-0.2, 0.2), rr(-0.1, 0.2), rr(-0.2, 0.2)));
-      _q.setFromEuler(new THREE.Euler(rr(-1.2, 1.2), rr(0, TAU), rr(-1.2, 1.2))); const d = L.flIn * IN * rr(0.9, 1.2); _s.set(d, d, d);
-      push(bucket(_p.x, _p.z).disc, _p, _q, _s, _c.setScalar(rr(0.9, 1.05)), fr, [L.curve != null ? L.curve : 0.36, 0]);
+      _q.setFromEuler(new THREE.Euler(rr(-1.2, 1.2), rr(0, TAU), rr(-1.2, 1.2))); const d = L.flIn * IN * rr(0.95, 1.25); _s.set(d, d, d);
+      push(bucket(_p.x, _p.z).rose, _p, _q, _s, _c.set(archPal[0]).multiplyScalar(rr(0.9, 1.08)), null, null, _c4.set(archPal[1]));
     }
     for (const s of [-1, 1]) addPlant('roseDA', p.x + nx * s * (Wd + 0.35), p.z + nz * s * (Wd + 0.35), { scale: 0.75, salt: 9 });
   };
@@ -701,22 +852,22 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
 
   // ---------------------------------------------------------------- trees (the exhibit's light-wrapped trees, made real)
   {
-    const barkC = (() => { const [c, g] = canvas(256, 512), r = PlantArt.rngOf(77); g.fillStyle = '#4b4136'; g.fillRect(0, 0, 256, 512);
-      for (let i = 0; i < 900; i++) { const x = r() * 256, w = 2 + r() * 8; g.fillStyle = ['#3a3229', '#5c5144', '#2e2821', '#6a5e4e', '#433a30'][Math.floor(r() * 5)]; g.globalAlpha = 0.5 + r() * 0.5; g.fillRect(x, r() * 512, w, 20 + r() * 120); }
-      g.globalAlpha = 1; return c; })();
-    const barkT = texOf(barkC, renderer); barkT.repeat.set(1, 2);
-    const barkMat = P.std({ map: barkT, bumpMap: texOf(barkC, renderer, { srgb: false }), bumpScale: 2, roughness: 0.95 }, { sway: 0.02, swayH: 8 });
-    const broadT = texOf(clusterTex('broad'), renderer, { repeat: false }), willowT = texOf(clusterTex('willow'), renderer, { repeat: false });
-    const broadMat = P.std({ map: broadT, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75 }, { sway: 0.08, swayH: 6, key: 'broad' });
-    const willowMat = P.std({ map: willowT, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75 }, { sway: 0.14, swayH: 5, key: 'willow' });
+    const [barkC, barkH] = barkTex();
+    const barkT = texOf(barkC, renderer), barkN = normalFrom(barkH, 5, renderer);
+    const barkMat = P.std({ map: barkT, normalMap: barkN, normalScale: new THREE.Vector2(1.4, 1.4), roughness: 0.95 }, { sway: 0.02, swayH: 8, barkUV: true, key: 'bark' });
+    const broadC = clusterTex('broad'), willowC = clusterTex('willow');
+    const broadT = texOf(broadC, renderer, { repeat: false }), willowT = texOf(willowC, renderer, { repeat: false }), broadN = normalFrom(broadC, 3, renderer), willowN = normalFrom(willowC, 3, renderer);
+    const broadMat = P.std({ map: broadT, normalMap: broadN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.08, swayH: 6, translucent: true, key: 'broad' });
+    const willowMat = P.std({ map: willowT, normalMap: willowN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.14, swayH: 5, translucent: true, key: 'willow' });
     const broadD = P.depth(broadT, { sway: 0.08, swayH: 6, key: 'broad' }), willowD = P.depth(willowT, { sway: 0.14, swayH: 5, key: 'willow' });
+    const flares = [];
     const segs = [], broad = [], willow = [];
     const seg = (a, b, r) => segs.push([a.clone(), b.clone(), r]);
     for (const T of treeSpecs) {
       const tr = PlantArt.rngOf(Math.floor(T.x * 131 + T.z * 71) >>> 0), R = (a, b) => a + (b - a) * tr();
       const r0 = 0.17 * T.s + 0.06, base = new V3(T.x, -0.1, T.z), top = new V3(T.x + R(-0.15, 0.15), T.h, T.z + R(-0.15, 0.15));
       const mid = base.clone().lerp(top, 0.5).add(new V3(R(-0.1, 0.1), 0, R(-0.1, 0.1)));
-      seg(base, mid, r0); seg(mid, top, r0 * 0.8);
+      seg(base, mid, r0); seg(mid, top, r0 * 0.8); flares.push([T.x, T.z, r0]);
       block(T.x, T.z, r0 + 0.3);
       const nP = 6 + Math.floor(tr() * 3), tips = [];
       for (let k = 0; k < nP; k++) {
@@ -750,9 +901,19 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     };
     if (broad.length) build(broad, broadMat, broadD, new THREE.PlaneGeometry(1, 1), false);
     if (willow.length) build(willow, willowMat, willowD, new THREE.PlaneGeometry(1, 1).translate(0, -0.4, 0), true);
-    const im = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.7, 1, 1, 8, 1, true).translate(0, 0.5, 0), barkMat, segs.length), m = new THREE.Matrix4(), q = new Q(), s = new V3(), d = new V3();
+    const im = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.7, 1, 1, 12, 3, true).translate(0, 0.5, 0), barkMat, segs.length), m = new THREE.Matrix4(), q = new Q(), s = new V3(), d = new V3();
     segs.forEach(([a, b, r], i) => { d.subVectors(b, a); const len = d.length(); q.setFromUnitVectors(_Y, d.normalize()); s.set(r, len, r); m.compose(a, q, s); im.setMatrixAt(i, m); });
     im.castShadow = im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im);
+    { // root flare with buttress lumps where each trunk meets the lawn
+      const pos = [], uv = [], idx = [], RINGS = 6, SEG = 16;
+      for (let j = 0; j <= RINGS; j++) for (let i = 0; i <= SEG; i++) { const y = j / RINGS * 0.7, a = i / SEG * TAU, rad = 1 + 1.5 * Math.exp(-y * 5) * (0.7 + 0.3 * Math.cos(5 * a));
+        pos.push(Math.cos(a) * rad, y, Math.sin(a) * rad); uv.push(i / SEG, y); }
+      for (let j = 0; j < RINGS; j++) for (let i = 0; i < SEG; i++) { const a = j * (SEG + 1) + i, b = a + 1, c = a + SEG + 1, dd = c + 1; idx.push(a, dd, b, a, c, dd); }
+      const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); fg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); fg.setIndex(idx); fg.computeVertexNormals();
+      const fm = new THREE.InstancedMesh(fg, barkMat, flares.length);
+      flares.forEach(([x, z, r0], i) => { m.compose(new V3(x, -0.03, z), new Q().setFromAxisAngle(_Y, i * 1.7), new V3(r0, r0 * 2.4, r0)); fm.setMatrixAt(i, m); });
+      fm.castShadow = fm.receiveShadow = true; fm.computeBoundingSphere(); scene.add(fm);
+    }
   }
 
   // ---------------------------------------------------------------- planting
@@ -814,12 +975,14 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
       const B = bk[type]; if (!B.n) continue;
       const n = B.n, perm = Array.from({ length: n }, (_, i) => i);
       for (let i = n - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
-      const m = new Float32Array(n * 16), c = new Float32Array(n * 3), r = B.r.length ? new Float32Array(n * 4) : null, s = B.s.length ? new Float32Array(n * 2) : null;
+      const m = new Float32Array(n * 16), c = new Float32Array(n * 3), r = B.r.length ? new Float32Array(n * 4) : null, s = B.s.length ? new Float32Array(n * 2) : null, c2 = B.c2.length ? new Float32Array(n * 3) : null;
       for (let j = 0; j < n; j++) { const i = perm[j]; for (let e = 0; e < 16; e++) m[j * 16 + e] = B.m[i * 16 + e]; c[j * 3] = B.c[i * 3]; c[j * 3 + 1] = B.c[i * 3 + 1]; c[j * 3 + 2] = B.c[i * 3 + 2];
-        if (r) for (let e = 0; e < 4; e++) r[j * 4 + e] = B.r[i * 4 + e]; if (s) { s[j * 2] = B.s[i * 2]; s[j * 2 + 1] = B.s[i * 2 + 1]; } }
+        if (r) for (let e = 0; e < 4; e++) r[j * 4 + e] = B.r[i * 4 + e]; if (s) { s[j * 2] = B.s[i * 2]; s[j * 2 + 1] = B.s[i * 2 + 1]; }
+        if (c2) for (let e = 0; e < 3; e++) c2[j * 3 + e] = B.c2[i * 3 + e]; }
       const geo = GEOS[type].clone();
       if (r) geo.setAttribute('aRect', new THREE.InstancedBufferAttribute(r, 4));
       if (s) geo.setAttribute('aShape', new THREE.InstancedBufferAttribute(s, 2));
+      if (F3TYPES.includes(type)) geo.setAttribute('aCol2', new THREE.InstancedBufferAttribute(c2 || new Float32Array(n * 3).fill(1), 3));
       const mesh = new THREE.InstancedMesh(geo, MATS[type], n);
       mesh.instanceMatrix = new THREE.InstancedBufferAttribute(m, 16);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(c, 3);
@@ -841,7 +1004,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
       const d = Math.hypot(ch.x - cx, ch.z - cz), vis = d < 95;
       for (const M of ch.meshes) {
         M.mesh.visible = vis; if (!vis) continue;
-        const f = M.type === 'leafC' || M.type === 'leafS' ? (d < 24 ? 1 : d < 42 ? 0.6 : 0.33) : M.type === 'stem' ? (d < 30 ? 1 : 0.35) : (d < 45 ? 1 : 0.6);
+        const f = M.type === 'leafC' || M.type === 'leafS' ? (d < 24 ? 1 : d < 42 ? 0.6 : 0.33) : M.type === 'stem' ? (d < 30 ? 1 : 0.35) : (M.type === 'delph' || M.type === 'lupin' || M.type === 'bell' || M.type === 'bud') ? (d < 22 ? 1 : d < 40 ? 0.55 : 0.3) : (d < 45 ? 1 : 0.6);
         M.mesh.count = Math.max(1, Math.floor(M.n * f)); M.mesh.castShadow = d < 32;
       }
     }

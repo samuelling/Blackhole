@@ -536,8 +536,9 @@ function makeVoid(x, y, z, slot, k = 1, spawned = false) {
   voidSlots[slot] = v; return v;
 }
 // size k: ~0.35 is a pinhole that drains one bush; 2.6 is a giant that eats a meadow
-const curated = [[0, 2.6, 50, 1.0], [0, 4.8, 0, 1.6], [-50, 6.5, -30, 2.6], [50, 3.0, 45, 1.3], [-55, 3.4, 30, 0.9], [41, 2.6, -24, 1.0]];
+const curated = [[0, 2.6, 50, 1.0], [0, 12.5, 0, 3.4], [-50, 6.5, -30, 2.6], [50, 3.0, 45, 1.3], [-55, 3.4, 30, 0.9], [41, 2.6, -24, 1.0]];
 curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
+const GIANT = 1; voidSlots[GIANT].giant = true;   // the great one, above the grand fountain
 {
   const vOk = (x, z, k) => {
     if (Math.hypot(x, z) > 86 || (z > 64 && Math.abs(x) < 12)) return false;
@@ -557,8 +558,8 @@ curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
 }
 
 {
-  const PER = 400, N = PER * MAXV, seeds = new Float32Array(N * 4), vid = new Float32Array(N);
-  for (let i = 0; i < N; i++) { seeds.set([rng(), rng(), rng(), rng()], i * 4); vid[i] = Math.floor(i / PER); }
+  const counts = Array.from({ length: MAXV }, (_, i) => i === GIANT ? (isTouch ? 1500 : 3200) : 400), N = counts.reduce((a, b) => a + b, 0), seeds = new Float32Array(N * 4), vid = new Float32Array(N);
+  for (let i = 0, slot = 0, left = counts[0]; i < N; i++) { while (left === 0) left = counts[++slot]; seeds.set([rng(), rng(), rng(), rng()], i * 4); vid[i] = slot; left--; }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   g.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 4));
@@ -566,6 +567,36 @@ curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
   const s = new THREE.Points(g, streamMat); s.frustumCulled = false; s.renderOrder = 3; scene.add(s);
 }
 
+// ------------------------------------------------------------------ the giant's accretion disk of stolen light
+const diskTilt = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationX(0.16).multiply(new THREE.Matrix4().makeRotationZ(0.07)));
+U.uDiskPos = { value: new THREE.Vector3(0, 12.5, 0) }; U.uDiskGlow = { value: new THREE.Vector3() };
+const diskU = { uGiant: { value: new THREE.Vector4(0, 12.5, 0, 1) }, uGW: { value: 0.4 }, uTilt: { value: diskTilt } };
+{
+  const N = isTouch ? 6000 : 16000, sd = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) sd.set([rng(), rng(), rng(), rng()], i * 4);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 4));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: Object.assign({}, U, diskU), transparent: true, depthWrite: true, blending: THREE.AdditiveBlending,
+    vertexShader: COMMON + `uniform float uPx; uniform vec4 uGiant; uniform float uGW; uniform mat3 uTilt; attribute vec4 aSeed; varying vec3 vC;
+      void main(){
+        float R = uGiant.w, rr = R * (1.55 + 2.7 * pow(aSeed.x, 1.5));
+        float om = 0.55 * pow(R * 1.55 / rr, 1.5), ang = aSeed.y * 6.2831 + uTime * om;
+        vec3 lp = vec3(cos(ang) * rr, (aSeed.z - 0.5) * 0.05 * rr, sin(ang) * rr);
+        vec3 p = uTilt * lp + uGiant.xyz;
+        vec3 T = uTilt * vec3(-sin(ang), 0.0, cos(ang));
+        vec3 V = normalize(cameraPosition - p);
+        float boost = 1.0 + 0.75 * dot(T, V);                     // relativistic beaming: the approaching side is brighter
+        float t = clamp((rr / R - 1.55) / 2.7, 0.0, 1.0);
+        vec3 col = mix(vec3(1.0, 0.93, 0.82) * 1.7, vec3(1.0, 0.42, 0.14) * 0.85, sqrt(t));
+        vC = col * boost * boost * uGW * (0.25 + 0.75 * (1.0 - t)) * (0.6 + 0.4 * aSeed.w);
+        vec4 mv = viewMatrix * vec4(p, 1.0); gl_Position = projectionMatrix * mv;
+        gl_PointSize = clamp((0.05 + 0.09 * aSeed.w) * R / 2.5 * uPx / -mv.z, 0.0, 30.0);
+        vC *= fogF(-mv.z);
+      }`,
+    fragmentShader: `varying vec3 vC; void main(){ vec2 q = gl_PointCoord * 2.0 - 1.0; float r2 = dot(q, q); if (r2 > 0.8) discard; gl_FragColor = vec4(vC * exp(-r2 * 3.0), 1.0); }`,
+  });
+  const disk = new THREE.Points(g, mat); disk.frustumCulled = false; disk.renderOrder = 4; scene.add(disk);
+}
 for (let i = 0; i < MAXV; i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshBasicMaterial({ color: 0x000000 })); m.layers.set(3); m.visible = false; scene.add(m); mirrorVoids.push(m); }
 function drainAtJS(p) {
   let L = 1;
@@ -607,7 +638,7 @@ const lensMat = new THREE.ShaderMaterial({
       vec4 L = uLens[i];
       if(L.z <= 0.0) continue;
       float wR = uLensB[i].x;
-      float behind = smoothstep(L.w - wR*2.5, L.w + wR*0.5, pz);
+      float behind = smoothstep(L.w - wR*1.2, L.w + wR*0.4, pz);
       if(behind <= 0.0) continue;
       vec2 d = uv - L.xy; d.x *= uAspect;
       float r = length(d) + 1e-5;
@@ -757,7 +788,7 @@ function openVoid() {
   let slot = voidSlots.findIndex(v => !v);
   if (slot < 0) { // reuse the oldest void you made, else the farthest sleeping one
     let best = -1, score = -1e9;
-    voidSlots.forEach((v, i) => { const s = v.spawned ? 1e6 - v.born : (v.wake < 0.05 ? v.pos.distanceTo(player) : -1e5); if (s > score) { score = s; best = i; } });
+    voidSlots.forEach((v, i) => { const s = v.giant ? -1e9 : v.spawned ? 1e6 - v.born : (v.wake < 0.05 ? v.pos.distanceTo(player) : -1e5); if (s > score) { score = s; best = i; } });
     slot = best;
   }
   makeVoid(p.x, p.y, p.z, slot, k, true);
@@ -871,31 +902,32 @@ function update(dt, t) {
   for (const v of voidSlots) {
     if (!v) continue;
     const d = player.distanceTo(v.pos);
-    const k = v.k, wakeR = 7 + 9 * Math.pow(k, 0.9);
-    const target = started && d < wakeR ? 1 : 0;
+    const k = v.k, wakeR = v.giant ? 42 : 7 + 9 * Math.pow(k, 0.9);
+    let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
     const rate = target > v.wake ? 0.45 : 0.08;
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
     v.scar = Math.max(v.scar - dt / 40, v.wake);
     v.drain = Math.max(v.wake, v.scar * 0.8);
     const w = v.wake * v.wake * (3 - 2 * v.wake);
     v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k;
-    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85);
-    if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
+    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); if (v.giant) v.reach = Math.min(v.reach, 38);
+    if (v.giant) { if (!v.wasAwake && v.wake > 0.6) { v.wasAwake = true; if (A.ctx && A.on) inhale(1.4, 3.5); } if (v.wake < 0.5) v.wasAwake = false; }
+    else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
     if (v.wake < 0.02) v.wasAwake = false;
     // drift toward the walker, tethered to home
     const desired = tmpP.copy(v.home);
-    if (v.wake > 0.2) {
+    if (v.wake > 0.2 && !v.giant) {
       const teth = 8 * Math.sqrt(k), keep = 3.5 + 1.5 * k;
       tmpV.set(player.x - v.home.x, 0, player.z - v.home.z); if (tmpV.length() > teth) tmpV.setLength(teth); desired.add(tmpV);
       tmpV.set(desired.x - player.x, 0, desired.z - player.z);
       if (tmpV.length() < keep) { tmpV.setLength(keep); desired.x = player.x + tmpV.x; desired.z = player.z + tmpV.z; }
     }
-    desired.y = v.home.y + Math.sin(t * 0.4 + v.seed) * 0.3 * k;
+    desired.y = v.home.y + Math.sin(t * 0.4 + v.seed) * (v.giant ? 0.25 : 0.3 * k);
     tmpV.subVectors(desired, v.pos); const step = (v.wake > 0.2 ? 0.4 * v.wake : 0.25) / Math.sqrt(k) * dt;
     if (tmpV.length() > step) tmpV.setLength(step); v.pos.add(tmpV);
     // gravity on the walker
     tmpV.set(v.pos.x - player.x, 0, v.pos.z - player.z); const dh = tmpV.length();
-    const pull = 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
+    const pull = v.giant ? 1.25 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 30))) : 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
     if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull);
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
@@ -943,6 +975,8 @@ function update(dt, t) {
     lu.uLens.value[i].set(tmpP.x * 0.5 + 0.5, tmpP.y * 0.5 + 0.5, (v.R / dist) / tanH * 0.5, dist);
     lu.uLensB.value[i].set(v.R, v.wake, 0, 0); lu.uLensC.value[i].copy(v.col);
   });
+  { const G = voidSlots[GIANT]; if (G) { diskU.uGiant.value.set(G.pos.x, G.pos.y, G.pos.z, G.R); diskU.uGW.value = 0.25 + 0.75 * G.wake;
+      U.uDiskPos.value.copy(G.pos); U.uDiskGlow.value.set(1.0, 0.62, 0.32).multiplyScalar(0.55 * (0.2 + 0.8 * G.wake)); } }
   const Lhere = drainAtJS(tmpP.copy(player));
   lensMat.uniforms.uAspect.value = innerWidth / innerHeight;
   lensMat.uniforms.uDark.value = Math.max(1 - Lhere, near * 0.6);
@@ -973,4 +1007,5 @@ function frame() {
 requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden';
 window.__umbra = { // debug handle
+  treeSpecs,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };
