@@ -41,7 +41,7 @@ Small on purpose, so every surface can be close-up quality. Materials are photo-
 
 ### Assets and credits
 
-All CC0: textures and models from [Poly Haven](https://polyhaven.com) (gravel_floor, sparse_grass, yellow_flower_mulch, cobblestone_square, castle_brick_02_red, white_plaster_02, bark_brown_02; street_lamp_01, large_iron_gate, painted_wooden_bench, concrete_cat_statue) and leaf scans from [ambientCG](https://ambientcg.com) (LeafSet and Foliage sets). `tools/build_assets.py` cuts the leaf scans into the atlas and foliage cards. The water normal map is from the three.js examples (MIT).
+All CC0: textures and models from [Poly Haven](https://polyhaven.com) (gravel_floor, sparse_grass, yellow_flower_mulch, cobblestone_square, castle_brick_02_red, white_plaster_02, bark_brown_02; street_lamp_01, large_iron_gate, painted_wooden_bench, concrete_cat_statue) and leaf scans from [ambientCG](https://ambientcg.com) (LeafSet and Foliage sets). `tools/build_assets.py` cuts the leaf scans into the atlas and foliage cards. Models are glTF with the buffer embedded, saved as `.json` so any static host will serve them (`tools/gltf_embed.py`). The water normal map is from the three.js examples (MIT).
 
 ## How it works
 

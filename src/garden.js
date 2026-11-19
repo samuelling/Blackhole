@@ -66,6 +66,19 @@ export function makeLayout() {
 export const PBR_SETS = ['gravel_floor', 'sparse_grass', 'yellow_flower_mulch', 'cobblestone_square', 'castle_brick_02_red', 'white_plaster_02', 'bark_brown_02'];
 const CARDS = ['leaf_atlas', 'card_yew', 'card_box', 'card_lime', 'card_cover', 'card_ivy'];
 const MODELS = ['street_lamp_01', 'large_iron_gate', 'painted_wooden_bench', 'concrete_cat_statue'];
+// Models are glTF saved as .json with the buffer embedded as base64 (tools/gltf_embed.py). The buffer is unpacked here and
+// handed to GLTFLoader as an in-memory GLB, so nothing but same-origin fetches is needed (data: URLs are often blocked).
+async function loadModel(url) {
+  const r = await fetch(url); if (!r.ok) throw new Error(r.status + ' ' + url);
+  const g = await r.json(), b = g.buffers && g.buffers[0]; let bin = null;
+  if (b && b.uri && b.uri.startsWith('data:')) { const s = atob(b.uri.slice(b.uri.indexOf(',') + 1)); bin = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bin[i] = s.charCodeAt(i); delete b.uri; }
+  const enc = new TextEncoder().encode(JSON.stringify(g)), jl = (enc.length + 3) & ~3, bl = bin ? (bin.length + 3) & ~3 : 0;
+  const glb = new ArrayBuffer(20 + jl + (bin ? 8 + bl : 0)), dv = new DataView(glb), u8 = new Uint8Array(glb);
+  dv.setUint32(0, 0x46546C67, true); dv.setUint32(4, 2, true); dv.setUint32(8, glb.byteLength, true);
+  dv.setUint32(12, jl, true); dv.setUint32(16, 0x4E4F534A, true); u8.set(enc, 20); u8.fill(0x20, 20 + enc.length, 20 + jl);
+  if (bin) { dv.setUint32(20 + jl, bl, true); dv.setUint32(24 + jl, 0x004E4942, true); u8.set(bin, 28 + jl); }
+  return new Promise((res, rej) => new GLTFLoader().parse(glb, url.slice(0, url.lastIndexOf('/') + 1), o => res(o.scene), rej));
+}
 export async function loadAssets(renderer, onProgress = () => {}) {
   const base = new URL('../assets/', import.meta.url).href, tl = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 1;
@@ -76,9 +89,9 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   for (const s of PBR_SETS) { tex[s] = {}; for (const [m, srgb] of [['diff', true], ['nor', false], ['arm', false]]) jobs.push(T(`${s}_${m}`, srgb, true).then(t => { tex[s][m] = t; })); }
   for (const c of CARDS) { jobs.push(T(c, true, false).then(t => { tex[c] = t; })); jobs.push(T(c + '_n', false, false).then(t => { tex[c + '_n'] = t; })); }
   jobs.push(T('waternormals', false, true).then(t => { tex.waternormals = t; }));
-  for (const m of MODELS) jobs.push(new Promise((res, rej) => new GLTFLoader().setPath(`${base}models/${m}/`).load(`${m}.gltf`, g => { models[m] = g.scene; tick(); res(); }, undefined, () => rej(new Error('could not load ' + m)))));
+  for (const m of MODELS) jobs.push(loadModel(`${base}models/${m}/${m}.json`).then(sc => { models[m] = sc; tick(); }, () => { throw new Error('could not load ' + m); }));
   // stonework modelled in Blender (tools/blender/build_stone.py); the garden falls back to simple turned shapes without it
-  jobs.push(new Promise(res => new GLTFLoader().load(base + 'models/stone.glb', g => { models.stone = g.scene; tick(); res(); }, undefined, () => { tick(); res(); })));
+  jobs.push(loadModel(base + 'models/stone.json').then(sc => { models.stone = sc; tick(); }, () => tick()));
   await Promise.all(jobs);
   return { tex, models };
 }
@@ -753,6 +766,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   if (assets.models.stone) assets.models.stone.traverse(o => { if (!o.isMesh) return; const g = o.geometry, c = g.attributes.color;
     if (c) { for (let i = 0; i < c.count; i++) { const v = 0.3 + 0.7 * c.getX(i); c.setXYZ(i, v, v, v); } c.needsUpdate = true; }   // ease the baked occlusion: the live lighting adds its own
     stoneParts[o.name] = g; });
+  console.log('[garden] stonework: ' + (Object.keys(stoneParts).join(', ') || 'none (using turned fallbacks)'));
   const carved = (name, x, z, wetStone = false, rotY = 0, y = 0) => {
     const g = stoneParts[name]; if (!g) return false;
     const m = addMesh(g, g.attributes.color ? (wetStone ? stoneWetVC : stoneVC) : (wetStone ? stoneWet : stoneMat), x, z); m.position.y = y; m.rotation.y = rotY; return true;

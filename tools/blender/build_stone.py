@@ -6,7 +6,7 @@ Run either way:
     python3 tools/blender/build_stone.py                 (the `bpy` Python module: pip install bpy)
 
 It writes
-    assets/models/stone.glb    geometry + ambient occlusion baked into vertex colours (the garden loads this)
+    assets/models/stone.json   glTF: geometry + ambient occlusion baked into vertex colours (the garden loads this)
     blender/stone.blend        the same scene, to open and explore in Blender
     blender/stone_preview.png  a quick render
 
@@ -238,11 +238,11 @@ for i, (fn, ratio) in enumerate(SPEC):
 os.makedirs(os.path.join(ROOT, 'assets', 'models'), exist_ok=True); os.makedirs(os.path.join(ROOT, 'blender'), exist_ok=True)
 for o in scene.objects: o.select_set(o in made); o.hide_render = False
 bpy.context.view_layer.objects.active = made[0]
-want = dict(filepath=os.path.join(ROOT, 'assets', 'models', 'stone.glb'), export_format='GLB', use_selection=True, export_apply=True, export_texcoords=False, export_normals=True,
+want = dict(filepath=os.path.join(ROOT, 'assets', 'models', 'stone.gltf'), export_format='GLTF_SEPARATE', use_selection=True, export_apply=True, export_texcoords=False, export_normals=True,
             export_materials='EXPORT', export_vertex_color='ACTIVE', export_all_vertex_colors=False, export_active_vertex_color_when_no_material=True, export_yup=True, export_animations=False, export_cameras=False, export_lights=False)
 props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
 bpy.ops.export_scene.gltf(**{k: v for k, v in want.items() if k in props})
-print('stone.glb', round(os.path.getsize(want['filepath']) / 1e6, 2), 'MB')
+sys.path.insert(0, os.path.join(ROOT, 'tools')); import gltf_embed; gltf_embed.embed(want['filepath'])   # -> assets/models/stone.json
 
 # lay the pieces out side by side, light them, and save a scene worth opening
 if '--no-preview' not in sys.argv:

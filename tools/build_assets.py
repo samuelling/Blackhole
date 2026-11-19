@@ -165,3 +165,7 @@ for m in ['street_lamp_01', 'large_iron_gate', 'painted_wooden_bench', 'concrete
     shutil.copy(f'{SRC}/models/{m}/{m}.gltf', d); shutil.copy(f'{SRC}/models/{m}/{m}.bin', d)
     for f in os.listdir(f'{SRC}/models/{m}/textures'): Image.open(f'{SRC}/models/{m}/textures/{f}').convert('RGB').save(f'{d}/textures/{f}', quality=82, optimize=True)
 tot = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(OUT) for f in fs); print('assets total', round(tot / 1e6, 1), 'MB')
+
+# models: fold each .bin into its .gltf and save as .json (see tools/gltf_embed.py)
+import glob, gltf_embed
+for g in glob.glob(f'{OUT}/models/**/*.gltf', recursive=True): gltf_embed.embed(g)
