@@ -7,6 +7,7 @@ Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger vo
 **Play:** open `index.html` (or the GitHub Pages site).
 
 - Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound.
+- Time of day: the pill at bottom right toggles **night** (default) ↔ **live** (your real clock; also **T**), and its slider scrubs to any hour. Live/set times place the sun by a real solar-position calculation (≈42°N, longitude from your time zone), with day sky, twilight and stars fading in. In daylight the voids carve pockets of night out of the day.
 - Touch: drag the left half to walk, the right half to look, double-tap (or the button) to open a void.
 
 ## How it works
