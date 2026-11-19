@@ -14,6 +14,14 @@ Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger vo
 
 A giant black hole hangs 12 m above the grand fountain. It never fully sleeps; walk within ~40 m and it wakes, draining the central garden while an accretion disk of stolen light orbits it (inner edge white-hot, outer amber, the approaching side brighter). The lensing pass bends the far side of the disk over the top of the shadow and lets the near side cross in front; the disk's glow lights the fountain and parterre below, and the whole thing hangs reflected in the pool.
 
+## Time
+
+Every plant, tree and patch of ground cover has its own clock. A static clock at distance r from a void ticks at √(1 − Σ rₛ/r) of the garden's calendar rate (Schwarzschild time dilation, weak-field potentials summed over all voids; rₛ = 2.6 × the void's horizon radius, so the effect grows as a void wakes and feeds). Each frame, each plant integrates its own proper time and its phenology is read from that, not from the calendar: near an awake void the border lags behind the season, and under the giant the parterre can still be in bloom while the outer garden has gone bare.
+
+You have a clock too. Your watch is real time; the garden's calendar advances at 1/√(1 − Σ rₛ/r) of that while you stand in a well, so the rest of the garden runs fast for you, its light and the sky arrive blueshifted, the music rises in pitch, and the HUD tallies how much younger than the garden you've become. Light from deeper wells than yours arrives redshifted.
+
+**Seasons:** S cycles paused / 1 day / 1 week / 1 month per second; the slider scrubs the calendar (which also sets the sun's height); R replants so you can watch three years of establishment. Phenology comes from Shortwood Meadow's sourced bloom months: spring emergence (early and late species), bloom windows, summer-dormant alliums and poppies, standing seed heads, grasses that stand as straw until cut back in February, evergreen lavender, pinks and lamb's ears, woody roses and hydrangea, deciduous trees with spring flush, autumn colour and leaf fall, and a lawn that greens, dries and dulls through the year.
+
 ## The garden
 
 - **Plants:** 57 perennials, bulbs, grasses, shrubs and roses ported from [Shortwood Meadow](https://github.com/samuelling/shortwood-meadow) (`src/plantart.js`, `src/looks.js`): procedural leaf and flower textures and plant structure, sized from its sourced species table. All species are packed into a leaf atlas and a flower atlas, so ~3,000 plants draw as instanced meshes in 16 m chunks, with distance LOD and wind sway.

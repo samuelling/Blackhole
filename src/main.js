@@ -5,6 +5,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { makeLayout, createGarden, WATER_Y } from './garden.js';
+import { doyLabel, doyToMonthDay } from './seasons.js';
 
 // ------------------------------------------------------------------ setup
 const MAXV = 24;
@@ -12,7 +13,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one'
-  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E opens a new void (any size) · M sound · T night / live time';
+  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound';
 
 let renderer;
 try {
@@ -58,6 +59,7 @@ const U = {
   uDay: { value: 0 }, uTwi: { value: 0 }, uStarGain: { value: 1 },
   uWind: { value: 0.35 }, uGust: { value: 0 }, uWindDir: { value: new THREE.Vector2(0.8, 0.6) },
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
+  uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
 };
 
 const COMMON = /* glsl */`
@@ -83,6 +85,19 @@ float drainAt(vec3 p){
   return L;
 }
 float fogF(float dist){ float k = uFogDensity*dist; return exp(-k*k); }
+// gravitational time dilation: a static clock at p ticks at sqrt(1 - sum rs/r) of the garden's (distant) rate.
+// rs = uGT x the void's horizon radius; potentials add in the weak-field limit.
+uniform float uGT; uniform float uPlayerF;
+float dilAt(vec3 p){
+  float s = 0.0;
+  for(int i=0;i<MAXV;i++){ float R = uVoidAux[i].x; if(R <= 0.0) continue; s += R * uGT / max(distance(p, uVoid[i].xyz), 0.05); }
+  return sqrt(max(0.0144, 1.0 - s));
+}
+// light climbing out of a deeper well than yours arrives redshifted; from a shallower one, blueshifted
+vec3 gshift(vec3 c, vec3 p){
+  float z = clamp(log2(dilAt(p) / uPlayerF), -2.0, 2.0);
+  return c * (z < 0.0 ? mix(vec3(1.0), vec3(1.0, 0.5, 0.26), min(1.0, -z * 0.55)) : mix(vec3(1.0), vec3(0.62, 0.84, 1.3), min(1.0, z * 0.45)));
+}
 vec3 groundLight(vec2 xz){ return texture2D(uLightMap, vec2(0.5 + xz.x/200.0, 0.5 - xz.y/200.0)).rgb; }
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
 float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -341,7 +356,7 @@ const pointsMat = new THREE.ShaderMaterial({
     gl_Position = projectionMatrix * mv;
     gl_PointSize = clamp(aSize * uPx / dist * (0.2 + 0.8*L), 0.0, 90.0);
     vB = L * tw * fogF(dist) * uLightGain;
-    vCol = aColor;
+    vCol = gshift(aColor, p);
   }`,
   fragmentShader: /* glsl */`
   varying vec3 vCol; varying float vB;
@@ -445,11 +460,11 @@ let moon, envSkyMat;
 const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 } },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
-    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun;
+    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
@@ -465,12 +480,13 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
       c += (vec3(1.0,0.42,0.16)*pow(sd, 4.0) + vec3(0.32,0.16,0.30)*0.5) * low * uTwi;
       float up = smoothstep(-0.03, 0.02, uSunDir.y);
       c += vec3(1.0,0.9,0.75) * (pow(sd, 1400.0)*40.0*(1.0 - uNoSun) + pow(sd, 14.0)*0.35*uDay + pow(sd, 3.0)*0.08*uDay) * up;
+      c *= mix(vec3(1.0), vec3(0.8, 0.93, 1.35), clamp(log2(1.0 / uPlayerF) * 0.35, 0.0, 1.0));   // the sky, blueshifted when you sit deep in a well
       gl_FragColor = vec4(c, 1.0);
     }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 } };
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 } };
 
   const N = 2200, pos = [], col = [], sz = [], sd = [];
   for (let i = 0; i < N; i++) {
@@ -662,13 +678,28 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new ShaderPass(lensMat));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.75, 0.5, 0.62);
 composer.addPass(bloom);
+// after bloom, black the shadows again so glare from a bright sky can't wash them grey
+const holeMat = new THREE.ShaderMaterial({
+  uniforms: { tDiffuse: { value: null }, tDepth: { value: rt.depthTexture }, uLens: lensMat.uniforms.uLens, uLensB: lensMat.uniforms.uLensB, uAspect: lensMat.uniforms.uAspect, uNear: lensMat.uniforms.uNear, uFar: lensMat.uniforms.uFar },
+  depthTest: false, depthWrite: false,
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform sampler2D tDepth; uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform float uAspect, uNear, uFar; varying vec2 vUv;
+    void main(){
+      float dz = texture2D(tDepth, vUv).x, pz = -(uNear*uFar)/((uFar - uNear)*dz - uFar), shade = 1.0;
+      for(int i=0;i<${MAXV};i++){ vec4 L = uLens[i]; if(L.z <= 0.0) continue; float wR = uLensB[i].x;
+        float behind = smoothstep(L.w - wR*1.2, L.w + wR*0.4, pz); vec2 d = vUv - L.xy; d.x *= uAspect;
+        shade *= 1.0 - (1.0 - smoothstep(L.z*0.8, L.z*0.99, length(d))) * behind; }
+      gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb * shade, 1.0);
+    }`,
+});
+composer.addPass(new ShaderPass(holeMat));
 composer.addPass(new OutputPass());
 
 function onResize() {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   bloom.resolution.set(innerWidth / 2, innerHeight / 2);
-  makeRT(); lensMat.uniforms.tScene.value = rt.texture; lensMat.uniforms.tDepth.value = rt.depthTexture;
+  makeRT(); lensMat.uniforms.tScene.value = rt.texture; lensMat.uniforms.tDepth.value = rt.depthTexture; holeMat.uniforms.tDepth.value = rt.depthTexture;
 }
 addEventListener('resize', onResize);
 
@@ -691,7 +722,7 @@ function initAudio() {
     [146.83, 220.0, 293.66, 329.63, 369.99, 440.0, 554.37].forEach((f, i) => {
       for (const det of [-5, 5]) {
         const o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
-        o.type = i < 2 ? 'sine' : 'triangle'; o.frequency.value = f; o.detune.value = det;
+        o.type = i < 2 ? 'sine' : 'triangle'; o.frequency.value = f; o.detune.value = det; o._det = det; (A.oscs = A.oscs || []).push(o);
         lfo.frequency.value = 0.05 + Math.random() * 0.1; lg.gain.value = 0.025;
         lfo.connect(lg); lg.connect(g.gain); g.gain.value = 0.035;
         o.connect(g); g.connect(pf); o.start(); lfo.start();
@@ -711,7 +742,7 @@ function initAudio() {
 function chime(L) {
   const ac = A.ctx, t = ac.currentTime, notes = [880, 987.77, 1174.66, 1318.51, 1479.98, 1760, 1975.53];
   const o = ac.createOscillator(), g = ac.createGain();
-  o.type = 'sine'; o.frequency.value = notes[Math.floor(Math.random() * notes.length)] * (Math.random() < 0.3 ? 2 : 1);
+  o.type = 'sine'; o.frequency.value = notes[Math.floor(Math.random() * notes.length)] * (Math.random() < 0.3 ? 2 : 1) / Math.sqrt(playerF);
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.03 * L, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
   o.connect(g); g.connect(A.master); g.connect(A.send); o.start(t); o.stop(t + 2.3);
 }
@@ -822,14 +853,34 @@ function sunDirAt(date) {
   const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(lat) - Math.tan(dec) * Math.cos(lat)); // from south, + toward west
   return new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
 }
+// ------------------------------------------------------------------ the garden's calendar, your watch, and time dilation
+const SPEEDS = [0, 1, 7, 30], SPEED_LBL = ['season: paused', '1 day / s', '1 week / s', '1 month / s'];
+let speedIdx = 0, gardenDays = 0, yourDays = 0, playerF = 1;
+const calDoy = () => garden.seasons.DOY0 + gardenDays;
+const dilJS = (x, y, z) => { let s = 0; for (const v of voidSlots) if (v) s += v.R * U.uGT.value / Math.max(0.05, Math.hypot(x - v.pos.x, y - v.pos.y, z - v.pos.z)); return Math.sqrt(Math.max(0.0144, 1 - s)); };
+const fmtDur = d => { d = Math.abs(d); if (d < 1) return `${Math.round(d * 24)} h`; if (d < 60) return `${Math.round(d)} days`; if (d < 730) return `${(d / 30.4).toFixed(1)} months`; return `${(d / 365).toFixed(1)} years`; };
+function refreshSeasonUI() {
+  const d = calDoy(), yr = Math.floor(d / 365) + 1;
+  $('dLabel').textContent = `${doyLabel(d)} · yr ${yr}`; $('bSpeed').textContent = SPEED_LBL[speedIdx];
+  if (document.activeElement !== $('dSlider')) $('dSlider').value = ((Math.floor(d) % 365) + 365) % 365;
+}
+$('bSpeed').addEventListener('click', e => { e.stopPropagation(); speedIdx = (speedIdx + 1) % SPEEDS.length; refreshSeasonUI(); if (speedIdx === 1) setHint('seasons running · near a void, time slows: its plants fall behind the calendar', 7000); });
+$('dSlider').addEventListener('input', e => { e.stopPropagation(); const cur = ((calDoy() % 365) + 365) % 365; let dd = parseFloat(e.target.value) - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); });
+for (const ev of ['mousedown', 'touchstart']) $('dSlider').addEventListener(ev, e => e.stopPropagation(), { passive: true });
+$('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seasons.replant(); setHint('replanted · they will fill in over about three years', 6000); });
+addEventListener('keydown', e => {
+  if (!started) return;
+  if (e.code === 'KeyS') $('bSpeed').click();
+  if (e.code === 'KeyR') $('bReplant').click();
+});
+
 let timeMode = 'night', manualHour = 12;
 try { const m = localStorage.getItem('umbra-time'); if (m === 'live' || m === 'night') timeMode = m; } catch (e) {}
 const fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase();
-function garderDate() {
-  const now = new Date();
-  if (timeMode === 'live') return now;
-  const h = timeMode === 'night' ? 23 : manualHour;
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), Math.floor(h), Math.round((h % 1) * 60));
+function garderDate() {   // the garden's calendar date (it sets the sun's height), at the chosen hour
+  const now = new Date(), [m, dd] = doyToMonthDay(calDoy());
+  const h = timeMode === 'live' ? now.getHours() + now.getMinutes() / 60 : timeMode === 'night' ? 23 : manualHour;
+  return new Date(now.getFullYear(), m, dd, Math.floor(h), Math.round((h % 1) * 60));
 }
 function refreshTimeUI() {
   const d = garderDate();
@@ -846,7 +897,7 @@ $('tSlider').addEventListener('input', e => { e.stopPropagation(); manualHour = 
 $('tSlider').addEventListener('mousedown', e => e.stopPropagation());
 $('tSlider').addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
 addEventListener('keydown', e => { if (started && e.code === 'KeyT') setTimeMode(timeMode === 'live' ? 'night' : 'live'); });
-refreshTimeUI(); setInterval(refreshTimeUI, 15000);
+refreshTimeUI(); setInterval(refreshTimeUI, 15000); refreshSeasonUI();
 
 const _a = new THREE.Vector3(), _sunCol = new THREE.Color(), FOG_NIGHT = new THREE.Color(0.004, 0.006, 0.012), FOG_DAY = new THREE.Color(0.40, 0.48, 0.60), FOG_TWI = new THREE.Color(0.30, 0.17, 0.14);
 const lightDir = new THREE.Vector3(0, 1, 0);
@@ -959,6 +1010,17 @@ function update(dt, t) {
     sunLight.target.position.set(Math.round(player.x / S) * S, 0, Math.round(player.z / S) * S);
     sunLight.position.copy(sunLight.target.position).addScaledVector(lightDir, 160); sunLight.target.updateMatrixWorld(); }
   U.uPx.value = (innerHeight * PR) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  // time: your watch runs at real time; the garden's calendar runs faster for you the deeper you stand in a well,
+  // and every plant integrates its own proper time from the calendar at its own depth
+  playerF = dilJS(camera.position.x, camera.position.y, camera.position.z); U.uPlayerF.value = playerF;
+  { const rate = SPEEDS[speedIdx], dCal = dt * rate / playerF;
+    if (rate > 0) { gardenDays += dCal; yourDays += dt * rate; garden.seasons.advance(dCal, dilJS); }
+    garden.setLawnSeason(calDoy());
+    if (rate > 0 && (t * 4 | 0) !== ((t - dt) * 4 | 0)) { refreshSeasonUI(); }
+    const gap = gardenDays - yourDays, show = playerF < 0.985 || gap > 0.5, el = $('dil');
+    el.style.opacity = show ? 1 : 0;
+    if (show) el.innerHTML = `time here runs at <b>${Math.round(playerF * 100)}%</b>${rate ? ` · the garden runs <b>${(1 / playerF).toFixed(playerF < 0.5 ? 1 : 2)}×</b> for you` : ''}${gap > 0.5 ? `<br>you are ${fmtDur(gap)} younger than the garden` : ''}`;
+  }
 
   // uniforms
   const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
@@ -985,6 +1047,7 @@ function update(dt, t) {
   if (A.ctx && A.on) {
     const ct = A.ctx.currentTime;
     A.padF.frequency.setTargetAtTime(140 + 2700 * Lhere * Lhere, ct, 0.4);
+    { const shift = Math.min(900, 1200 * Math.log2(1 / playerF) * 0.5); for (const o of A.oscs || []) o.detune.setTargetAtTime(o._det + shift, ct, 0.3); }
     A.padG.gain.setTargetAtTime(0.05 + 0.13 * Lhere, ct, 0.5);
     A.rumble.gain.setTargetAtTime(0.32 * near + 0.05 * nearPull, ct, 0.4);
     if (Math.random() < dt * 1.6 * Lhere * Lhere) chime(Lhere);
@@ -1008,4 +1071,9 @@ requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden';
 window.__umbra = { // debug handle
   treeSpecs,
+  simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
+    const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }
+      const f = dilJS(camera.position.x, camera.position.y, camera.position.z), d = days / 60; gardenDays += d / f; yourDays += d; garden.seasons.advance(d / f, dilJS); }
+    refreshSeasonUI(); refreshTimeUI();
+  },
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

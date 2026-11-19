@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
+import { plantState, flagsFor, lawnTint } from './seasons.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -67,6 +68,9 @@ attribute vec2 aShape;
 #ifdef FLORET
 attribute vec3 aCol2; varying vec3 vCol2;
 #endif
+#ifdef GROW
+attribute float aPlant; uniform sampler2D uPlantA; uniform sampler2D uPlantS; uniform int uPlantW; varying float vSen;
+#endif
 `;
   const VPROJ = `
 vec4 wp = vec4(transformed, 1.0);
@@ -74,6 +78,20 @@ vec4 wp = vec4(transformed, 1.0);
 wp = instanceMatrix * wp;
 #endif
 wp = modelMatrix * wp;
+#ifdef GROW
+{ int pid = int(aPlant + 0.5); ivec2 tc = ivec2(pid % uPlantW, pid / uPlantW);
+  vec4 PA = texelFetch(uPlantA, tc, 0), PS = texelFetch(uPlantS, tc, 0);
+  vec3 org0 = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  #if defined(PART_FLOWER)
+  float gs = PS.y, gpos = max(PS.x, step(0.01, PS.y)); vSen = PS.w;
+  #elif defined(PART_STEM)
+  float gs = max(max(PS.x, step(0.01, PS.y)), mod(PA.w, 2.0)); float gpos = gs; vSen = PS.z;
+  #else
+  float gs = PS.x, gpos = PS.x; vSen = PS.z;
+  #endif
+  wp.xyz = PA.xyz + (org0 - PA.xyz) * gpos + (wp.xyz - org0) * gs;
+}
+#endif
 if (uSway > 0.0) {
   #ifdef USE_INSTANCING
   vec3 org = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -93,7 +111,14 @@ if (uSway > 0.0) {
 vWPos = wp.xyz;
 vec4 mvPosition = viewMatrix * wp;
 gl_Position = projectionMatrix * mvPosition;`;
-  const FHEAD = COMMON + `\nuniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; varying vec3 vWPos;\n#ifdef FLORET\nvarying vec3 vCol2;\n#endif\n`;
+  const GTINT = `
+#ifdef GROW
+{ float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  if (vSen < 0.0) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lum) * vec3(0.85, 1.3, 0.42) * 1.3, -vSen);
+  else if (vSen > 0.0) { vec3 yel = vec3(lum) * vec3(1.6, 1.25, 0.32), brn = vec3(lum) * vec3(0.95, 0.62, 0.36);
+    diffuseColor.rgb = vSen < 0.5 ? mix(diffuseColor.rgb, yel, vSen * 2.0) : mix(yel, brn, vSen * 2.0 - 1.0); } }
+#endif`;
+  const FHEAD = COMMON + `\n#ifdef GROW\nvarying float vSen;\n#endif\nuniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; varying vec3 vWPos;\n#ifdef FLORET\nvarying vec3 vCol2;\n#endif\n`;
   const FDRAIN = `
 #ifdef TRANSLUCENT
 { vec3 Lv = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
@@ -105,12 +130,13 @@ gl_Position = projectionMatrix * mvPosition;`;
   float Ld = drainAt(vWPos);
   vec3 exh = groundLight(vWPos.xz) * uExhibit * uLightGain * clamp(1.25 - vWPos.y * 0.12, 0.35, 1.25);
   outgoingLight = outgoingLight * mix(1.0, Ld, 0.93) + diffuseColor.rgb * exh * Ld;
+  outgoingLight = gshift(outgoingLight, vWPos);
   vec3 dd = uDiskPos - vWPos; float dl = length(dd);
   outgoingLight += diffuseColor.rgb * uDiskGlow * (0.35 + 0.65 * max(dot(normalize((viewMatrix * vec4(dd / dl, 0.0)).xyz), normal), 0.0)) / (1.0 + dl * dl / 180.0);
 }`;
   function patch(m, o = {}) {
-    m.defines = Object.assign(m.defines || {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {}, o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.barkUV ? { BARKUV: '' } : {});
-    const key = ['g', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.barkUV ? 'k' : '', o.key || ''].join('|');
+    m.defines = Object.assign(m.defines || {}, o.grow ? { GROW: '' } : {}, o.part === 'flower' ? { PART_FLOWER: '' } : {}, o.part === 'stem' ? { PART_STEM: '' } : {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {}, o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.barkUV ? { BARKUV: '' } : {});
+    const key = ['g', o.grow ? 'G' + (o.part || 'leaf') : '', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.barkUV ? 'k' : '', o.key || ''].join('|');
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.uniforms.uSway = { value: o.sway || 0 }; sh.uniforms.uSwayH = { value: o.swayH || 0.9 };
@@ -142,6 +168,7 @@ objectNormal = normalize(vec3(-4.0 * aShape.x * position.x, 1.0, -4.0 * aShape.x
       sh.vertexShader = v;
       if (!o.depth) {
         let f = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + FHEAD).replace('#include <opaque_fragment>', FDRAIN + '\n#include <opaque_fragment>');
+        if (o.grow) f = f.replace('#include <color_fragment>', '#include <color_fragment>\n' + GTINT);
         if (o.floret) f = f.replace('#include <map_fragment>', '').replace('#include <color_fragment>', `#include <color_fragment>
 { vec4 fm = texture2D(map, vMapUv);
 #ifdef BELL
@@ -333,7 +360,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   const groundMat = P.std({ color: 0xffffff, roughness: 0.96 }, {
     key: 'ground', extra: sh => {
       Object.assign(sh.uniforms, { uLawnT: { value: lawnT }, uSoilT: { value: soilT }, uGravT: { value: gravT } });
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D uGroundMask; uniform sampler2D uLawnT; uniform sampler2D uSoilT; uniform sampler2D uGravT; uniform vec4 uMeadow[2];')
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D uGroundMask; uniform sampler2D uLawnT; uniform sampler2D uSoilT; uniform sampler2D uGravT; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;')
         .replace('#include <map_fragment>', `
         vec2 gq = vWPos.xz;
         vec4 gm = texture2D(uGroundMask, vec2(0.5 + gq.x / 200.0, 0.5 - gq.y / 200.0));
@@ -342,7 +369,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
         for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 5.0, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
         float macro = 0.8 + 0.4 * vnoise(gq * 0.11) * (0.7 + 0.3 * vnoise(gq * 0.6));
         float stripe = 1.0 + 0.07 * sign(sin(gq.x * 3.14159 / 1.8)) * (1.0 - mead);
-        vec3 cl = texture2D(uLawnT, gq / 1.1).rgb * macro * stripe * mix(vec3(1.0), vec3(1.15, 1.05, 0.7), mead * 0.6);
+        vec3 cl = texture2D(uLawnT, gq / 1.1).rgb * macro * stripe * mix(vec3(1.0), vec3(1.15, 1.05, 0.7), mead * 0.6) * uSeasonTint;
         vec3 cs = texture2D(uSoilT, gq / 0.9).rgb * (0.8 + 0.4 * vnoise(gq * 0.5));
         vec3 cg = texture2D(uGravT, gq / 1.0).rgb * (0.9 + 0.2 * vnoise(gq * 0.3));
         float ws = gm.r + gm.g + gm.b + 1e-4;
@@ -369,7 +396,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     const mat = P.std({ color: 0xffffff, roughness: 0.9, side: THREE.DoubleSide, vertexColors: true }, {
       key: 'grass', extra: sh => {
         sh.uniforms.uTile = { value: TILE };
-        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec4 aOff; uniform vec3 uCam; uniform float uTile; uniform sampler2D uGroundMask; uniform vec4 uMeadow[2]; varying float vGH;')
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec4 aOff; uniform vec3 uCam; uniform float uTile; uniform sampler2D uGroundMask; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint; varying float vGH;')
           .replace('#include <beginnormal_vertex>', `
             vec2 gc = uCam.xz;
             vec2 gp = gc + mod(aOff.xy - gc + 0.5 * uTile, uTile) - 0.5 * uTile;
@@ -395,7 +422,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
             transformed.xz += (glean + uWindDir * gpush * 0.7) * gy * gy * gh;
             vGH = gy;
             vColor = mix(vec3(0.035, 0.07, 0.022), vec3(0.13, 0.21, 0.06), gy) * (0.7 + 0.55 * aOff.z);
-            vColor = mix(vColor, vec3(0.30, 0.27, 0.10) * (0.7 + 0.5 * aOff.z), mead * gy * 0.55);`);
+            vColor = mix(vColor, vec3(0.30, 0.27, 0.10) * (0.7 + 0.5 * aOff.z), mead * gy * 0.55) * uSeasonTint;`);
       },
     });
     grass = new THREE.Mesh(geo, mat); grass.frustumCulled = false; grass.receiveShadow = true; scene.add(grass);
@@ -433,31 +460,45 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     ball: PlantArt.crossGeo(THREE, 3, true, true), sphere: new THREE.IcosahedronGeometry(0.5, 1), spike: PlantArt.crossGeo(THREE, 3, false, false),
     stem: new THREE.CylinderGeometry(1, 1, 1, 5, 1, true).translate(0, 0.5, 0),
   };
-  const leafMat = P.std({ map: leafAtlas.tex, alphaTest: 0.4, roughness: 0.72, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true });
-  const flMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true });
-  const flDiscMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, disc: true, translucent: true });
-  const stemMat = P.std({ roughness: 0.8 }, { sway: 1 });
+  const leafMat = P.std({ map: leafAtlas.tex, alphaTest: 0.4, roughness: 0.72, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true, grow: true, part: 'leaf' });
+  const flMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, translucent: true, grow: true, part: 'flower' });
+  const flDiscMat = P.std({ map: flAtlas.tex, alphaTest: 0.4, roughness: 0.55, side: THREE.DoubleSide }, { sway: 1, atlas: true, disc: true, translucent: true, grow: true, part: 'flower' });
+  const stemMat = P.std({ roughness: 0.8 }, { sway: 1, grow: true, part: 'stem' });
   const MATS = { leafC: leafMat, leafS: leafMat, disc: flDiscMat, ball: flMat, sphere: flMat, spike: flMat, stem: stemMat };
-  const DEPTHS = { leafC: P.depth(leafAtlas.tex, { sway: 1, atlas: true }), leafS: null, disc: P.depth(flAtlas.tex, { sway: 1, atlas: true, disc: true }), ball: P.depth(flAtlas.tex, { sway: 1, atlas: true }), sphere: null, spike: null, stem: P.depth(null, { sway: 1 }) };
+  const DEPTHS = { leafC: P.depth(leafAtlas.tex, { sway: 1, atlas: true, grow: true, part: 'leaf' }), leafS: null, disc: P.depth(flAtlas.tex, { sway: 1, atlas: true, disc: true, grow: true, part: 'flower' }), ball: P.depth(flAtlas.tex, { sway: 1, atlas: true, grow: true, part: 'flower' }), sphere: null, spike: null, stem: P.depth(null, { sway: 1, grow: true, part: 'stem' }) };
+  const floretDepth = P.depth(null, { sway: 1, grow: true, part: 'flower' });
   DEPTHS.leafS = DEPTHS.leafC; DEPTHS.sphere = DEPTHS.spike = DEPTHS.ball;
   const FL3 = buildFlowers3D(), F3TYPES = Object.keys(FL3);
   for (const t of F3TYPES) {
     GEOS[t] = FL3[t].geo;
-    MATS[t] = P.std({ map: FL3[t].mask, side: THREE.DoubleSide, roughness: t === 'rose' || t === 'peony' ? 0.6 : 0.5 }, { sway: 1, floret: true, bell: t === 'bell', translucent: true, key: 'f3' + t });
-    DEPTHS[t] = DEPTHS.stem;
+    MATS[t] = P.std({ map: FL3[t].mask, side: THREE.DoubleSide, roughness: t === 'rose' || t === 'peony' ? 0.6 : 0.5 }, { sway: 1, floret: true, bell: t === 'bell', translucent: true, grow: true, part: 'flower', key: 'f3' + t });
+    DEPTHS[t] = floretDepth;
   }
   const TYPES = Object.keys(GEOS);
 
+  // every plant (and tree) has its own clock; instances carry the index of the plant they belong to
+  const PT = { k: [], x: [], y: [], z: [], bx: [], by: [], bz: [], tau: [], planted: [] }, pgrid = new Map();
+  let curPid = 0, baseAge = 3;
+  function registerPlant(k, x, y, z, bx = x, by = y, bz = z) {
+    const i = PT.k.length; PT.k.push(k); PT.x.push(x); PT.y.push(y); PT.z.push(z); PT.bx.push(bx); PT.by.push(by); PT.bz.push(bz); PT.tau.push(0); PT.planted.push(0);
+    if (k !== 'tree') { const g = Math.floor(x / 2) + ',' + Math.floor(z / 2); let L = pgrid.get(g); if (!L) pgrid.set(g, L = []); L.push(i); }
+    curPid = i; return i;
+  }
+  function nearestPid(x, z) {
+    let best = -1, bd = 1e9; const i0 = Math.floor(x / 2), j0 = Math.floor(z / 2);
+    for (let r = 1; r <= 3 && best < 0; r++) for (let j = j0 - r; j <= j0 + r; j++) for (let i = i0 - r; i <= i0 + r; i++) { const L = pgrid.get(i + ',' + j); if (L) for (const p of L) { const d = (PT.x[p] - x) ** 2 + (PT.z[p] - z) ** 2; if (d < bd) { bd = d; best = p; } } }
+    return Math.max(0, best);
+  }
   const CH = 16, buckets = new Map();
   const bucket = (x, z) => {
     const i = Math.floor(x / CH), j = Math.floor(z / CH), k = i + ',' + j;
-    let b = buckets.get(k); if (!b) { b = { x: (i + 0.5) * CH, z: (j + 0.5) * CH }; for (const t of TYPES) b[t] = { m: [], c: [], r: [], s: [], c2: [], n: 0 }; buckets.set(k, b); }
+    let b = buckets.get(k); if (!b) { b = { x: (i + 0.5) * CH, z: (j + 0.5) * CH }; for (const t of TYPES) b[t] = { m: [], c: [], r: [], s: [], c2: [], pid: [], n: 0 }; buckets.set(k, b); }
     return b;
   };
   const _m = new THREE.Matrix4(), _p = new V3(), _a = new V3(), _b = new V3(), _s = new V3(), _q = new Q(), _qr = new Q(), _c = new THREE.Color();
   function push(B, p, q, s, c, rect, shape, c2) {
     _m.compose(p, q, s); const e = _m.elements; for (let i = 0; i < 16; i++) B.m.push(e[i]);
-    B.c.push(c.r, c.g, c.b); if (rect) B.r.push(rect[0], rect[1], rect[2], rect[3]); if (shape) B.s.push(shape[0], shape[1]); if (c2) B.c2.push(c2.r, c2.g, c2.b); B.n++;
+    B.c.push(c.r, c.g, c.b); if (rect) B.r.push(rect[0], rect[1], rect[2], rect[3]); if (shape) B.s.push(shape[0], shape[1]); if (c2) B.c2.push(c2.r, c2.g, c2.b); B.pid.push(curPid); B.n++;
   }
   // florets along a spire (delphinium, lupine, foxglove) — see flowers3d.js for the morphology
   const _mb = new THREE.Matrix4(), _ex = new V3(), _ey = new V3(), _ez = new V3(), _e1 = new V3(), _e2 = new V3(), _O = new V3(), _F = new V3(), _P = new V3(), _X = new V3(1, 0, 0);
@@ -512,6 +553,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     const r = PlantArt.rngOf(seed + 17), G = art.gen(L, seed), sc = o.scale || 1;
     const R = sz[1] / 2 * IN * sc * (0.85 + 0.25 * r()), H = sz[0] * IN * sc * (0.85 + 0.27 * r());
     const y0 = o.y || 0, rot = r() * TAU, cr = Math.cos(rot), sr = Math.sin(rot);
+    registerPlant(k, x, y0, z);
     _qr.setFromAxisAngle(_Y, -rot);
     const Wp = (n, out) => { const a = n[0] * R, b = n[2] * R; return out.set(x + a * cr - b * sr, y0 + n[1] * H, z + a * sr + b * cr); };
     const bk = bucket(x, z), lr = leafAtlas.rects[L.leaf], fr = flAtlas.rects[k];
@@ -547,6 +589,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   function addFlowerStalk(k, x, z, h, s = 1) {   // a single bloom on a wiry stem (meadow wildflowers)
     const L = LOOKS[k], F = PlantArt.FL[L.flStyle], fr = flAtlas.rects[k]; if (!fr || !GEOS[F.kind]) return;
     const bk = bucket(x, z), lean = rr(-0.08, 0.08), lean2 = rr(-0.08, 0.08);
+    registerPlant(k, x, 0, z);
     _p.set(x + lean, h, z + lean2); _a.set(x, 0, z); _b.subVectors(_p, _a); const len = _b.length();
     _q.setFromUnitVectors(_Y, _b.clone().normalize()); _s.set(0.0022, len, 0.0022); push(bk.stem, _a, _q, _s, _c.set(L.stemCol));
     _q.setFromEuler(new THREE.Euler(rr(-0.4, 0.4), rr(0, TAU), rr(-0.4, 0.4)));
@@ -724,7 +767,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
         vec3 col = mix(deep, refl, clamp(0.3 + fres, 0.0, 1.0));
         vec3 H = normalize(uSunDir + V);
         col += uSunCol * pow(max(dot(N, H), 0.0), 500.0) * 4.0 * step(0.0, uSunDir.y);
-        col *= mix(1.0, Ld, 0.93);
+        col *= mix(1.0, Ld, 0.93); col = gshift(col, vW);
         gl_FragColor = vec4(mix(uFogColor, col, fogF(distance(cameraPosition, vW))), 1.0);
       }`,
   });
@@ -816,6 +859,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   const tubeSegs = metalSegs.slice();
   const roseArch = (t) => {
     const p = layout.loopCurve.getPointAt(t), tg = layout.loopCurve.getTangentAt(t), nx = -tg.z, nz = tg.x, Wd = 1.78;
+    const archPid = registerPlant('roseDA', p.x, 0, p.z);
     const frames = [];
     for (const d of [-0.22, 0.22]) {
       const pts = []; const bx = p.x + tg.x * d, bz = p.z + tg.z * d;
@@ -841,6 +885,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
       push(bucket(_p.x, _p.z).rose, _p, _q, _s, _c.set(archPal[0]).multiplyScalar(rr(0.9, 1.08)), null, null, _c4.set(archPal[1]));
     }
     for (const s of [-1, 1]) addPlant('roseDA', p.x + nx * s * (Wd + 0.35), p.z + nz * s * (Wd + 0.35), { scale: 0.75, salt: 9 });
+    void archPid;
   };
   for (const t of [0.085, 0.2, 0.29, 0.415, 0.52, 0.655, 0.775, 0.905]) roseArch(t);
   {
@@ -857,9 +902,9 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     const barkMat = P.std({ map: barkT, normalMap: barkN, normalScale: new THREE.Vector2(1.4, 1.4), roughness: 0.95 }, { sway: 0.02, swayH: 8, barkUV: true, key: 'bark' });
     const broadC = clusterTex('broad'), willowC = clusterTex('willow');
     const broadT = texOf(broadC, renderer, { repeat: false }), willowT = texOf(willowC, renderer, { repeat: false }), broadN = normalFrom(broadC, 3, renderer), willowN = normalFrom(willowC, 3, renderer);
-    const broadMat = P.std({ map: broadT, normalMap: broadN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.08, swayH: 6, translucent: true, key: 'broad' });
-    const willowMat = P.std({ map: willowT, normalMap: willowN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.14, swayH: 5, translucent: true, key: 'willow' });
-    const broadD = P.depth(broadT, { sway: 0.08, swayH: 6, key: 'broad' }), willowD = P.depth(willowT, { sway: 0.14, swayH: 5, key: 'willow' });
+    const broadMat = P.std({ map: broadT, normalMap: broadN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.08, swayH: 6, translucent: true, key: 'broad', grow: true, part: 'leaf' });
+    const willowMat = P.std({ map: willowT, normalMap: willowN, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 }, { sway: 0.14, swayH: 5, translucent: true, key: 'willow', grow: true, part: 'leaf' });
+    const broadD = P.depth(broadT, { sway: 0.08, swayH: 6, key: 'broad', grow: true, part: 'leaf' }), willowD = P.depth(willowT, { sway: 0.14, swayH: 5, key: 'willow', grow: true, part: 'leaf' });
     const flares = [];
     const segs = [], broad = [], willow = [];
     const seg = (a, b, r) => segs.push([a.clone(), b.clone(), r]);
@@ -877,20 +922,22 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
         for (let j = 0; j < 3; j++) { const d = new V3(Math.cos(th + R(-0.9, 0.9)), R(0.1, 0.9), Math.sin(th + R(-0.9, 0.9))).normalize(); const e = tp.clone().addScaledVector(d, T.A * R(0.25, 0.4)); seg(tp, e, r0 * 0.2); tips.push(e); }
       }
       const leafCol = new THREE.Color().setHSL(R(0.22, 0.31), R(0.35, 0.55), R(0.22, 0.33));
+      const tpid = registerPlant('tree', T.x, 0, T.z, T.x, T.cy, T.z);
       const nC = Math.floor((T.kind === 'weep' ? 170 : 300 + T.A * 40) * (isTouch ? 0.55 : 1));
       for (let i = 0; i < nC; i++) {
         const d = new V3(R(-1, 1), R(-1, 1), R(-1, 1)); if (d.lengthSq() > 1 || d.lengthSq() < 0.01) { i--; continue; } d.normalize();
         if (T.kind === 'weep' && d.y < -0.1) d.y = -d.y * 0.4;
         const k = 0.4 + 0.45 * Math.sqrt(tr());
-        broad.push({ p: new V3(T.x + d.x * T.A * k, T.cy + d.y * T.B * k, T.z + d.z * T.A * k), s: R(0.75, 1.15) * Math.min(1.25, T.A / 3), c: leafCol.clone().multiplyScalar(R(0.8, 1.2)), out: d });
+        broad.push({ p: new V3(T.x + d.x * T.A * k, T.cy + d.y * T.B * k, T.z + d.z * T.A * k), s: R(0.75, 1.15) * Math.min(1.25, T.A / 3), c: leafCol.clone().multiplyScalar(R(0.8, 1.2)), out: d, pid: tpid });
       }
       for (const st of T.strands || []) for (let i = 0; i < st.length - 1; i += 1) {
         const a = new V3(...st[i]), b = new V3(...st[i + 1]);
-        willow.push({ p: a.clone().lerp(b, 0.5), s: R(0.5, 0.7), c: leafCol.clone().multiplyScalar(R(0.85, 1.25)), hang: true });
+        willow.push({ p: a.clone().lerp(b, 0.5), s: R(0.5, 0.7), c: leafCol.clone().multiplyScalar(R(0.85, 1.25)), hang: true, pid: tpid });
         if (i % 2 === 0) seg(a, b, 0.008);
       }
     }
     const build = (list, mat, depth, geo, hang) => {
+      geo.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(list.map(L => L.pid)), 1));
       const im = new THREE.InstancedMesh(geo, mat, list.length), m = new THREE.Matrix4(), q = new Q(), s = new V3();
       list.forEach((L, i) => {
         if (hang) { q.setFromEuler(new THREE.Euler(rr(-0.2, 0.2), rng() * TAU, rr(-0.15, 0.15))); s.set(L.s * 0.8, L.s * 1.5, L.s); }
@@ -957,13 +1004,14 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     for (const s of layout.loopS) if (layout.inBorderT(s.t)) for (let i = 0; i < 2 * 2.7 * 0.5 * 18; i++) { const side = rng() < 0.5 ? -1 : 1, d = rr(1.7, 4.45); add(s.x - s.tz * side * d + rr(-0.25, 0.25), s.z + s.tx * side * d + rr(-0.25, 0.25)); }
     for (let i = 0; i < 300 * 16; i++) { const a = rng() * TAU, r = Math.sqrt(rr(8.85 ** 2, 13.75 ** 2)), x = Math.cos(a) * r, z = Math.sin(a) * r; if (Math.abs(x) > 2.0 && Math.abs(z) > 2.0) add(x, z); }
     const ct = texOf(clusterTex('broad'), renderer, { repeat: false });
-    const mat = P.std({ map: ct, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 }, { sway: 0.3, key: 'cover' });
-    const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, pts.length), m = new THREE.Matrix4(), q = new Q(), sc = new V3(), c = new THREE.Color(), p = new V3();
+    const mat = P.std({ map: ct, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 }, { sway: 0.3, key: 'cover', grow: true, part: 'leaf' });
+    const cg = new THREE.PlaneGeometry(1, 1); cg.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(pts.map(([x, z]) => nearestPid(x, z))), 1));
+    const im = new THREE.InstancedMesh(cg, mat, pts.length), m = new THREE.Matrix4(), q = new Q(), sc = new V3(), c = new THREE.Color(), p = new V3();
     pts.forEach(([x, z], i) => {
       q.setFromEuler(new THREE.Euler(-Math.PI / 2 + rr(-0.7, 0.7), rng() * TAU, rr(-0.5, 0.5), 'YXZ')); const k = rr(0.35, 0.6); sc.set(k, k, k);
       m.compose(p.set(x, rr(0.04, 0.22), z), q, sc); im.setMatrixAt(i, m); im.setColorAt(i, c.setHSL(rr(0.22, 0.3), rr(0.35, 0.55), rr(0.13, 0.22)));
     });
-    im.customDepthMaterial = P.depth(ct, { sway: 0.3, key: 'cover' }); im.castShadow = false; im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im);
+    im.customDepthMaterial = P.depth(ct, { sway: 0.3, key: 'cover', grow: true, part: 'leaf' }); im.castShadow = false; im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im);
   }
 
   // ---------------------------------------------------------------- bake the plant buckets into instanced meshes
@@ -982,6 +1030,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
       const geo = GEOS[type].clone();
       if (r) geo.setAttribute('aRect', new THREE.InstancedBufferAttribute(r, 4));
       if (s) geo.setAttribute('aShape', new THREE.InstancedBufferAttribute(s, 2));
+      { const pa = new Float32Array(n); for (let j = 0; j < n; j++) pa[j] = B.pid[perm[j]]; geo.setAttribute('aPlant', new THREE.InstancedBufferAttribute(pa, 1)); }
       if (F3TYPES.includes(type)) geo.setAttribute('aCol2', new THREE.InstancedBufferAttribute(c2 || new Float32Array(n * 3).fill(1), 3));
       const mesh = new THREE.InstancedMesh(geo, MATS[type], n);
       mesh.instanceMatrix = new THREE.InstancedBufferAttribute(m, 16);
@@ -993,6 +1042,36 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
   }
   buckets.clear();
   console.log(`[garden] ${plantCount} plants, ${instTotal} plant instances in ${chunks.length} chunks ${JSON.stringify(byType)}`);
+
+  // ---------------------------------------------------------------- the clocks
+  const NP = PT.k.length, PW = 128, PH = Math.ceil(NP / PW);
+  const pa = new Float32Array(PW * PH * 4), ps = new Float32Array(PW * PH * 4);
+  for (let i = 0; i < NP; i++) { pa.set([PT.bx[i], PT.by[i], PT.bz[i], flagsFor(PT.k[i])], i * 4); }
+  const texA = new THREE.DataTexture(pa, PW, PH, THREE.RGBAFormat, THREE.FloatType), texS = new THREE.DataTexture(ps, PW, PH, THREE.RGBAFormat, THREE.FloatType);
+  for (const t of [texA, texS]) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true; }
+  U.uPlantA = { value: texA }; U.uPlantS = { value: texS }; U.uPlantW = { value: PW };
+  const st = [0, 0, 0, 0];
+  let DOY0 = 165;   // the garden opens on 14 June
+  function writeStates() {
+    for (let i = 0; i < NP; i++) {
+      const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, age = baseAge + (PT.tau[i] - PT.planted[i]) / 365;
+      plantState(PT.k[i], d, age, st); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3];
+    }
+    texS.needsUpdate = true;
+  }
+  writeStates();
+  const seasons = {
+    count: NP,
+    // advance every plant's own clock: dDays of garden (coordinate) time, scaled by the plant's dilation factor
+    advance(dDays, dil) { if (dDays !== 0) { for (let i = 0; i < NP; i++) PT.tau[i] += dDays * dil(PT.x[i], PT.y[i] + 0.4, PT.z[i]); } writeStates(); },
+    jump(dDays) { for (let i = 0; i < NP; i++) PT.tau[i] += dDays; writeStates(); },   // scrubbing the calendar: everyone moves together
+    replant() { for (let i = 0; i < NP; i++) PT.planted[i] = PT.tau[i]; baseAge = 0; writeStates(); },
+    lag(x, z) { const p = nearestPid(x, z); return PT.tau[p]; },
+    get DOY0() { return DOY0; },
+  };
+  U.uSeasonTint = U.uSeasonTint || { value: new V3(1, 1, 1) };
+  const lt = [1, 1, 1];
+  function setLawnSeason(d) { lawnTint(((d % 365) + 365) % 365, lt); U.uSeasonTint.value.set(lt[0], lt[1], lt[2]); }
 
   // ---------------------------------------------------------------- per-frame
   const v2 = new THREE.Vector2();
@@ -1027,5 +1106,5 @@ export function createGarden({ scene, renderer, U, COMMON, layout, treeSpecs, me
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const w of waterMeshes) w.visible = true;
     if (extras) extras();
   }
-  return { update, preRender, blocked, plantCount, WATER_Y };
+  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason };
 }
