@@ -6,8 +6,8 @@ Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger vo
 
 **Play:** open `index.html` (or the GitHub Pages site).
 
-- Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound.
-- Time of day: the pill at bottom right toggles **night** (default) ↔ **live** (your real clock; also **T**), and its slider scrubs to any hour. Live/set times place the sun by a real solar-position calculation (≈42°N, longitude from your time zone), with day sky, twilight and stars fading in. In daylight the voids carve pockets of night out of the day.
+- Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound. The **pull** slider sets how hard the voids tug on you (0–150%).
+- Time of day: the pill at bottom right toggles **night** (default) ↔ **live** (the real sky right now: your clock and today's date; also **T**), and its slider scrubs to any hour on the garden's own calendar date. The sun is placed by a solar-position calculation (≈42°N, longitude from your time zone), with day sky, clouds, twilight and stars. In daylight the voids carve pockets of night out of the day.
 - Touch: drag the left half to walk, the right half to look, double-tap (or the button) to open a void.
 
 ## The great void
@@ -33,8 +33,8 @@ Small on purpose, so every surface can be close-up quality. Materials are photo-
 - **Plants:** 57 perennials, bulbs, grasses, shrubs and roses from [Shortwood Meadow](https://github.com/samuelling/shortwood-meadow) (`src/plantart.js`, `src/looks.js`) — plant structure and painted flowers — now with scanned leaves (colour + normal maps) for every leaf type. ~3,000 plants draw as instanced meshes with distance LOD and wind sway.
 - **Showpiece flowers in true 3D** (`src/flowers3d.js`): English-rose rosettes, double peonies, crinkled poppies, allium globes, delphinium, lupine and foxglove spires built floret by floret.
 - **Hedges & topiary:** swept, clipped forms shelled with scanned yew sprays and box twigs (some growing out of the face, some lying against it).
-- **Trees:** limbs are tapered tubes along curves with flared roots and scanned bark; canopies are boughs of scanned lime leaves, darker toward the middle. A belt of trees stands outside the wall.
-- **Props:** scanned lamp posts, gate, bench and a stone cat on the pool rim.
+- **Trees (Blender):** `tools/blender/build_trees.py` grows three variants as a skeleton of trunk, scaffold limbs, branches and twigs reaching for the crown's surface. Trunk, root buttresses and the base of each limb are fused by a voxel remesh, so limbs flow out of the trunk and roots flare into the ground. About 1,700 boughs of scanned lime leaves sit on the twigs of each tree, and the sky each bough (and each patch of bark) can see is ray-cast through the crown and stored as vertex colour, so canopies are bright outside and dim within. The garden instances them, scaled to each tree's crown, with bark projected triplanar and leaf normals leaned outward so a crown lights as one rounded mass. `blender/trees.blend` opens in Blender.
+- **Props:** scanned lamp posts, gate, bench and a stone cat on the pool rim; coping stones (laid end to end along the wall and canal, each its own tone) and path lanterns modelled in Blender (`tools/blender/build_props.py`).
 - **Water:** one planar reflection pass shared by every pool and the canal (the voids appear in it as black spheres), a refracted stone floor with caustics, ripples, ribbons of falling water, foam and droplet jets.
 - **Light:** sun or moon with soft shadows following you, a sky with drifting cloud, environment lighting, fog; the exhibit's light pools and the voids' drain are injected into every material.
 - **Rendering:** 4× multisampling with alpha-to-coverage (smooth leaf edges without sorting), screen-space ambient occlusion from the depth buffer, bloom, a light colour grade, ACES tone mapping. Resolution drops by itself if frames run slow; `?q=low`, `?msaa=0` and `?ao=0` turn things down by hand.
@@ -51,4 +51,4 @@ All CC0: textures and models from [Poly Haven](https://polyhaven.com) (gravel_fl
 - **Ground light:** pools of light are baked into a canvas light map at load and multiplied by the drain field per fragment.
 - **Sound (Web Audio):** a chord pad whose filter and level follow the light where you stand, glints that fade as the light does, a sub-rumble near awake voids, and an inhale when one wakes.
 
-ES modules, no build step; three.js r160 from jsDelivr; about 15 MB of textures and models in `assets/`.
+ES modules, no build step; three.js r160 from jsDelivr; about 19 MB of textures and models in `assets/`.

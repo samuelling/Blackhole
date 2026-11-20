@@ -144,6 +144,7 @@ const layout = makeLayout();
 const { loopCurve, distToPath, loopLen } = layout;
 const METAL = [];   // [a, b, radius] — drawn as dark metal tubes by the garden
 const metal = (a, b, r) => METAL.push([a, b, r]);
+const LANTERNS = [];   // [x, z, colour] — the garden stands a lantern at each
 const BULBS = [];   // [x, y, z, colour] — small glass bulbs under the brightest point lights
 const bulb = (x, y, z, c, size = 0.26, b = 1.5) => { light(x, y, z, c, size, b); BULBS.push([x, y, z, c]); };
 
@@ -169,8 +170,7 @@ const bulb = (x, y, z, c, size = 0.26, b = 1.5) => { light(x, y, z, c, size, b);
 // ------------------------------------------------------------------ low path lanterns round the loop walk
 {
   const lantern = (x, z, c = P.warm) => {
-    metal([x, 0, z], [x, 0.62, z], 0.02); metal([x, 0.6, z], [x, 0.66, z], 0.05); metal([x, 0.78, z], [x, 0.8, z], 0.06);
-    light(x, 0.72, z, jit(c, .05), 0.42, 1.6); splat(x, z, 2.6, c, 0.34);
+    LANTERNS.push([x, z, c]); light(x, 0.675, z, jit(c, .05), 0.42, 1.6); splat(x, z, 2.6, c, 0.34);
   };
   const n = Math.floor(loopLen / 7.5);
   for (let i = 0; i < n; i++) {
@@ -507,7 +507,7 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
 
 // ------------------------------------------------------------------ the garden itself
 scene.fog = new THREE.FogExp2(0x000000, U.uFogDensity.value);
-const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, isTouch, low: LOW, grassScale: parseFloat(QS.get('grass')) || 1 });
+const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, isTouch, low: LOW, grassScale: parseFloat(QS.get('grass')) || 1 });
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true; sunLight.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
 Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
@@ -851,6 +851,12 @@ function openVoid() {
   }
   makeVoid(p.x, p.y, p.z, slot, k, true);
 }
+// how hard the voids tug on the walker: a slider, remembered between visits where the browser allows
+let PULL = 0.55; try { const v = parseFloat(localStorage.getItem('gd.pull')); if (v >= 0 && v <= 1.5) PULL = v; } catch (e) {}
+const setPull = v => { PULL = v; $('pSlider').value = Math.round(v * 100); $('bPull').textContent = `pull ${Math.round(v * 100)}%`; try { localStorage.setItem('gd.pull', String(v)); } catch (e) {} };
+$('pSlider').addEventListener('input', e => { e.stopPropagation(); setPull(e.target.value / 100); });
+$('bPull').addEventListener('click', e => { e.stopPropagation(); setPull(PULL > 0.02 ? 0 : 0.55); });
+setPull(PULL);
 $('bVoid').addEventListener('click', e => { e.stopPropagation(); if (started) openVoid(); });
 $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); setSound(!A.on); });
 
@@ -906,6 +912,7 @@ try { const m = localStorage.getItem('umbra-time'); if (m === 'live' || m === 'n
 const fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase();
 function garderDate() {   // the garden's calendar date (it sets the sun's height), at the chosen hour
   const now = new Date(), [m, dd] = doyToMonthDay(calDoy());
+  if (timeMode === 'live') return now;   // live is the real sky right now: today's date as well as the clock (the plants keep the garden's own season)
   const h = timeMode === 'live' ? now.getHours() + now.getMinutes() / 60 : timeMode === 'night' ? 23 : manualHour;
   return new Date(now.getFullYear(), m, dd, Math.floor(h), Math.round((h % 1) * 60));
 }
@@ -944,7 +951,7 @@ function applyTimeOfDay() {
   else { sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.3 * (1 - day); lightDir.copy(MOON_DIR); }
   hemi.intensity = 0.05 + 0.3 * (1 - day);
   U.uFogColor.value.copy(FOG_NIGHT).lerp(FOG_DAY, day).lerp(FOG_TWI, twi * 0.5 * (1 - day * 0.6));
-  U.uLightGain.value = 1 - 0.45 * day;
+  U.uLightGain.value = 1 - 0.45 * sstep(0.12, 0.5, sy);   // the exhibit's lights stay up until the sun is well clear of the wall
   U.uStarGain.value = (1 - day) ** 3;
   moon.material.color.copy(MOON_COL).multiplyScalar(1 - day); moon.visible = day < 0.98;
   scene.fog.color.copy(U.uFogColor.value);
@@ -1006,7 +1013,7 @@ function update(dt, t) {
     // gravity on the walker
     tmpV.set(v.pos.x - player.x, 0, v.pos.z - player.z); const dh = tmpV.length();
     const pull = v.giant ? 1.25 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 19))) : 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
-    if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull);
+    if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull * PULL);
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
   if (grav.length() > 2.8) grav.setLength(2.8);

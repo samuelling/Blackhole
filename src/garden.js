@@ -81,7 +81,7 @@ async function loadModel(url) {
 }
 export async function loadAssets(renderer, onProgress = () => {}) {
   const base = new URL('../assets/', import.meta.url).href, tl = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 1;
+  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 3;
   const tick = () => onProgress(++done / total);
   const T = (file, srgb, repeat) => new Promise((res, rej) => tl.load(base + 'tex/' + file + '.webp', t => {
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; tick(); res(t); }, undefined, () => rej(new Error('could not load ' + file))));
@@ -92,6 +92,9 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   for (const m of MODELS) jobs.push(loadModel(`${base}models/${m}/${m}.json`).then(sc => { models[m] = sc; tick(); }, () => { throw new Error('could not load ' + m); }));
   // stonework modelled in Blender (tools/blender/build_stone.py); the garden falls back to simple turned shapes without it
   jobs.push(loadModel(base + 'models/stone.json').then(sc => { models.stone = sc; tick(); }, () => tick()));
+  // trees grown in Blender (tools/blender/build_trees.py); simpler procedural trees stand in without them
+  jobs.push(loadModel(base + 'models/props.json').then(sc => { models.props = sc; tick(); }, () => tick()));   // coping stones, lantern (build_props.py)
+  jobs.push(loadModel(base + 'models/trees.json').then(sc => { models.trees = sc; tick(); }, () => tick()));
   await Promise.all(jobs);
   return { tex, models };
 }
@@ -137,6 +140,10 @@ wp = modelMatrix * wp;
   #endif
   if (PA.w > 1.5) gpos = 1.0;                       // trees keep their twigs; only the leaves come and go
   wp.xyz = PA.xyz + (org0 - PA.xyz) * gpos + (wp.xyz - org0) * gs;
+  #ifdef PUFF
+  // canopy shading: lean every leaf's normal toward "outward from the crown", so the tree lights as one rounded mass
+  vNormal = normalize(mix(vNormal, (viewMatrix * vec4(normalize(wp.xyz - PA.xyz + vec3(0.0, 1.0, 0.0)), 0.0)).xyz, 0.7));
+  #endif
 }
 #endif
 if (uSway > 0.0) {
@@ -221,8 +228,8 @@ diffuseColor.rgb *= tcol.rgb * mix(1.0, tarm.r, 0.85);
   function patch(m, o = {}) {
     const a2c = m.alphaToCoverage === true && m.alphaTest > 0;
     m.defines = Object.assign(m.defines || {}, o.grow ? { GROW: '' } : {}, o.part === 'flower' ? { PART_FLOWER: '' } : {}, o.part === 'stem' ? { PART_STEM: '' } : {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {},
-      o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.tri ? { TRIPLANAR: '' } : {}, a2c ? { A2C: '' } : {});
-    const key = ['g', o.grow ? 'G' + (o.part || 'leaf') : '', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.tri ? 'T' : '', a2c ? 'A' : '', o.key || ''].join('|');
+      o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.tri ? { TRIPLANAR: '' } : {}, a2c ? { A2C: '' } : {}, o.puff && !o.depth ? { PUFF: '' } : {});
+    const key = ['g', o.grow ? 'G' + (o.part || 'leaf') : '', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.tri ? 'T' : '', a2c ? 'A' : '', o.puff ? 'P' : '', o.key || ''].join('|');
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.uniforms.uSway = { value: o.sway || 0 }; sh.uniforms.uSwayH = { value: o.swayH || 0.9 };
@@ -258,6 +265,7 @@ objectNormal = normalize(vec3(-4.0 * aShape.x * position.x, 1.0, -4.0 * aShape.x
   diffuseColor.rgb *= fm.r * 1.25;
 #endif
 }`);
+        if (o.puff) f = f.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize(mix(normalize(vNormal), normal, 0.3));');
         if (o.tri) f = f.replace('#include <map_fragment>', TRI_MAP).replace('#include <normal_fragment_maps>', TRI_NORMAL)
           .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(tarm.g * mix(1.0, 0.22, uWet), 0.05, 1.0);');
         // alpha-to-coverage: turn the alpha-test edge into a one-pixel coverage ramp, so MSAA smooths every leaf outline
@@ -308,8 +316,9 @@ function worldUV(geo, k = 1) { const p = geo.attributes.position, n = geo.attrib
   return geo; }
 
 // ======================================================================= the garden
-export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], isTouch, low = false, grassScale = 1 }) {
+export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], lanterns = [], isTouch, low = false, grassScale = 1 }) {
   const P = makePatcher(U, COMMON), TX = assets.tex;
+  console.log('[garden] GPU texture units per shader: ' + renderer.capabilities.maxTextures);
   const rng = PlantArt.rngOf(1969);
   const rr = (a, b) => a + (b - a) * rng();
   const pick = a => a[Math.floor(rng() * a.length)];
@@ -371,10 +380,11 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   const G = { lawn: TX.sparse_grass, soil: TX.yellow_flower_mulch, grav: TX.gravel_floor, sett: TX.cobblestone_square };
   const groundMat = P.std({ color: 0xffffff, roughness: 1 }, {
     key: 'ground', extra: sh => {
-      Object.assign(sh.uniforms, { tLD: { value: G.lawn.diff }, tLN: { value: G.lawn.nor }, tLA: { value: G.lawn.arm }, tSD: { value: G.soil.diff }, tSN: { value: G.soil.nor }, tSA: { value: G.soil.arm },
+      // nine textures here + two masks + light map + shadow map + environment = 14 samplers: many GPUs (Apple's included) stop at 16
+      Object.assign(sh.uniforms, { tLD: { value: G.lawn.diff }, tSD: { value: G.soil.diff }, tSN: { value: G.soil.nor },
         tGD: { value: G.grav.diff }, tGN: { value: G.grav.nor }, tGA: { value: G.grav.arm }, tPD: { value: G.sett.diff }, tPN: { value: G.sett.nor }, tPA: { value: G.sett.arm } });
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-uniform sampler2D uGroundMask, uGroundMask2, tLD, tLN, tLA, tSD, tSN, tSA, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;`)
+uniform sampler2D uGroundMask, uGroundMask2, tLD, tSD, tSN, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;`)
         .replace('#include <map_fragment>', `
 vec2 gq = vWPos.xz; ${MASKUV}
 vec4 gm = texture2D(uGroundMask, muv), g2 = texture2D(uGroundMask2, muv);
@@ -396,16 +406,17 @@ vec3 cL = texture2D(tLD, uvL).rgb * vec3(0.74, 1.0, 0.46) * 1.08 * (1.0 + 0.09 *
 vec3 cS = texture2D(tSD, uvS).rgb * (0.85 + 0.3 * vnoise(gq * 0.6)) * 0.85;
 vec3 cG = pow(mix(texture2D(tGD, uvG).rgb, texture2D(tGD, uvG2).rgb, gmix), vec3(1.4)) * vec3(0.9, 0.82, 0.7) * (0.8 + 0.3 * vnoise(gq * 0.35));
 vec3 cP = texture2D(tPD, uvP).rgb * 0.95;
-vec3 aL = texture2D(tLA, uvL).rgb, aS = texture2D(tSA, uvS).rgb, aG = mix(texture2D(tGA, uvG).rgb, texture2D(tGA, uvG2).rgb, gmix), aP = texture2D(tPA, uvP).rgb;
+vec3 aL = vec3(1.0, 0.92, 0.0), aS = vec3(1.0, 0.94, 0.0), aG = mix(texture2D(tGA, uvG).rgb, texture2D(tGA, uvG2).rgb, gmix), aP = texture2D(tPA, uvP).rgb;
 vec3 gArm = aL * wL + aS * wS + aG * wG + aP * wP;
-vec3 gN = (texture2D(tLN, uvL).xyz * 2.0 - 1.0) * wL + (texture2D(tSN, uvS).xyz * 2.0 - 1.0) * wS + (texture2D(tGN, uvG).xyz * 2.0 - 1.0) * vec3(1.9, 1.9, 1.0) * wG + (texture2D(tPN, uvP).xyz * 2.0 - 1.0) * wP * 1.2;
+vec3 gN = vec3(0.0, 0.0, 1.0) * wL + (texture2D(tSN, uvS).xyz * 2.0 - 1.0) * wS + (texture2D(tGN, uvG).xyz * 2.0 - 1.0) * vec3(1.9, 1.9, 1.0) * wG + (texture2D(tPN, uvP).xyz * 2.0 - 1.0) * wP * 1.2;
 float gWet = g2.b * (wG + wP + wS * 0.5);
 vec3 gAlb = (cL * wL + cS * wS + cG * wG + cP * wP) * mix(1.0, gArm.r, 0.8) * mix(1.0, g2.g, 0.9) * mix(1.0, 0.55, gWet);
 diffuseColor.rgb *= gAlb;`)
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(gArm.g, 0.16, gWet * 0.85), 0.05, 1.0);')
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(max(gArm.g, 0.8), 0.16, gWet * 0.85), 0.05, 1.0);')
         .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(normalize(vec3(gN.x, gN.z + 0.35, gN.y)), 0.0)).xyz);');
     },
   });
+  groundMat.envMapIntensity = 0.35;   // gravel in shade should not mirror the sky
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(420, 420).rotateX(-Math.PI / 2), groundMat);
   ground.receiveShadow = true; scene.add(ground);
 
@@ -762,6 +773,12 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const metalMat = P.std({ color: 0x1b1c1b, roughness: 0.42, metalness: 0.7 });
   const addMesh = (geo, mat, x = 0, z = 0, cast = true) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, 0, z); m.castShadow = cast; m.receiveShadow = true; scene.add(m); return m; };
   // stonework from Blender: geometry with ambient occlusion baked into vertex colours, shaded with the same scanned stone
+  const propParts = {}; if (assets.models.props) assets.models.props.traverse(o => { if (o.isMesh) propParts[o.name] = o.geometry; });
+  const instanced = (geo, mat, Ms, cols) => { const im = new THREE.InstancedMesh(geo, mat, Ms.length); Ms.forEach((M, i) => { im.setMatrixAt(i, M); if (cols) im.setColorAt(i, cols[i]); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); return im; };
+  // a course of stones laid end to end from (x0, z0) to (x1, z1), each stretched a little so a whole number fits
+  const course = (list, x0, z0, x1, z1, y, unitLen) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.round(L / unitLen)), q = new Q().setFromAxisAngle(_Y, Math.abs(x1 - x0) > Math.abs(z1 - z0) ? 0 : Math.PI / 2);
+    for (let i = 0; i < n; i++) { const t = (i + 0.5) / n; list.push(new THREE.Matrix4().compose(new V3(lerp(x0, x1, t), y, lerp(z0, z1, t)), q, new V3(L / n / unitLen, 1, 1))); } };
+  const tones = n => Array.from({ length: n }, () => new THREE.Color().setScalar(rr(0.8, 1.06)));
   const stoneParts = {};
   if (assets.models.stone) assets.models.stone.traverse(o => { if (!o.isMesh) return; const g = o.geometry, c = g.attributes.color;
     if (c) { for (let i = 0; i < c.count; i++) { const v = 0.3 + 0.7 * c.getX(i); c.setXYZ(i, v, v, v); } c.needsUpdate = true; }   // ease the baked occlusion: the live lighting adds its own
@@ -852,9 +869,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     ripples[1 + i].set(p.x, p.z, 0.012, 7.0);
   }
   { // the canal: stone coping, water, arching jets
-    const { hw, z0, z1 } = CN, L = z1 - z0, zc = (z0 + z1) / 2;
-    for (const s of [-1, 1]) { addMesh(new THREE.BoxGeometry(0.46, 0.46, L + 0.92, 1, 1, 1).translate(s * (hw + 0.23), 0.23, zc), stoneMat); addMesh(new THREE.BoxGeometry(0.54, 0.09, L + 1.0).translate(s * (hw + 0.23), 0.5, zc), stoneMat); }
-    for (const zz of [z0 - 0.23, z1 + 0.23]) { addMesh(new THREE.BoxGeometry(hw * 2 + 0.92, 0.46, 0.46).translate(0, 0.23, zz), stoneMat); addMesh(new THREE.BoxGeometry(hw * 2 + 1.0, 0.09, 0.54).translate(0, 0.5, zz), stoneMat); }
+    const { hw, z0, z1 } = CN, L = z1 - z0, zc = (z0 + z1) / 2, copingF = [];
+    for (const s of [-1, 1]) { addMesh(new THREE.BoxGeometry(0.46, 0.46, L + 0.92, 1, 1, 1).translate(s * (hw + 0.23), 0.23, zc), stoneMat); if (propParts.coping_flat) course(copingF, s * (hw + 0.23), z0 - 0.5, s * (hw + 0.23), z1 + 0.5, 0.455, 0.8); else addMesh(new THREE.BoxGeometry(0.54, 0.09, L + 1.0).translate(s * (hw + 0.23), 0.5, zc), stoneMat); }
+    for (const zz of [z0 - 0.23, z1 + 0.23]) { addMesh(new THREE.BoxGeometry(hw * 2 + 0.92, 0.46, 0.46).translate(0, 0.23, zz), stoneMat); if (propParts.coping_flat) course(copingF, -hw + 0.05, zz, hw - 0.05, zz, 0.455, 0.8); else addMesh(new THREE.BoxGeometry(hw * 2 + 1.0, 0.09, 0.54).translate(0, 0.5, zz), stoneMat); }
+    if (copingF.length) instanced(propParts.coping_flat, stoneMat, copingF, tones(copingF.length));
     addMesh(new THREE.PlaneGeometry(hw * 2, L).rotateX(-Math.PI / 2).translate(0, 0.03, zc), stoneFloor, 0, 0, false);
     waterMeshes.push(addMesh(new THREE.PlaneGeometry(hw * 2, L).rotateX(-Math.PI / 2).translate(0, WATER_Y, zc), waterMat, 0, 0, false));
     waterBodies.push({ x: 0, z: zc, r: L / 2 + 3 });
@@ -902,12 +920,13 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   }
   // the brick wall, its stone coping and gate piers
   {
-    const T = 0.5, H = B.h;
+    const T = 0.5, H = B.h, copingW = [];
     const wall = (x0, z0, x1, z1) => {   // centre line of a straight run
       const L = Math.hypot(x1 - x0, z1 - z0), alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
       addMesh(worldUV(new THREE.BoxGeometry(alongX ? L : T, H, alongX ? T : L).translate(cx, H / 2, cz), 1 / 1.35), brickMat);
-      addMesh(new THREE.BoxGeometry(alongX ? L + 0.1 : T + 0.16, 0.1, alongX ? T + 0.16 : L + 0.1).translate(cx, H + 0.05, cz), stoneMat);
-      addMesh(new THREE.BoxGeometry(alongX ? L : T - 0.06, 0.08, alongX ? T - 0.06 : L).translate(cx, H + 0.13, cz), stoneMat);
+      if (propParts.coping_wall) course(copingW, x0, z0, x1, z1, H, 0.9); else {
+        addMesh(new THREE.BoxGeometry(alongX ? L + 0.1 : T + 0.16, 0.1, alongX ? T + 0.16 : L + 0.1).translate(cx, H + 0.05, cz), stoneMat);
+        addMesh(new THREE.BoxGeometry(alongX ? L : T - 0.06, 0.08, alongX ? T - 0.06 : L).translate(cx, H + 0.13, cz), stoneMat); }
       for (let d = 0; d <= L; d += 0.25) block(x0 + (x1 - x0) * d / L, z0 + (z1 - z0) * d / L, T / 2 + 0.3);
       aoLine([[x0, z0], [x1, z1]], 1.5, 0.5);
     };
@@ -922,6 +941,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     wall(B.x0 - o, B.z1 + o, -gw, B.z1 + o); wall(gw, B.z1 + o, B.x1 + o, B.z1 + o);
     pier(-gw, B.z1 + o); pier(gw, B.z1 + o);
     for (const [x, z] of [[B.x0 - o, B.z0 - o], [B.x1 + o, B.z0 - o], [B.x0 - o, B.z1 + o], [B.x1 + o, B.z1 + o]]) pier(x, z, 0.7, H + 0.25);
+    if (copingW.length) instanced(propParts.coping_wall, stoneMat, copingW, tones(copingW.length));
   }
   // ivy, in patches, on the inside faces of the wall
   {
@@ -955,6 +975,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   }
   // metal: light-tunnel frames, light stalks (from the exhibit) and rose arches; plus the festoon bulbs
   const tubeSegs = metalSegs.slice();
+  if (!propParts.lantern_metal) for (const [x, z] of lanterns) tubeSegs.push([[x, 0, z], [x, 0.62, z], 0.02], [[x, 0.6, z], [x, 0.66, z], 0.05], [[x, 0.78, z], [x, 0.8, z], 0.06]);
   const roseArch = ([ax, az, tx, tz]) => {
     const nx = -tz, nz = tx, Wd = 1.7, frames = [], archPid = registerPlant('roseDA', ax, 0, az);
     for (const d of [-0.22, 0.22]) {
@@ -988,7 +1009,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     tubeSegs.forEach(([A, Bp, r], i) => { a.fromArray(A); b.fromArray(Bp).sub(a); const len = b.length(); q.setFromUnitVectors(_Y, b.normalize()); s.set(r, len, r); m.compose(a, q, s); im.setMatrixAt(i, m); });
     im.castShadow = true; im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im);
   }
-  if (bulbs.length) {   // small glass bulbs on the tunnel's festoons: the sprite glow sits on top of these
+  {   // small glass bulbs on the tunnel's festoons: the sprite glow sits on top of these
     const mat = new THREE.ShaderMaterial({ uniforms: Object.assign({}, U),
       vertexShader: COMMON + `varying vec3 vC; varying vec3 vN; varying vec3 vW;
         void main(){ vec4 w = instanceMatrix * vec4(position, 1.0); vW = w.xyz; vN = normal; vC = instanceColor * drainAt(w.xyz) * uLightGain; gl_Position = projectionMatrix * viewMatrix * w; }`,
@@ -997,13 +1018,16 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     const im = new THREE.InstancedMesh(new THREE.SphereGeometry(0.021, 10, 8), mat, bulbs.length), m = new THREE.Matrix4(), c = new THREE.Color();
     bulbs.forEach(([x, y, z, col], i) => { m.makeTranslation(x, y, z); im.setMatrixAt(i, m); im.setColorAt(i, c.setRGB(col[0], col[1], col[2])); });
     im.frustumCulled = false; scene.add(im);
+    if (propParts.lantern_metal && propParts.lantern_glass && lanterns.length) {   // Blender path lanterns: dark metal, glowing glass
+      const Ms = lanterns.map(([x, z]) => new THREE.Matrix4().makeRotationY(rng() * TAU).setPosition(x, 0, z));
+      instanced(propParts.lantern_metal, metalMat, Ms); instanced(propParts.lantern_glass, mat, Ms, lanterns.map(l => new THREE.Color(l[2][0] * 1.5, l[2][1] * 1.5, l[2][2] * 1.5))).castShadow = false; }
   }
 
   // ---------------------------------------------------------------- trees: limbs as tapered tubes with scanned bark, canopies of scanned lime branchlets
   {
     const BK = TX.bark_brown_02;
     const barkMat = P.std({ map: BK.diff, normalMap: BK.nor, aoMap: BK.arm, roughnessMap: BK.arm, roughness: 1, normalScale: new THREE.Vector2(1.3, 1.3) }, { sway: 0.02, swayH: 9, key: 'bark' });
-    const leafM = P.std(cut({ map: TX.card_lime, normalMap: TX.card_lime_n, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.62, envMapIntensity: 0.45 }), { sway: 0.1, swayH: 6, translucent: true, key: 'lime', grow: true, part: 'leaf' });
+    const leafM = P.std(cut({ map: TX.card_lime, normalMap: TX.card_lime_n, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.62, envMapIntensity: 0.45 }), { sway: 0.1, swayH: 6, translucent: true, key: 'lime', grow: true, part: 'leaf', puff: true });
     const leafD = P.depth(TX.card_lime, { sway: 0.1, swayH: 6, key: 'lime', grow: true, part: 'leaf' });
     const pos = [], uvs = [], idx = [], cards = [];
     const limb = (pts, r0, r1, flare = 0, sides = 10) => {   // pts: V3[]; a smooth tube along a Catmull-Rom curve
@@ -1055,20 +1079,50 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
         leafAt(p.addScaledVector(d, -0.3), new V3(d.x * 0.8 + R(-0.4, 0.4), R(-0.75, 0.1), d.z * 0.8 + R(-0.4, 0.4)).normalize(), R(0.7, 1.05) * (detail < 0.6 ? 1.5 : 1));
       }
     };
+    // --- trees from Blender: three variants, each a fused trunk-and-limb mesh plus a few thousand boughs with baked sky shading
+    const TV = {}, VAR = ['tree_round_a', 'tree_round_b', 'tree_weep'];
+    if (assets.models.trees) assets.models.trees.traverse(o => { if (!o.isMesh) return; const m = /^(tree_.+)_(wood|leaves)$/.exec(o.name); if (m) (TV[m[1]] = TV[m[1]] || {})[m[2]] = o.geometry; });
+    const blender = VAR.every(k => TV[k] && TV[k].wood && TV[k].leaves && TV[k].leaves.index && TV[k].leaves.attributes.uv), vCards = {}, woodM = {};
+    const cardsOf = g => {   // each bough is a quad in the file; recover its frame (base, across, along) so it can be instanced
+      const Pa = g.attributes.position, UVa = g.attributes.uv, Ca = g.attributes.color, I = g.index.array, out = [];
+      for (let t = 0; t + 5 < I.length; t += 6) { const ids = [...new Set([I[t], I[t + 1], I[t + 2], I[t + 3], I[t + 4], I[t + 5]])]; if (ids.length !== 4) continue; let bl, br, tl, tr;
+        for (const i of ids) { const p = new V3().fromBufferAttribute(Pa, i), right = UVa.getX(i) > 0.5, top = UVa.getY(i) < 0.5; if (top) { if (right) tr = p; else tl = p; } else if (right) br = p; else bl = p; }
+        if (!bl || !br || !tl || !tr) continue;
+        const base = bl.clone().add(br).multiplyScalar(0.5), x = br.clone().sub(bl), y = tl.clone().add(tr).multiplyScalar(0.5).sub(base), z = new V3().crossVectors(x, y).normalize().multiplyScalar(x.length());
+        out.push({ m: new THREE.Matrix4().makeBasis(x, y, z).setPosition(base), c: Ca ? Ca.getX(ids[0]) : 1 }); }
+      return out; };
+    if (blender) for (const k of VAR) { vCards[k] = cardsOf(TV[k].leaves); woodM[k] = []; }
+    const plantTree = (T, thin) => {
+      const tpid = registerPlant('tree', T.x, 0, T.z, T.x, T.cy, T.z), r0 = 0.15 * T.s + 0.07;
+      block(T.x, T.z, r0 + 0.32); aoBlob(T.x, T.z, 1.1, 0.6); aoBlob(T.x, T.z, T.A * 1.25, 0.26);
+      const k = T.kind === 'weep' ? VAR[2] : VAR[ihash(Math.floor(T.x * 7), Math.floor(T.z * 7), 3) < 0.5 ? 0 : 1];
+      const sxz = T.A / 3.25, M = new THREE.Matrix4().compose(new V3(T.x, 0, T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / 7.0, sxz));
+      woodM[k].push(M);
+      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: M.clone().multiply(c.m), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: thin > 1 ? 1.3 : 1 }); });
+    };
+    if (blender) {
+      const thin = lite ? 2 : 1;
+      for (const T of treeSpecs) plantTree(T, thin);
+      for (const [x, z, A] of [[-33, 44, 4.6], [-34, 18, 5.2], [-33.5, -9, 4.4], [-31, -36, 5.4], [-8, -38, 4.8], [14, -37.5, 5.6], [32, -33, 4.6], [34, -6, 5.2], [33.5, 22, 4.6], [32.5, 47, 5.4], [-16, 61, 4.4], [17, 61.5, 5.0]]) {
+        const h = rr(3.4, 4.6); plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round' }, thin * 2); }
+      const barkT = P.std({ map: BK.diff, normalMap: BK.nor, roughness: 1, vertexColors: true, color: new THREE.Color(1.25, 1.2, 1.15) }, { tri: { arm: BK.arm, scale: 0.9, moss: 0.4 }, sway: 0.02, swayH: 9, key: 'barkT' });
+      for (const k of VAR) { if (!woodM[k].length) continue; const im = new THREE.InstancedMesh(TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => im.setMatrixAt(i, M)); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
+    } else
     for (const T of treeSpecs) growTree(T, lite ? 0.55 : 1);
     // a belt of trees beyond the wall
     const outer = [[-33, 44, 4.6], [-34, 18, 5.2], [-33.5, -9, 4.4], [-31, -36, 5.4], [-8, -38, 4.8], [14, -37.5, 5.6], [32, -33, 4.6], [34, -6, 5.2], [33.5, 22, 4.6], [32.5, 47, 5.4], [-16, 61, 4.4], [17, 61.5, 5.0]];
-    for (const [x, z, A] of outer) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round' }, lite ? 0.3 : 0.5); }
+    if (!blender) for (const [x, z, A] of outer) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round' }, lite ? 0.3 : 0.5); }
     const wood = new THREE.BufferGeometry(); wood.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); wood.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); wood.setIndex(idx); wood.computeVertexNormals();
-    const wm = new THREE.Mesh(wood, barkMat); wm.castShadow = wm.receiveShadow = true; wm.frustumCulled = false; scene.add(wm);
+    if (idx.length) { const wm = new THREE.Mesh(wood, barkMat); wm.castShadow = wm.receiveShadow = true; wm.frustumCulled = false; scene.add(wm); }
     const g = cardGeo.clone(); g.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(cards.map(c => c.pid)), 1));
     const im = new THREE.InstancedMesh(g, leafM, cards.length), m = new THREE.Matrix4(), q = new Q(), s = new V3(), yv = new V3(), zv = new V3(), xv = new V3(), bm = new THREE.Matrix4(), col = new THREE.Color();
     cards.forEach((c, i) => {
+      if (c.M) { im.setMatrixAt(i, c.s === 1 ? c.M : m.copy(c.M).scale(s.setScalar(c.s))); im.setColorAt(i, col.setRGB(c.c * rr(0.92, 1.05), c.c, c.c * rr(0.84, 1.0))); return; }
       yv.copy(c.dir); zv.set(rr(-0.5, 0.5), 1, rr(-0.5, 0.5)); zv.addScaledVector(yv, -zv.dot(yv)); if (zv.lengthSq() < 1e-4) zv.set(1, 0, 0); zv.normalize(); xv.crossVectors(yv, zv);
       bm.makeBasis(xv, yv, zv); q.setFromRotationMatrix(bm); s.setScalar(c.s); m.compose(c.p, q, s); im.setMatrixAt(i, m); im.setColorAt(i, col.setRGB(c.c * rr(0.9, 1.05), c.c, c.c * rr(0.82, 1.0)));
     });
     im.customDepthMaterial = leafD; im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im);
-    console.log(`[garden] trees: ${idx.length / 3} bark triangles, ${cards.length} branchlets`);
+    console.log(`[garden] trees: ${blender ? 'Blender variants' : 'procedural'}, ${cards.length} boughs`);
   }
 
   // ---------------------------------------------------------------- planting
