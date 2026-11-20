@@ -660,11 +660,22 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const BACK = ['delphinium', 'digitalis', 'lupinus', 'alliumG', 'perovskia', 'baptisia', 'eutrochium', 'roseDA', 'calamagrostis', 'echinops', 'helenium', 'aster', 'monardaJ', 'hydrangea', 'delphinium', 'digitalis', 'lupinus'];
   for (const L of [FRONT, MID, BACK]) for (let i = L.length - 1; i >= 0; i--) if (!LOOKS[L[i]] || !SIZE[L[i]]) L.splice(i, 1);
   const radiusOf = k => SIZE[k][1] / 2 * IN;
-  function borderPlant(x, z, f, salt) {
+  // Borders are colour-themed and planted in repeating blocks, so each one reads as a composition with a rhythm:
+  // an edging ribbon at the front, then low, middle and tall tiers whose species recur at set intervals along the walk.
+  const THEMES = {
+    cool:  { edge: 'nepeta',     front: ['geranium', 'salvia', 'veronica', 'lavandula'], mid: ['iris', 'platycodon', 'agastache', 'alliumM', 'penstemon'], back: ['delphinium', 'perovskia', 'baptisia', 'echinops', 'alliumG', 'aster'] },
+    pink:  { edge: 'dianthus',   front: ['geranium', 'stachys', 'aquilegia'], mid: ['phloxJ', 'peony', 'echinacea', 'anemone', 'sedum', 'roseKO'], back: ['digitalis', 'lupinus', 'eutrochium', 'roseDA', 'monardaJ'] },
+    white: { edge: 'stachys',    front: ['alchemilla', 'leucanthemum', 'geranium'], mid: ['leucanthemum', 'phloxR', 'irisG', 'lilium', 'anemone'], back: ['hydrangea', 'digitalis', 'calamagrostis', 'delphinium'] },
+    hot:   { edge: 'alchemilla', front: ['coreopsis', 'echinaceaS', 'salvia'], mid: ['achillea', 'hemerocallis', 'papaver', 'monardaF', 'lilium'], back: ['helenium', 'calamagrostis', 'hemerocallis', 'achillea', 'roseDA'] },
+  };
+  for (const T of Object.values(THEMES)) { for (const key of ['front', 'mid', 'back']) { T[key] = T[key].filter(k => LOOKS[k] && SIZE[k]); if (!T[key].length) T[key] = ['nepeta']; } if (!LOOKS[T.edge] || !SIZE[T.edge]) T.edge = 'nepeta'; }
+  // round the loop walk: blues by the entrance and up the west side, pinks, a white garden along the north wall, pinks again, then the hot border down the east
+  const themeAt = (x, z) => z > 44 ? (x < 0 ? 'cool' : 'hot') : z < -21 ? 'white' : (z > 12 ? (x < 0 ? 'cool' : 'hot') : 'pink');
+  function borderPlant(x, z, f, salt, s = x + z, th = null) {
     if (blocked(x, z)) return;
-    const ff = f + (vn2(x * 0.6, z * 0.6, salt) - 0.5) * 0.35;
-    const list = ff < 0.34 ? FRONT : ff < 0.7 ? MID : BACK;
-    const k = drift(x, z, list, 2.4, salt + (ff < 0.34 ? 0 : ff < 0.7 ? 50 : 100));
+    const T = THEMES[th || themeAt(x, z)], ff = f + (vn2(x * 0.6, z * 0.6, salt) - 0.5) * 0.14;
+    const tier = ff < 0.34 ? 'front' : ff < 0.7 ? 'mid' : 'back', list = T[tier], len = tier === 'front' ? 1.5 : tier === 'mid' ? 2.3 : 3.1;
+    const k = f < 0.1 ? T.edge : list[((Math.floor((s + f * 2.4) / len) + (tier === 'mid' ? 1 : 0)) % list.length + list.length) % list.length];   // blocks lean diagonally, so the drifts interlock
     const r = radiusOf(k) * 0.9;
     if (!spaceOk(x, z, r, 0.84)) return;   // close enough that neighbours knit together and hide the soil
     claim(x, z, r); addPlant(k, x, z, { salt });
@@ -673,7 +684,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   // ---------------------------------------------------------------- hedges & topiary: clipped forms shelled with scanned sprigs
   const hedgeBase = texOf(noiseTex(512, 512, '#223319', [[16000, ['#2f4423', '#1b2913', '#3a5229', '#24361a'], [1.5, 4]]], 5), renderer);
   const HK = {
-    yew: { base: P.std({ map: hedgeBase, roughness: 1, color: 0x8f9a8a }), card: P.std(cut({ map: TX.card_yew, normalMap: TX.card_yew_n, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.4 }), { sway: 0.025, swayH: 2, translucent: true, key: 'yew' }), depth: P.depth(TX.card_yew, {}), size: 0.2, dens: lite ? 110 : 300 },
+    yew: { base: P.std({ map: hedgeBase, roughness: 1, color: 0x8f9a8a }), card: P.std(cut({ map: TX.card_yew, normalMap: TX.card_yew_n, color: new THREE.Color(1.5, 1.55, 1.4), alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.4 }), { sway: 0.025, swayH: 2, translucent: true, key: 'yew' }), depth: P.depth(TX.card_yew, {}), size: 0.2, dens: lite ? 110 : 300 },
     box: { base: P.std({ map: hedgeBase, roughness: 1, color: 0xb4c49a }), card: P.std(cut({ map: TX.card_box, normalMap: TX.card_box_n, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.55, envMapIntensity: 0.5 }), { sway: 0.02, swayH: 1, translucent: true, key: 'box' }), depth: P.depth(TX.card_box, {}), size: 0.135, dens: lite ? 170 : 420 },
   };
   function sweepGeo(pts, closed, W, H, kind) {
@@ -746,6 +757,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   function topiary(x, z, kind, form, Hh, R) {
     let geo;
     if (form === 'ball') geo = new THREE.SphereGeometry(R, 24, 16).translate(0, R * 0.9, 0);
+    else if (form === 'standard') { geo = new THREE.SphereGeometry(R, 22, 14).translate(0, Hh - R, 0); metalSegs.push([[x, 0, z], [x, Hh - R * 1.5, z], 0.03]); }   // a clipped ball on a clear stem
+    else if (form === 'cube') geo = new THREE.BoxGeometry(R * 2, Hh, R * 2, 5, 6, 5).translate(0, Hh / 2, 0);
+    else if (form === 'dome') geo = new THREE.SphereGeometry(1, 24, 12, 0, TAU, 0, Math.PI / 2).scale(R, Hh, R);
+    else if (form === 'tier') { const pts = []; for (let i = 0; i <= 36; i++) { const t = i / 36; pts.push(new THREE.Vector2(Math.max(0.01, R * (1 - 0.5 * t) * (0.2 + 0.8 * Math.pow(Math.abs(Math.sin(Math.PI * t * 3)), 0.6)) * Math.min(1, (1 - t) / 0.04)), t * Hh)); } geo = new THREE.LatheGeometry(pts, 24); }   // three stacked rounds: a "cake stand"
     else { const pts = []; for (let i = 0; i <= 16; i++) { const t = i / 16; pts.push(new THREE.Vector2(Math.max(0.01, R * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.02)), form === 'cone' ? 0.9 : 0.45) * (form === 'cone' ? 1 - t * 0.75 : 1)), t * Hh)); } geo = new THREE.LatheGeometry(pts, 24); }
     const pa = geo.attributes.position; for (let i = 0; i < pa.count; i++) { const v = new V3().fromBufferAttribute(pa, i), d = 1 + (vn2(v.x * 4 + x, v.y * 4 + v.z * 3, 8) - 0.5) * 0.08; pa.setXYZ(i, v.x * d, v.y, v.z * d); }
     geo.computeVertexNormals(); geo.translate(x, 0, z);
@@ -767,6 +782,18 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   for (const s of [-1, 1]) { const pts = []; for (let z = CN.z0 - 0.3; z <= CN.z1 + 0.31; z += 0.5) pts.push([s * 4.9, z]); hedge(pts, false, 0.4, 0.5, 'box'); }
   for (const s of [-1, 1]) for (let z = CN.z0 + 1.2; z <= CN.z1 - 1; z += 4.5) topiary(s * 5.8, z, 'yew', 'column', 3.2, 0.5);
   { const b = layout.bench, pts = []; for (let a = Math.PI * 1.08; a <= Math.PI * 1.92; a += 0.16) pts.push([b.x + Math.cos(a) * 2.75, b.z + 1.0 + Math.sin(a) * 2.75]); hedge(pts, false, 0.8, 1.85, 'yew'); }
+
+  // --- formal structure: a steady rhythm of clipped shapes through the borders, topiary lawns either side of the great circle
+  const free = (x, z, m) => layout.inWalls(x, z, m) && !(Math.abs(x) < 6 && z > 47.5) && layout.lamps.every(l => Math.hypot(l[0] - x, l[1] - z) > 1.6) && layout.trees.every(t => Math.hypot(t.x - x, t.z - z) > 3.2) && Math.hypot(x - layout.bench.x, z - layout.bench.z) > 4.2;
+  const obelisks = [];
+  { const S = layout.loopS, n = S.length, step = Math.round(n / Math.round(layout.loopLen / 7));   // every seven metres round the loop walk
+    for (let k = 0, i = 0; i + step / 2 < n; i += step, k++) { const s = S[i];
+      const bx = s.x + s.ox * 1.98, bz = s.z + s.oz * 1.98; if (free(bx, bz, 0.6)) topiary(bx, bz, 'box', 'ball', 0, 0.33);            // box balls along the front edge
+      if (k % 2 === 0) { const cx = s.x + s.ox * 4.4, cz = s.z + s.oz * 4.4; if (free(cx, cz, 1.0)) { if (k % 4 === 0) topiary(cx, cz, 'yew', 'cone', 2.3, 0.62); else { obelisks.push([cx, cz]); block(cx, cz, 0.4); } } } } }   // yew cones and rose obelisks alternating at the back
+  for (const [x, z] of [[-3.1, 53.3], [3.1, 53.3], [19.1, 2.3], [19.1, -2.3], [-19.1, 2.3], [-19.1, -2.3]]) topiary(x, z, 'box', 'standard', 1.9, 0.42);
+  for (const sx of [-1, 1]) [['cone', 2.4, 0.7], ['tier', 2.6, 0.75], ['cone', 2.4, 0.7], ['cube', 1.3, 0.6], ['tier', 3.1, 0.9], ['cube', 1.3, 0.6], ['dome', 1.0, 0.85], ['column', 2.8, 0.5], ['dome', 1.0, 0.85]]
+    .forEach(([form, H, R], i) => topiary(sx * (12.2 + (i % 3) * 2.8), 8.7 + Math.floor(i / 3) * 2.8, 'yew', form, H, R));   // a topiary lawn: three by three
+  for (let q = 0; q < 4; q++) { const a = Math.PI / 4 + q * Math.PI / 2; topiary(Math.cos(a) * 9.85, Math.sin(a) * 9.85, 'yew', 'cone', 1.7, 0.45); }   // a cone at the heart of each parterre bed
 
   // ---------------------------------------------------------------- stone, brick, water
   const ST = TX.white_plaster_02;
@@ -1008,6 +1035,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     for (const s of [-1, 1]) addPlant('roseDA', ax + nx * s * (Wd + 0.3), az + nz * s * (Wd + 0.3), { scale: 0.75, salt: 9 });
   };
   for (const a of layout.arches) roseArch(a);
+  for (const [x, z] of obelisks) { const w = 0.34, top = [x, 2.35, z], cs = [[-w, -w], [w, -w], [w, w], [-w, w]];   // a four-legged iron obelisk with a rose at its foot
+    cs.forEach(([dx, dz], i) => { tubeSegs.push([[x + dx, 0, z + dz], top, 0.018]); for (const t of [0.3, 0.55, 0.78]) { const [ex, ez] = cs[(i + 1) % 4]; tubeSegs.push([[x + dx * (1 - t), 2.35 * t, z + dz * (1 - t)], [x + ex * (1 - t), 2.35 * t, z + ez * (1 - t)], 0.012]); } });
+    tubeSegs.push([top, [x, 2.5, z], 0.03]); addPlant('roseDA', x, z, { scale: 1.05, salt: 3 }); }
   {
     const geo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, false).translate(0, 0.5, 0), n = tubeSegs.length, im = new THREE.InstancedMesh(geo, metalMat, n);
     const m = new THREE.Matrix4(), a = new V3(), b = new V3(), q = new Q(), s = new V3();
@@ -1134,21 +1164,22 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const keepOut = [...layout.lamps.map(([x, z]) => [x, z, 0.45]), [layout.bench.x, layout.bench.z + 0.9, 2.9], ...treeSpecs.map(T => [T.x, T.z, 0.85])];
   const clear = (x, z) => { for (const [kx, kz, kr] of keepOut) if ((x - kx) ** 2 + (z - kz) ** 2 < kr * kr) return false; return true; };
   // the deep wall border, all the way round the loop walk
-  for (const s of layout.loopS) for (let d = 1.8; d < 12; d += 0.31) {
-    const j = rr(-0.13, 0.13), x = s.x + s.ox * d + j, z = s.z + s.oz * d - j;
+  layout.loopS.forEach((s, si) => { for (let d = 1.8; d < 12; d += 0.31) {
+    const j = d < 2.2 ? 0 : rr(-0.13, 0.13), x = s.x + s.ox * d + j, z = s.z + s.oz * d - j;   // the edging rows run true
     if (!layout.inWalls(x, z, 0.42)) break;
     if ((Math.abs(x) < 4.5 && z > 49.8) || !clear(x, z)) continue;
-    borderPlant(x, z, (d - 1.8) / 3.5, 23);
-  }
+    borderPlant(x, z, (d - 1.8) / 3.5, 23, si * 0.5);
+  } });
   // entrance avenue: double border under the tunnel of lights
-  for (const s of [-1, 1]) for (let z = AV.z0 + 0.2; z <= AV.z1 - 0.2; z += 0.3) for (let d = AV.x0; d <= AV.x1; d += 0.3) borderPlant(s * (d + rr(-0.12, 0.12)), z + rr(-0.12, 0.12), (d - AV.x0) / (AV.x1 - AV.x0), 11);
+  for (const s of [-1, 1]) for (let z = AV.z0 + 0.2; z <= AV.z1 - 0.2; z += 0.3) for (let d = AV.x0; d <= AV.x1; d += 0.3) borderPlant(s * (d + rr(-0.12, 0.12)), z + rr(-0.12, 0.12), (d - AV.x0) / (AV.x1 - AV.x0), 11, z, 'pink');
   // canal: lavender walks
   for (const s of [-1, 1]) for (let z = CN.z0; z <= CN.z1; z += 0.42) for (const x of [3.8, 4.28]) { const k = (Math.floor(z / 0.42) % 9 === 0) ? 'nepeta' : 'lavandula'; addPlant(k, s * x + rr(-0.05, 0.05), z + (x > 4 ? 0.21 : 0), { scale: 1.1 }); }
   // parterre: roses, lavender edging, catmint, alliums, peonies
   for (let q = 0; q < 4; q++) for (let r = ring.bedIn + 0.38; r <= ring.bedOut - 0.3; r += 0.5) for (let a = q * Math.PI / 2; a < (q + 1) * Math.PI / 2; a += 0.5 / r) {
     const x = Math.cos(a) * r + rr(-0.1, 0.1), z = Math.sin(a) * r + rr(-0.1, 0.1);
-    if (Math.abs(x) < 2.05 || Math.abs(z) < 2.05) continue;
-    const k = (r < ring.bedIn + 0.6 || r > ring.bedOut - 0.6) ? 'lavandula' : drift(x, z, ['roseDA', 'roseDA', 'roseKO', 'nepeta', 'alliumG', 'peony', 'geranium', 'alliumM', 'roseDA', 'nepeta'], 1.8, 77 + q);
+    if (Math.abs(x) < 2.05 || Math.abs(z) < 2.05 || blocked(x, z)) continue;
+    const band = Math.round((r - ring.bedIn - 0.38) / 0.5);   // concentric bands: lavender edging, two rings of roses, a ring of alliums through catmint, roses again
+    const k = (r < ring.bedIn + 0.6 || r > ring.bedOut - 0.6) ? 'lavandula' : band === 3 ? (Math.floor(a * r) % 3 === 0 ? 'alliumG' : 'nepeta') : band % 2 ? 'roseDA' : 'roseKO';
     const rad = radiusOf(k) * 0.85; if (!spaceOk(x, z, rad, 0.75)) continue; claim(x, z, rad); addPlant(k, x, z, { salt: q });
   }
   // wildflowers in the long grass
@@ -1259,5 +1290,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads };
+  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass };
 }

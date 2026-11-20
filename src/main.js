@@ -585,7 +585,7 @@ const diskU = { uGiant: { value: new THREE.Vector4(0, 12.5, 0, 1) }, uGW: { valu
       }`,
     fragmentShader: `varying vec3 vC; void main(){ vec2 q = gl_PointCoord * 2.0 - 1.0; float r2 = dot(q, q); if (r2 > 0.8) discard; gl_FragColor = vec4(vC * exp(-r2 * 3.0), 1.0); }`,
   });
-  const disk = new THREE.Points(g, mat); disk.frustumCulled = false; disk.renderOrder = 4; scene.add(disk);
+  const disk = new THREE.Points(g, mat); disk.frustumCulled = false; disk.renderOrder = 4; disk.visible = false; scene.add(disk);   // superseded by the ray-traced disk in the lens pass
 }
 for (let i = 0; i < MAXV; i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshBasicMaterial({ color: 0x000000 })); m.layers.set(3); m.visible = false; scene.add(m); mirrorVoids.push(m); }
 function drainAtJS(p) {
@@ -651,9 +651,34 @@ function renderAO() {
   renderer.setRenderTarget(aoRT); aoQuad.render(renderer);
   aoBlurMat.uniforms.tAO.value = aoRT.texture; renderer.setRenderTarget(aoRT2); aoBlurQuad.render(renderer);
 }
+// Schwarzschild bending angle, exact: alpha(b) = 2 * integral_0^u0 du / sqrt(1/b^2 - u^2 (1 - rs u)) - pi, with u = 1/r and u0 the closest approach.
+// Tabulated against p = -ln(1 - b_c/b) / 11.5, which spreads out the logarithmic blow-up at the photon sphere (b_c = 2.598 rs).
+function deflectionLUT(N = 512) {
+  const data = new Uint16Array(N), bc = 1.5 * Math.sqrt(3);   // in units of rs
+  const alphaOf = r0 => { const u0 = 1 / r0, f0 = u0 * u0 * (1 - u0), M = 600; let s = 0;
+    for (let k = 0; k < M; k++) { const t = (k + 0.5) / M, u = u0 * (1 - t * t); s += 2 * u0 * t / Math.sqrt(Math.max(f0 - u * u * (1 - u), 1e-30)) / M; }
+    return 2 * s - Math.PI; };
+  for (let i = 0; i < N; i++) { const x = 1 - Math.exp(-11.5 * i / (N - 1)) + 1e-5, b = bc / Math.min(x, 0.99999); let lo = 1.5, hi = b + 2;
+    for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if (m * m * m / (m - 1) < b * b) lo = m; else hi = m; }
+    data[i] = THREE.DataUtils.toHalfFloat(Math.min(alphaOf((lo + hi) / 2), 14)); }
+  const t = new THREE.DataTexture(data, N, 1, THREE.RedFormat, THREE.HalfFloatType); t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
+}
+// what lies beyond the frame: a small cube map round the walker, one face refreshed every other frame while a void is awake
+const ENV_ON = !isTouch && !LOW && QS.get('env') !== '0';
+const cubeRT = new THREE.WebGLCubeRenderTarget(ENV_ON ? 384 : 4, { type: THREE.HalfFloatType, generateMipmaps: false });
+const cubeCam = new THREE.CubeCamera(0.3, 600, cubeRT); let cubeFace = 0, cubeReady = false, cubeTick = 0;
+function renderEnv(needed) {
+  if (!ENV_ON || !needed) return;
+  const px0 = U.uPx.value; U.uPx.value = 192; garden.grass.visible = false; cubeCam.position.copy(camera.position);
+  if (!cubeReady) { cubeCam.update(renderer, scene); cubeReady = true; }
+  else if (cubeTick++ % 2 === 0) { cubeCam.updateMatrixWorld(true); renderer.setRenderTarget(cubeRT, cubeFace); renderer.render(scene, cubeCam.children[cubeFace]); cubeFace = (cubeFace + 1) % 6; }
+  U.uPx.value = px0; garden.grass.visible = true;
+}
 const lensMat = new THREE.ShaderMaterial({
   uniforms: {
     tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture }, tAO: { value: aoRT2.texture }, uAO: { value: AO_ON ? 0.85 : 0 },
+    tDefl: { value: deflectionLUT() }, tEnv: { value: cubeRT.texture }, uEnvOn: { value: 0 }, uProj: { value: new THREE.Vector2(1, 1) }, uCamRot: { value: new THREE.Matrix3() },
+    uGiant: { value: -1 }, uGiantW: { value: 0 }, uDiskN: { value: new THREE.Vector3(0, 1, 0) }, uDiskCol: { value: new THREE.Vector3(1, 0.7, 0.4) }, uTime: U.uTime,
     uLens: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensB: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensC: { value: Array.from({ length: MAXV }, () => new THREE.Vector3()) },
@@ -662,36 +687,77 @@ const lensMat = new THREE.ShaderMaterial({
   depthTest: false, depthWrite: false,
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene; uniform sampler2D tDepth; uniform sampler2D tAO; uniform float uAO;
+  uniform sampler2D tScene, tDepth, tAO, tDefl; uniform samplerCube tEnv; uniform float uAO, uEnvOn, uTime, uGiantW;
   uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform vec3 uLensC[${MAXV}];
-  uniform float uAspect, uNear, uFar, uDark;
+  uniform float uAspect, uNear, uFar, uDark; uniform vec2 uProj; uniform mat3 uCamRot; uniform vec3 uDiskN, uDiskCol; uniform int uGiant;
   varying vec2 vUv;
+  float linZ(vec2 uv){ return (uNear*uFar)/(uFar - (uFar - uNear)*texture2D(tDepth, uv).x); }
+  float deflect(float x){ return texture2D(tDefl, vec2(clamp(-log(1.0 - x + 1e-5)/11.5, 0.0, 1.0), 0.5)).r; }   // x = b_c / b
+  vec2 toUv(vec3 d){ return (d.xy/(-d.z)/uProj)*0.5 + 0.5; }
+  // The giant's accretion disk, seen along a real light path. In the plane of the ray and the hole, u = 1/r obeys u'' + u = (3/2) rs u^2;
+  // step it round the hole and catch each crossing of the disk's plane. Light from the far side arrives bent over the top and under the bottom.
+  vec4 traceDisk(vec3 v, vec3 h, float D, float rs, float bc){
+    float ct = dot(v, h), st = sqrt(max(1.0 - ct*ct, 1e-8)); vec3 c = -h, e = normalize(v - h*ct);
+    float rin = 3.0*rs, rout = 2.7*bc, u = 1.0/D, du = u*ct/st, ph = 0.0, dph = 0.082;
+    vec3 P0 = c*D; float s0 = dot(P0, uDiskN); vec4 acc = vec4(0.0);
+    vec3 bx = normalize(cross(uDiskN, vec3(0.31, 0.22, 0.92))), by = cross(uDiskN, bx);
+    for (int k = 0; k < 76; k++) {
+      du += (-u + 1.5*rs*u*u)*dph; u += du*dph; ph += dph;
+      if (u <= 0.0 || u > 1.0/rs) break;
+      vec3 P = (c*cos(ph) + e*sin(ph))/u; float s1 = dot(P, uDiskN);
+      if (s0*s1 < 0.0) {
+        vec3 H = mix(P0, P, s0/(s0 - s1)); float r = length(H);
+        if (r > rin && r < rout) {
+          vec3 rh = H/r, tau = normalize(cross(uDiskN, rh)), kdir = -normalize(P - P0);        // orbital motion; direction the light travels
+          float be = sqrt(rs/(2.0*(r - rs))), g = sqrt(1.0 - be*be)/(1.0 - be*dot(tau, kdir))*sqrt(1.0 - rs/r);   // Doppler x gravitational shift
+          float F = pow(rin/r, 1.6)*(1.0 - sqrt(rin/r))*6.0;                                     // thin-disk brightness profile, dark inside the innermost stable orbit
+          float an = atan(dot(H, by), dot(H, bx)), om = pow(rin/r, 1.5);
+          float tex = (0.74 + 0.26*sin(an*5.0 + uTime*2.4*om + r/bc*7.0))*(0.93 + 0.07*sin(r/bc*13.0 + sin(an*3.0 - uTime*1.1*om)*2.4));   // sheared streaks and soft lanes
+          vec3 hot = mix(vec3(1.0, 0.4, 0.1), vec3(1.0, 0.88, 0.7), smoothstep(rout, rin*1.2, r)); hot = mix(hot, uDiskCol*1.1, 0.3);
+          hot *= mix(vec3(1.0, 0.72, 0.5), vec3(0.82, 0.96, 1.3), smoothstep(0.7, 1.35, g))*pow(g, 3.0);
+          float a = clamp(F*tex*1.6, 0.0, 0.94)*(1.0 - smoothstep(rout*0.8, rout, r))*uGiantW;
+          acc.rgb += (1.0 - acc.a)*hot*F*tex*1.7*uGiantW*a; acc.a += (1.0 - acc.a)*a;
+          if (acc.a > 0.97) break;
+        }
+      }
+      P0 = P; s0 = s1;
+    }
+    return acc;
+  }
   void main(){
-    float dz = texture2D(tDepth, vUv).x;
-    float pz = -(uNear*uFar)/((uFar - uNear)*dz - uFar);
-    vec2 uv = vUv; float shade = 1.0; vec3 ringc = vec3(0.0);
+    vec3 v = normalize(vec3((vUv*2.0 - 1.0)*uProj, -1.0));
+    float pdist = linZ(vUv)/max(-v.z, 1e-3), shade = 1.0, bent = 0.0; vec3 ringc = vec3(0.0); vec4 disk = vec4(0.0);
     for(int i=0;i<${MAXV};i++){
       vec4 L = uLens[i];
       if(L.z <= 0.0) continue;
-      float wR = uLensB[i].x;
-      float behind = smoothstep(L.w - wR*1.2, L.w + wR*0.4, pz);
-      if(behind <= 0.0) continue;
-      vec2 d = uv - L.xy; d.x *= uAspect;
-      float r = length(d) + 1e-5;
-      float rh = L.z, te = rh*1.8;
-      float k = (te*te)/(r*r);
-      k *= (1.0 - smoothstep(te*3.0, te*10.0, r)) * behind;
-      vec2 nd = d*(1.0 - k); nd.x /= uAspect;
-      uv = L.xy + nd;
-      float hole = 1.0 - smoothstep(rh*0.96, rh*1.03, r);
-      shade *= 1.0 - hole*behind;
-      float ring = exp(-pow((r - rh*1.06)/(rh*0.025 + 0.0012), 2.0));
-      ringc += uLensC[i] * ring * 0.12 / (1.0 + rh*6.0) * uLensB[i].y * behind;
+      vec3 h = normalize(vec3((L.xy*2.0 - 1.0)*uProj, -1.0));
+      float D = L.w/max(-h.z, 1e-3), bc = uLensB[i].x;                  // distance to the hole (L.w is its depth along the view axis); shadow radius = critical impact parameter = 2.598 rs
+      bool giant = (i == uGiant) && uGiantW > 0.01;
+      float behind = smoothstep(D - bc*(giant ? 2.8 : 1.2), D + bc*0.4, pdist);
+      if(behind <= 0.0) continue;                                       // this pixel shows something in front of the hole
+      float ct = dot(v, h); if (ct <= 0.0) continue;
+      float st = sqrt(max(1.0 - ct*ct, 0.0)), b = D*st, x = bc/max(b, 1e-5);
+      if (giant && b < bc*2.9) { vec4 dk = traceDisk(v, h, D, bc/2.598, bc)*behind; disk.rgb += (1.0 - disk.a)*dk.rgb; disk.a += (1.0 - disk.a)*dk.a; }
+      shade *= 1.0 - smoothstep(0.975, 1.0, x)*behind;
+      if (x < 0.006 || x >= 1.0) continue;
+      float al = deflect(x)*smoothstep(0.006, 0.02, x)*behind;
+      vec3 e = normalize(h - v*ct);                                      // toward the hole, at right angles to the line of sight
+      vec3 d1 = v*cos(al) + e*sin(al); float f = 1.0;                    // a source not far behind the hole is displaced less (thin-lens factor D_ls / D_s)
+      if (d1.z < -0.05) { vec2 u1 = toUv(d1); if (u1.x > 0.0 && u1.x < 1.0 && u1.y > 0.0 && u1.y < 1.0) { float ds = linZ(u1)/max(-d1.z, 1e-3); f = clamp((ds - D)/max(ds, 1e-3), 0.0, 1.0); } }
+      al *= mix(f, 1.0, smoothstep(0.5, 1.4, al));
+      v = normalize(v*cos(al) + e*sin(al)); bent = max(bent, al);
+      ringc += uLensC[i]*exp(-pow((x - 0.962)/0.016, 2.0))*0.1*uLensB[i].y*behind;
     }
-    uv = 1.0 - abs(1.0 - abs(uv));   // light bent in from beyond the frame: mirror, rather than smear the edge pixels
-    vec3 col = texture2D(tScene, uv).rgb;
-    if (uAO > 0.0) { float lum = max(col.r, max(col.g, col.b)); col *= mix(mix(1.0, texture2D(tAO, uv).r, uAO), 1.0, smoothstep(0.9, 2.8, lum)); }   // lights and glows are not occluded
-    col = col * shade + ringc;
+    vec3 col; vec2 uvS = vUv;
+    if (bent < 1e-4) col = texture2D(tScene, vUv).rgb;
+    else {
+      vec2 u2 = toUv(v); float inside = step(0.05, -v.z)*smoothstep(0.0, 0.06, min(min(u2.x, 1.0 - u2.x), min(u2.y, 1.0 - u2.y)));
+      uvS = clamp(u2, 0.0, 1.0);
+      vec3 beyond = uEnvOn > 0.5 ? textureCube(tEnv, uCamRot*v).rgb : texture2D(tScene, 1.0 - abs(1.0 - abs(u2))).rgb*step(0.0, -v.z);   // light from outside the frame
+      col = mix(beyond, texture2D(tScene, uvS).rgb, inside);
+    }
+    if (uAO > 0.0) { float lum = max(col.r, max(col.g, col.b)); col *= mix(mix(1.0, texture2D(tAO, uvS).r, uAO), 1.0, smoothstep(0.9, 2.8, lum)); }   // lights and glows are not occluded
+    col = (col*shade + ringc)*(1.0 - disk.a) + disk.rgb;
     float vig = smoothstep(0.3, 1.1, length((vUv - 0.5)*vec2(uAspect, 1.0))*1.25);
     col *= 1.0 - vig*(0.3 + 0.6*uDark);
     gl_FragColor = vec4(col, 1.0);
@@ -703,13 +769,13 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight 
 composer.addPass(bloom);
 // after bloom, black the shadows again so glare from a bright sky can't wash them grey
 const holeMat = new THREE.ShaderMaterial({
-  uniforms: { tDiffuse: { value: null }, tDepth: { value: rt.depthTexture }, uLens: lensMat.uniforms.uLens, uLensB: lensMat.uniforms.uLensB, uAspect: lensMat.uniforms.uAspect, uNear: lensMat.uniforms.uNear, uFar: lensMat.uniforms.uFar },
+  uniforms: { tDiffuse: { value: null }, tDepth: { value: rt.depthTexture }, uLens: lensMat.uniforms.uLens, uLensB: lensMat.uniforms.uLensB, uAspect: lensMat.uniforms.uAspect, uNear: lensMat.uniforms.uNear, uFar: lensMat.uniforms.uFar, uSkip: { value: -1 } },
   depthTest: false, depthWrite: false,
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-  fragmentShader: `uniform sampler2D tDiffuse; uniform sampler2D tDepth; uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform float uAspect, uNear, uFar; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform sampler2D tDepth; uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform float uAspect, uNear, uFar; uniform int uSkip; varying vec2 vUv;
     void main(){
       float dz = texture2D(tDepth, vUv).x, pz = -(uNear*uFar)/((uFar - uNear)*dz - uFar), shade = 1.0;
-      for(int i=0;i<${MAXV};i++){ vec4 L = uLens[i]; if(L.z <= 0.0) continue; float wR = uLensB[i].x;
+      for(int i=0;i<${MAXV};i++){ vec4 L = uLens[i]; if(L.z <= 0.0 || i == uSkip) continue; float wR = uLensB[i].x;
         float behind = smoothstep(L.w - wR*1.2, L.w + wR*0.4, pz); vec2 d = vUv - L.xy; d.x *= uAspect;
         shade *= 1.0 - (1.0 - smoothstep(L.z*0.8, L.z*0.99, length(d))) * behind; }
       vec3 c = texture2D(tDiffuse, vUv).rgb * shade;
@@ -857,6 +923,11 @@ const setPull = v => { PULL = v; $('pSlider').value = Math.round(v * 100); $('bP
 $('pSlider').addEventListener('input', e => { e.stopPropagation(); setPull(e.target.value / 100); });
 $('bPull').addEventListener('click', e => { e.stopPropagation(); setPull(PULL > 0.02 ? 0 : 0.55); });
 setPull(PULL);
+// clocks: exact uses the horizon the optics imply (rs = shadow radius / 2.598), so time barely slows; x7 enlarges it until you can feel it
+let clocksExact = false;
+const setClocks = e => { clocksExact = e; U.uGT.value = e ? 1 / 2.598 : 2.6; $('bClock').textContent = e ? 'clocks: exact' : 'clocks: ×7'; };
+$('bClock').addEventListener('click', e => { e.stopPropagation(); setClocks(!clocksExact); setHint(clocksExact ? 'clocks exact · time slows only a few percent, even under the great void' : 'clocks ×7 · each horizon enlarged sevenfold so the slowing can be felt', 6000); });
+setClocks(false);
 $('bVoid').addEventListener('click', e => { e.stopPropagation(); if (started) openVoid(); });
 $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); setSound(!A.on); });
 
@@ -1074,6 +1145,11 @@ function update(dt, t) {
       U.uDiskPos.value.copy(G.pos); U.uDiskGlow.value.set(1.0, 0.62, 0.32).multiplyScalar(0.55 * (0.2 + 0.8 * G.wake)); } }
   const Lhere = drainAtJS(tmpP.copy(player));
   lensMat.uniforms.uAspect.value = innerWidth / innerHeight;
+  { const lu = lensMat.uniforms, th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), G = voidSlots[GIANT];
+    lu.uProj.value.set(th * camera.aspect, th); lu.uCamRot.value.setFromMatrix4(camera.matrixWorld);
+    lu.uGiant.value = GIANT; lu.uGiantW.value = G ? G.wake : 0; lu.uDiskCol.value.copy(G ? G.col : lu.uDiskCol.value);
+    lu.uDiskN.value.set(0, 1, 0).applyMatrix3(diskTilt).transformDirection(camera.matrixWorldInverse);
+    holeMat.uniforms.uSkip.value = G && G.wake > 0.01 ? GIANT : -1; }
   lensMat.uniforms.uDark.value = Math.max(1 - Lhere, near * 0.6);
 
   // sound follows the light
@@ -1097,6 +1173,8 @@ function frame() {
   update(dt, t);
   garden.update(dt, t, camera);
   garden.preRender(camera, bufW, bufH);
+  { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
+    renderEnv(need); lensMat.uniforms.uEnvOn.value = ENV_ON && cubeReady && need ? 1 : 0; }
   renderer.shadowMap.needsUpdate = true;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
   renderAO();
