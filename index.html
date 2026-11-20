@@ -42,9 +42,9 @@
   #btns button:hover { color:var(--ink); border-color:var(--faint); }
   #btns .time { display:flex; align-items:center; gap:8px; background:rgba(0,0,0,.35); border:1px solid rgba(233,228,218,.16); border-radius:999px; padding:0 4px 0 12px; }
   #btns .time button { border:none; background:transparent; padding:9px 8px; min-width:118px; text-align:right; }
-  #tSlider, #dSlider, #pSlider { -webkit-appearance:none; appearance:none; width:110px; height:2px; background:rgba(233,228,218,.3); outline:none; cursor:pointer; }
-  #tSlider::-webkit-slider-thumb, #dSlider::-webkit-slider-thumb, #pSlider::-webkit-slider-thumb { -webkit-appearance:none; width:11px; height:11px; border-radius:50%; background:var(--ink); }
-  #tSlider::-moz-range-thumb, #dSlider::-moz-range-thumb, #pSlider::-moz-range-thumb { width:11px; height:11px; border:none; border-radius:50%; background:var(--ink); }
+  #tSlider, #dSlider { -webkit-appearance:none; appearance:none; width:110px; height:2px; background:rgba(233,228,218,.3); outline:none; cursor:pointer; }
+  #tSlider::-webkit-slider-thumb, #dSlider::-webkit-slider-thumb { -webkit-appearance:none; width:11px; height:11px; border-radius:50%; background:var(--ink); }
+  #tSlider::-moz-range-thumb, #dSlider::-moz-range-thumb { width:11px; height:11px; border:none; border-radius:50%; background:var(--ink); }
   @media (max-width:640px){ #btns{ flex-wrap:wrap; justify-content:flex-end; } #tSlider{ width:80px; } }
   #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:20; background:#000;
     font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--dim); padding:30px; text-align:center; }
@@ -66,7 +66,7 @@
   <div id="hint"></div>
   <div id="aim"></div>
   <div id="dil"></div>
-  <div id="btns"><div class="time"><button id="bSpeed">season: paused</button><input type="range" id="dSlider" min="0" max="364" step="1" aria-label="day of the year"><span id="dLabel"></span><button id="bReplant" title="replant (R)" style="min-width:0">↺</button></div><div class="time"><input type="range" id="tSlider" min="0" max="24" step="0.01" aria-label="time of day"><button id="bTime">time: night</button></div><div class="time" title="how hard the voids pull on you"><input type="range" id="pSlider" min="0" max="150" step="5" style="width:64px" aria-label="how hard the voids pull on you"><button id="bPull" style="min-width:0">pull 55%</button></div><button id="bVoid">open a void</button><button id="bClock" title="how strongly the voids slow time">clocks: ×7</button><button id="bSound">sound: on</button></div>
+  <div id="btns"><div class="time"><button id="bSpeed">season: paused</button><input type="range" id="dSlider" min="0" max="364" step="1" aria-label="day of the year"><span id="dLabel"></span><button id="bReplant" title="replant (R)" style="min-width:0">↺</button></div><div class="time"><input type="range" id="tSlider" min="0" max="24" step="0.01" aria-label="time of day"><button id="bTime">time: night</button></div><button id="bVoid">open a void</button><button id="bSound">sound: on</button><button id="bHands" title="Invisible Hands">hands</button><button id="bSettings" title="settings (O)">settings</button></div>
 </div>
 <div id="err"></div>
 

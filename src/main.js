@@ -6,6 +6,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
+import { createDrawer, to01, from01 } from './settings.js';
+import './invisible-hands.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
 
 // ------------------------------------------------------------------ setup
@@ -25,6 +27,14 @@ try {
 }
 const PR_MAX = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : LOW ? 1 : 1.5);
 let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
+// the settings drawer's values (see SETTINGS below); most are remembered between visits
+const S = { seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.5, ao: true, scale: 1 };
+const SAVED = ['properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale'];
+try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
+let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
+const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
+let hands = null, drawer = null, streamPts = null, rateLbl = r => String(r);   // set up with the settings drawer, further down
 const MSAA = isTouch || LOW ? 0 : QS.has('msaa') ? Math.max(0, parseInt(QS.get('msaa')) || 0) : 4;
 renderer.setPixelRatio(PR);
 renderer.setSize(innerWidth, innerHeight);
@@ -69,7 +79,7 @@ const U = {
   uDay: { value: 0 }, uTwi: { value: 0 }, uStarGain: { value: 1 },
   uWind: { value: 0.35 }, uGust: { value: 0 }, uWindDir: { value: new THREE.Vector2(0.8, 0.6) },
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
-  uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
+  uCloud: { value: 0.5 }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
 };
 
@@ -432,13 +442,14 @@ const globeMat = new THREE.ShaderMaterial({
 const starPR = { value: PR };
 const CLOUD_GLSL = `
     float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
+    uniform float uCloud;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
-      return smoothstep(0.47, 0.74, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }`;
+      return smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }`;
 let moon, envSkyMat;
 const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
@@ -447,8 +458,9 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
     float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
+    uniform float uCloud;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
-      return smoothstep(0.47, 0.74, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }
+      return smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }
     void main(){
       vec3 d = normalize(vD);
       vec3 c = mix(vec3(0.014,0.018,0.032), vec3(0.0015,0.002,0.006), smoothstep(-0.02, 0.55, d.y));
@@ -475,7 +487,7 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime };
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud };
 
   const N = 2200, pos = [], col = [], sz = [], sd = [];
   for (let i = 0; i < N; i++) {
@@ -490,7 +502,7 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
   g.setAttribute('aSize', new THREE.Float32BufferAttribute(sz, 1));
   g.setAttribute('aSeed', new THREE.Float32BufferAttribute(sd, 1));
   const stars = new THREE.Points(g, new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; attribute vec3 aColor; attribute float aSize; attribute float aSeed; varying vec3 vC;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -555,7 +567,7 @@ const GIANT = 1; voidSlots[GIANT].giant = true;   // the great one, above the gr
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   g.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 4));
   g.setAttribute('aVoid', new THREE.BufferAttribute(vid, 1));
-  const s = new THREE.Points(g, streamMat); s.frustumCulled = false; s.renderOrder = 3; scene.add(s);
+  const s = new THREE.Points(g, streamMat); s.frustumCulled = false; s.renderOrder = 3; scene.add(s); streamPts = s;
 }
 
 // ------------------------------------------------------------------ the giant's accretion disk of stolen light
@@ -593,7 +605,7 @@ function drainAtJS(p) {
   let L = 1;
   for (const v of voidSlots) { if (!v || v.drain < 0.001) continue;
     const d = p.distanceTo(v.pos), a = v.reach * 0.3, b = v.reach, t = Math.min(1, Math.max(0, (d - a) / (b - a)));
-    L *= 1 - v.drain * (1 - t * t * (3 - 2 * t)); }
+    L *= 1 - Math.min(1, v.drain * S.drain) * (1 - t * t * (3 - 2 * t)); }
   return L;
 }
 
@@ -645,7 +657,8 @@ const aoBlurMat = new THREE.ShaderMaterial({
 });
 const aoQuad = new FullScreenQuad(aoMat), aoBlurQuad = new FullScreenQuad(aoBlurMat);
 function renderAO() {
-  if (!AO_ON) return;
+  lensMat.uniforms.uAO.value = AO_ON && S.ao ? 0.85 : 0;
+  if (!AO_ON || !S.ao) return;
   const th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
   aoMat.uniforms.uProj.value.set(th * camera.aspect, th); aoMat.uniforms.uTexel.value.set(1 / aoRT.width, 1 / aoRT.height); aoBlurMat.uniforms.uTexel.value.copy(aoMat.uniforms.uTexel.value);
   aoMat.uniforms.tDepth.value = rt.depthTexture;
@@ -679,7 +692,7 @@ const lensMat = new THREE.ShaderMaterial({
   uniforms: {
     tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture }, tAO: { value: aoRT2.texture }, uAO: { value: AO_ON ? 0.85 : 0 },
     tDefl: { value: deflectionLUT() }, tEnv: { value: cubeRT.texture }, uEnvOn: { value: 0 }, uProj: { value: new THREE.Vector2(1, 1) }, uCamRot: { value: new THREE.Matrix3() },
-    uGiant: { value: -1 }, uGiantW: { value: 0 }, uDiskN: { value: new THREE.Vector3(0, 1, 0) }, uDiskCol: { value: new THREE.Vector3(1, 0.7, 0.4) }, uTime: U.uTime,
+    uGiant: { value: -1 }, uGiantW: { value: 0 }, uBend: { value: 1 }, uDiskN: { value: new THREE.Vector3(0, 1, 0) }, uDiskCol: { value: new THREE.Vector3(1, 0.7, 0.4) }, uTime: U.uTime,
     uLens: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensB: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensC: { value: Array.from({ length: MAXV }, () => new THREE.Vector3()) },
@@ -688,7 +701,7 @@ const lensMat = new THREE.ShaderMaterial({
   depthTest: false, depthWrite: false,
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: /* glsl */`
-  uniform sampler2D tScene, tDepth, tAO, tDefl; uniform samplerCube tEnv; uniform float uAO, uEnvOn, uTime, uGiantW;
+  uniform sampler2D tScene, tDepth, tAO, tDefl; uniform samplerCube tEnv; uniform float uAO, uEnvOn, uTime, uGiantW, uBend;
   uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform vec3 uLensC[${MAXV}];
   uniform float uAspect, uNear, uFar, uDark; uniform vec2 uProj; uniform mat3 uCamRot; uniform vec3 uDiskN, uDiskCol; uniform int uGiant;
   varying vec2 vUv;
@@ -741,7 +754,7 @@ const lensMat = new THREE.ShaderMaterial({
       if (giant && b < bc*2.9) { vec4 dk = traceDisk(v, h, D, bc/2.598, bc)*behind; disk.rgb += (1.0 - disk.a)*dk.rgb; disk.a += (1.0 - disk.a)*dk.a; }
       shade *= 1.0 - smoothstep(0.975, 1.0, x)*behind;
       if (x < 0.006 || x >= 1.0) continue;
-      float al = deflect(x)*smoothstep(0.006, 0.02, x)*behind;
+      float al = deflect(x)*smoothstep(0.006, 0.02, x)*behind*uBend;
       vec3 e = normalize(h - v*ct);                                      // toward the hole, at right angles to the line of sight
       vec3 d1 = v*cos(al) + e*sin(al); float f = 1.0;                    // a source not far behind the hole is displaced less (thin-lens factor D_ls / D_s)
       if (d1.z < -0.05) { vec2 u1 = toUv(d1); if (u1.x > 0.0 && u1.x < 1.0 && u1.y > 0.0 && u1.y < 1.0) { float ds = linZ(u1)/max(-d1.z, 1e-3); f = clamp((ds - D)/max(ds, 1e-3), 0.0, 1.0); } }
@@ -870,7 +883,7 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', () => { mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+canvas.addEventListener('mousedown', () => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
@@ -929,7 +942,7 @@ const tempCol = (T, out) => {   // blackbody-ish colour for a temperature on a 0
 };
 function collapseVoid(v) {
   const t = clock.elapsedTime, slot = voidSlots.indexOf(v);
-  v.evap = { t0: t, T: v.giant ? 5.5 : 1.6 + 1.3 * v.k, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot };
+  v.evap = { t0: t, T: (v.giant ? 5.5 : 1.6 + 1.3 * v.k) * S.evapTime, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot };
   if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
   if (A.ctx && A.on) { const ac = A.ctx, t0 = ac.currentTime, T = v.evap.T;   // a rising whistle as it heats, then the pop
     const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(70, t0); o.frequency.exponentialRampToValueAtTime(3200, t0 + T);
@@ -947,7 +960,7 @@ function evapStep(t) {
     const E = v.evap, e = E.hold != null ? E.hold : (t - E.t0) / E.T;
     if (e >= 1) {   // gone: a flash where it was; the garden's own voids condense again later
       flash.t0 = t; flash.pos.copy(v.pos); flash.col.copy(v.col); flash.k = v.k; sp.visible = false; voidSlots[i] = null;
-      if (!v.spawned) reformQ.push({ slot: i, at: t + (v.giant ? 75 : 45), home: v.home.clone(), k: v.k, giant: !!v.giant }); return; }
+      if (!v.spawned && S.reform) reformQ.push({ slot: i, at: t + (v.giant ? 75 : 45), home: v.home.clone(), k: v.k, giant: !!v.giant }); return; }
     const m = Math.cbrt(1 - e);                                  // mass left
     v.R = E.R0 * m; v.wake = E.wake0 * m; v.drain = E.drain0 * m * m; v.scar = 0; v.reach = Math.max(0.5, v.reach * (0.995));
     const heat = Math.min(1, 0.08 / Math.max(m, 0.08)), lum = Math.min(40, 0.2 / (m * m + 0.005)) * (0.4 + 0.6 * Math.min(1, v.k));   // T ∝ 1/M, power ∝ 1/M²
@@ -981,15 +994,12 @@ function openVoid() {
 }
 // how hard the voids tug on the walker: a slider, remembered between visits where the browser allows
 let PULL = 0.55; try { const v = parseFloat(localStorage.getItem('gd.pull')); if (v >= 0 && v <= 1.5) PULL = v; } catch (e) {}
-const setPull = v => { PULL = v; $('pSlider').value = Math.round(v * 100); $('bPull').textContent = `pull ${Math.round(v * 100)}%`; try { localStorage.setItem('gd.pull', String(v)); } catch (e) {} };
-$('pSlider').addEventListener('input', e => { e.stopPropagation(); setPull(e.target.value / 100); });
-$('bPull').addEventListener('click', e => { e.stopPropagation(); setPull(PULL > 0.02 ? 0 : 0.55); });
+const setPull = v => { PULL = v; try { localStorage.setItem('gd.pull', String(v)); } catch (e) {} };
 setPull(PULL);
 // clocks: exact uses the horizon the optics imply (rs = shadow radius / 2.598), so time barely slows; x7 enlarges it until you can feel it
 let clocksExact = false;
-const setClocks = e => { clocksExact = e; U.uGT.value = e ? 1 / 2.598 : 2.6; $('bClock').textContent = e ? 'clocks: exact' : 'clocks: ×7'; };
-$('bClock').addEventListener('click', e => { e.stopPropagation(); setClocks(!clocksExact); setHint(clocksExact ? 'clocks exact · time slows only a few percent, even under the great void' : 'clocks ×7 · each horizon enlarged sevenfold so the slowing can be felt', 6000); });
-setClocks(false);
+const setClocks = e => { clocksExact = e; U.uGT.value = e ? 1 / 2.598 : 2.6; try { localStorage.setItem('gd.clocks', e ? 'exact' : 'x7'); } catch (er) {} };
+setClocks((() => { try { return localStorage.getItem('gd.clocks') === 'exact'; } catch (e) { return false; } })());
 $('bVoid').addEventListener('click', e => { e.stopPropagation(); if (started) openVoid(); });
 $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); setSound(!A.on); });
 
@@ -1020,18 +1030,18 @@ function sunDirAt(date) {
   return new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
 }
 // ------------------------------------------------------------------ the garden's calendar, your watch, and time dilation
-const SPEEDS = [0, 1, 7, 30], SPEED_LBL = ['season: paused', '1 day / s', '1 week / s', '1 month / s'];
-let speedIdx = 0, gardenDays = 0, yourDays = 0, playerF = 1;
+const SPEEDS = [0, 1, 7, 30];   // the season button steps through these
+let gardenDays = 0, yourDays = 0, playerF = 1;
 const calDoy = () => garden.seasons.DOY0 + gardenDays;
 const dilJS = (x, y, z) => { let s = 0; for (const v of voidSlots) if (v) s += v.R * U.uGT.value / Math.max(0.05, Math.hypot(x - v.pos.x, y - v.pos.y, z - v.pos.z)); return Math.sqrt(Math.max(0.0144, 1 - s)); };
 const fmtDur = d => { d = Math.abs(d); if (d < 1) return `${Math.round(d * 24)} h`; if (d < 60) return `${Math.round(d)} days`; if (d < 730) return `${(d / 30.4).toFixed(1)} months`; return `${(d / 365).toFixed(1)} years`; };
 function refreshSeasonUI() {
   const d = calDoy(), yr = Math.floor(d / 365) + 1;
-  $('dLabel').textContent = `${doyLabel(d)} · yr ${yr}`; $('bSpeed').textContent = SPEED_LBL[speedIdx];
+  $('dLabel').textContent = `${doyLabel(d)} · yr ${yr}`; $('bSpeed').textContent = S.seasonRate > 0 ? rateLbl(S.seasonRate) : 'season: paused'; drawer && drawer.sync('seasonRate'); drawer && drawer.sync('dayOfYear');
   if (document.activeElement !== $('dSlider')) $('dSlider').value = ((Math.floor(d) % 365) + 365) % 365;
 }
-$('bSpeed').addEventListener('click', e => { e.stopPropagation(); speedIdx = (speedIdx + 1) % SPEEDS.length; refreshSeasonUI(); if (speedIdx === 1) setHint('seasons running · near a void, time slows: its plants fall behind the calendar', 7000); });
-$('dSlider').addEventListener('input', e => { e.stopPropagation(); const cur = ((calDoy() % 365) + 365) % 365; let dd = parseFloat(e.target.value) - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); });
+$('bSpeed').addEventListener('click', e => { e.stopPropagation(); const i = SPEEDS.findIndex(p => p > S.seasonRate + 1e-6); S.seasonRate = i < 0 ? 0 : SPEEDS[i]; refreshSeasonUI(); hands && hands.recenter('seasonRate'); if (S.seasonRate === 1) setHint('seasons running · near a void, time slows: its plants fall behind the calendar', 7000); });
+$('dSlider').addEventListener('input', e => { e.stopPropagation(); jumpToDoy(parseFloat(e.target.value)); hands && hands.recenter('dayOfYear'); });
 for (const ev of ['mousedown', 'touchstart']) $('dSlider').addEventListener(ev, e => e.stopPropagation(), { passive: true });
 $('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seasons.replant(); setHint('replanted · they will fill in over about three years', 6000); });
 addEventListener('keydown', e => {
@@ -1053,6 +1063,7 @@ function refreshTimeUI() {
   const d = garderDate();
   $('bTime').textContent = timeMode === 'night' ? 'time: night' : (timeMode === 'live' ? 'live · ' : 'set · ') + fmtTime(d);
   if (timeMode !== 'manual') $('tSlider').value = d.getHours() + d.getMinutes() / 60;
+  if (drawer && drawer.isOpen) { drawer.sync('hour'); drawer.sync('timeMode'); }
 }
 function setTimeMode(m) {
   timeMode = m; try { if (m !== 'manual') localStorage.setItem('umbra-time', m); } catch (e) {}
@@ -1074,7 +1085,7 @@ function applyTimeOfDay() {
   const day = sstep(-0.10, 0.22, sy), twi = Math.exp(-(((sy + 0.02) / 0.11) ** 2));
   U.uSunDir.value.copy(sd); U.uDay.value = day; U.uTwi.value = twi;
   // ambient: moonlight → skylight, with warm twilight
-  _a.set(0.030, 0.040, 0.072).lerp(new THREE.Vector3(0.42, 0.50, 0.64), day).add(new THREE.Vector3(0.10, 0.05, 0.035).multiplyScalar(twi));
+  _a.set(0.030, 0.040, 0.072).multiplyScalar(S.moon).lerp(new THREE.Vector3(0.42, 0.50, 0.64), day).add(new THREE.Vector3(0.10, 0.05, 0.035).multiplyScalar(twi));
   U.uAmb.value.copy(_a);
   _sunCol.setRGB(1.0, 0.55, 0.30).lerp(new THREE.Color(1.0, 0.95, 0.88), sstep(0.0, 0.35, sy));
   const sunPhys = 3.6 * sstep(-0.02, 0.25, sy);
@@ -1084,15 +1095,100 @@ function applyTimeOfDay() {
   else { sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.3 * (1 - day); lightDir.copy(MOON_DIR); }
   hemi.intensity = 0.05 + 0.3 * (1 - day);
   U.uFogColor.value.copy(FOG_NIGHT).lerp(FOG_DAY, day).lerp(FOG_TWI, twi * 0.5 * (1 - day * 0.6));
-  U.uLightGain.value = 1 - 0.45 * sstep(0.12, 0.5, sy);   // the exhibit's lights stay up until the sun is well clear of the wall
+  U.uLightGain.value = (1 - 0.45 * sstep(0.12, 0.5, sy)) * S.exhibit;   // the exhibit's lights stay up until the sun is well clear of the wall
   U.uStarGain.value = (1 - day) ** 3;
   moon.material.color.copy(MOON_COL).multiplyScalar(1 - day); moon.visible = day < 0.98;
   scene.fog.color.copy(U.uFogColor.value);
   refreshEnv(`${Math.round(sy * 80)}|${Math.round(day * 20)}|${Math.round(twi * 10)}`, clock.elapsedTime);
-  renderer.toneMappingExposure = 1.05 + 0.12 * day;
-  U.uFogDensity.value = 0.0125 - 0.0072 * day; scene.fog.density = U.uFogDensity.value;
-  bloom.threshold = 0.62 + 0.5 * day; bloom.strength = 0.75 - 0.3 * day;
+  renderer.toneMappingExposure = (1.05 + 0.12 * day) * S.exposure;
+  U.uFogDensity.value = (0.0125 - 0.0072 * day) * S.fog; scene.fog.density = U.uFogDensity.value;
+  bloom.threshold = 0.62 + 0.5 * day; bloom.strength = (0.75 - 0.3 * day) * S.bloom;
 }
+
+// ------------------------------------------------------------------ settings drawer: one registry for the drawer, saved preferences and Invisible Hands
+const fmtPct = v => `${Math.round(v * 100)}%`, fmtX = v => `×${v.toFixed(v < 1 ? 2 : 1)}`;
+rateLbl = r => r <= 0 ? 'paused' : r < 1 ? `${Math.round(r * 24)} hours / s` : r < 6.5 ? `${r.toFixed(r < 2 ? 1 : 0)} day${r < 1.5 ? '' : 's'} / s` : r < 28 ? `${(r / 7).toFixed(1)} weeks / s` : `${(r / 30.4).toFixed(1)} months / s`;
+const fmtHour = h => { const hh = Math.floor(h) % 24, mm = Math.round((h % 1) * 60) % 60; return `${(hh % 12) || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'am' : 'pm'}`; };
+const nearestVoid = (awake) => { let best = null, bd = 1e9; for (const v of voidSlots) { if (!v || v.evap || (awake && v.wake < 0.05)) continue; const d = v.pos.distanceTo(player); if (d < bd) { bd = d; best = v; } } return best; };
+const SETTINGS = [
+  // Garden
+  { id: 'seasonRate', tab: 'garden', group: 'Seasons', label: 'Season speed', kind: 'range', min: 0.25, max: 60, log: true, zero: true, hands: true, fmt: rateLbl,
+    get: () => S.seasonRate, set: v => { S.seasonRate = v; refreshSeasonUI(); }, note: 'how fast the calendar runs for the plants' },
+  { id: 'dayOfYear', tab: 'garden', label: 'Day of the year', kind: 'range', min: 0, max: 364, step: 1, hands: true, fmt: d => doyLabel(d),
+    get: () => ((Math.floor(calDoy()) % 365) + 365) % 365, set: v => jumpToDoy(v) },
+  { id: 'gardenAge', tab: 'garden', label: 'Garden age', kind: 'range', min: 0, max: 6, step: 0.1, hands: true, fmt: y => y < 0.95 ? `${Math.round(y * 12)} months` : `${y.toFixed(1)} years`,
+    get: () => garden.seasons.age(), set: v => garden.seasons.setAge(v), note: 'time since planting: young plants are small and sparse, and fill out over about three years' },
+  { id: 'properTime', tab: 'garden', label: 'Plants keep their own time', kind: 'toggle', get: () => S.properTime, set: v => { S.properTime = v; save(); },
+    note: 'each plant ages by its own clock, slowed near a void; off, the whole garden shares the calendar' },
+  { id: 'replant', tab: 'garden', label: 'Replant everything', kind: 'action', set: () => $('bReplant').click() },
+  { id: 'wind', tab: 'garden', group: 'Weather', label: 'Wind', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => S.wind, set: v => { S.wind = v; save(); } },
+  { id: 'gusts', tab: 'garden', label: 'Gusts', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.gusts, set: v => { S.gusts = v; save(); } },
+  // Voids
+  { id: 'pull', tab: 'voids', group: 'On you', label: 'Pull', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => PULL, set: v => setPull(v), note: 'how hard the voids tug you toward them' },
+  { id: 'clocksExact', tab: 'voids', label: 'Exact clocks', kind: 'toggle', hands: true, get: () => clocksExact, set: v => setClocks(v),
+    note: 'on: time slows by the true amount for holes this size, a few percent at most. off: each horizon is enlarged about sevenfold so you can feel it' },
+  { id: 'voidSize', tab: 'voids', group: 'The voids', label: 'Size', kind: 'range', min: 0.5, max: 2, log: true, hands: true, fmt: fmtX, get: () => S.voidSize, set: v => { S.voidSize = v; save(); } },
+  { id: 'drain', tab: 'voids', label: 'Light eaten', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => S.drain, set: v => { S.drain = v; save(); } },
+  { id: 'wakeRange', tab: 'voids', label: 'Notices you from', kind: 'range', min: 0.4, max: 2.5, log: true, fmt: fmtX, get: () => S.wakeRange, set: v => { S.wakeRange = v; save(); } },
+  { id: 'lensing', tab: 'voids', label: 'Bend light', kind: 'toggle', hands: true, get: () => S.lensing, set: v => { S.lensing = v; save(); }, note: 'exact Schwarzschild lensing; off leaves only the black shadows' },
+  { id: 'disk', tab: 'voids', label: 'Great void’s disk', kind: 'toggle', hands: true, get: () => S.disk, set: v => { S.disk = v; save(); } },
+  { id: 'streams', tab: 'voids', label: 'Streams of stolen light', kind: 'toggle', hands: true, get: () => S.streams, set: v => { S.streams = v; save(); } },
+  { id: 'evapTime', tab: 'voids', group: 'Evaporation', label: 'Evaporation time', kind: 'range', min: 0.3, max: 4, log: true, fmt: fmtX, get: () => S.evapTime, set: v => { S.evapTime = v; save(); },
+    note: 'click a void to evaporate it by Hawking radiation, sped up from about 10^57 years' },
+  { id: 'reform', tab: 'voids', label: 'The garden’s voids re-form', kind: 'toggle', get: () => S.reform, set: v => { S.reform = v; save(); } },
+  { id: 'openVoid', tab: 'voids', label: 'Open a void', kind: 'action', hands: true, set: () => openVoid() },
+  { id: 'evaporate', tab: 'voids', label: 'Evaporate the nearest', kind: 'action', hands: true, set: () => { const v = nearestVoid(true) || nearestVoid(false); if (v) collapseVoid(v); } },
+  { id: 'evaporateAll', tab: 'voids', label: 'Evaporate all', kind: 'action', set: () => { for (const v of voidSlots) if (v && !v.evap) collapseVoid(v); } },
+  // Light
+  { id: 'timeMode', tab: 'light', group: 'Time of day', label: 'Sky', kind: 'choice', options: [{ label: 'night', value: 'night' }, { label: 'live', value: 'live' }, { label: 'set', value: 'manual' }],
+    get: () => timeMode, set: v => { setTimeMode(v); drawer && drawer.sync('hour'); } },
+  { id: 'hour', tab: 'light', label: 'Hour', kind: 'range', min: 0, max: 24, step: 0.25, hands: true, fmt: fmtHour,
+    get: () => { const d = garderDate(); return timeMode === 'manual' ? manualHour : d.getHours() + d.getMinutes() / 60; },
+    set: v => { manualHour = Math.min(23.99, v); if (timeMode !== 'manual') { setTimeMode('manual'); drawer && drawer.sync('timeMode'); } refreshTimeUI(); } },
+  { id: 'exhibit', tab: 'light', group: 'The exhibit', label: 'Exhibit lights', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.exhibit, set: v => { S.exhibit = v; save(); } },
+  { id: 'moon', tab: 'light', label: 'Moonlight', kind: 'range', min: 0.25, max: 4, log: true, hands: true, fmt: fmtX, get: () => S.moon, set: v => { S.moon = v; save(); } },
+  { id: 'exposure', tab: 'light', group: 'Camera', label: 'Exposure', kind: 'range', min: 0.5, max: 2, log: true, hands: true, fmt: fmtX, get: () => S.exposure, set: v => { S.exposure = v; save(); } },
+  { id: 'bloom', tab: 'light', label: 'Glow', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.bloom, set: v => { S.bloom = v; save(); } },
+  { id: 'fog', tab: 'light', label: 'Haze', kind: 'range', min: 0, max: 3, fmt: fmtPct, get: () => S.fog, set: v => { S.fog = v; save(); } },
+  { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.clouds, set: v => { S.clouds = v; U.uCloud.value = v; save(); } },
+  { id: 'ao', tab: 'light', group: 'Quality', label: 'Ambient occlusion', kind: 'toggle', get: () => S.ao, set: v => { S.ao = v; save(); } },
+  { id: 'scale', tab: 'light', label: 'Render resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: fmtPct, get: () => S.scale, set: v => { S.scale = v; save(); applyScale(); },
+    note: 'lower it if the garden runs slowly; it also lowers by itself if frames drop' },
+];
+function jumpToDoy(target) { const cur = ((calDoy() % 365) + 365) % 365; let dd = target - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; if (Math.abs(dd) < 1e-3) return;
+  gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); }
+function applyScale() { PR = PR_MAX * S.scale; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); }
+// Invisible Hands: the controls marked `hands` can be moved from another app or the console, and the garden publishes a few readings back
+const IH = globalThis.InvisibleHands;
+try {
+  hands = IH.create({ app: 'garden-of-delight', name: 'Garden of Delight',
+    params: SETTINGS.filter(c => c.hands).map(c => ({ id: c.id, label: c.label, kind: c.kind === 'toggle' ? 'toggle' : c.kind === 'action' ? 'trig' : 'cont',
+      get: () => c.kind === 'action' ? 0 : to01(c, c.get()),
+      set: v => { if (c.kind === 'action') { if (v > 0.5 && !c.hi) c.set(); c.hi = v > 0.5; return; } const x = from01(c, v); if (x !== c.get()) { c.set(x); drawer && drawer.sync(c.id); } } })),
+    outs: [
+      { id: 'light', label: 'Light where you stand', get: () => OUT.light },
+      { id: 'timeRate', label: 'Your clock rate', get: () => Math.min(1, playerF) },
+      { id: 'nearVoid', label: 'Nearness of a void', get: () => OUT.near },
+      { id: 'greatVoid', label: 'Great void awake', get: () => voidSlots[GIANT] ? voidSlots[GIANT].wake : 0 },
+    ] });
+} catch (e) { console.warn('Invisible Hands unavailable', e); }
+for (const c of SETTINGS) if (c.hands && hands) c.onHand = () => hands.recenter(c.id);
+const handsIcon = size => { try { return IH.icon({ size }); } catch (e) { return null; } };
+drawer = createDrawer({
+  tabs: [{ id: 'garden', label: 'Garden' }, { id: 'voids', label: 'Voids' }, { id: 'light', label: 'Light' },
+    { id: 'hands', label: 'Hands', icon: handsIcon(12), intro: 'Invisible Hands lets another app, or the console on a phone, move this garden’s controls over the internet, and read its light and clocks back. Controls with the mark can be moved. Start a room, then open the console with the same room.' }],
+  controls: SETTINGS, tag: hands ? id => hands.tag(id) : null,
+  onOpenChange: open => { if (open && document.pointerLockElement === canvas) document.exitPointerLock(); },
+});
+if (hands) { const box = document.createElement('div'); box.className = 'hands'; box.append(hands.panel());
+  const link = document.createElement('a'); link.textContent = 'open the console ↗'; link.target = '_blank'; link.rel = 'noopener'; link.style.cssText = 'display:inline-block;margin-top:14px;color:inherit;opacity:.7';
+  const setLink = () => { link.href = 'https://samuelling.github.io/InvisibleHands/console/' + (hands.room ? '?room=' + encodeURIComponent(hands.room) : ''); };
+  setLink(); link.addEventListener('mouseenter', setLink); link.addEventListener('focus', setLink); box.append(link); drawer.pane('hands').append(box); }
+$('bSettings').addEventListener('click', e => { e.stopPropagation(); drawer.toggle(); });
+{ const b = $('bHands'), ic = handsIcon(12); if (ic) b.prepend(ic); b.addEventListener('click', e => { e.stopPropagation(); drawer.toggle('hands'); }); if (!hands) b.style.display = 'none'; }
+addEventListener('keydown', e => { if (e.code === 'KeyO') drawer.toggle(); if (e.code === 'Escape' && drawer.isOpen) drawer.close(); });
+document.addEventListener('keydown', e => { const t = e.target; if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !/^(range|button|checkbox)$/.test(t.type)))) e.stopPropagation(); });   // typing a room code doesn't walk you about
+U.uCloud.value = S.clouds; if (S.scale !== 1) applyScale();
 
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
@@ -1121,14 +1217,14 @@ function update(dt, t) {
   for (const v of voidSlots) {
     if (!v || v.evap) continue;
     const d = player.distanceTo(v.pos);
-    const k = v.k, wakeR = v.giant ? 28 : 5.5 + 7 * Math.pow(k, 0.9);
+    const k = v.k, wakeR = (v.giant ? 28 : 5.5 + 7 * Math.pow(k, 0.9)) * S.wakeRange;
     let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
     const rate = target > v.wake ? 0.45 : 0.08;
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
     v.scar = Math.max(v.scar - dt / 40, v.wake);
     v.drain = Math.max(v.wake, v.scar * 0.8);
     const w = v.wake * v.wake * (3 - 2 * v.wake);
-    v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k;
+    v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k * S.voidSize;
     v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); v.reach = Math.min(v.reach, v.giant ? 25 : 13);
     if (v.giant) { if (!v.wasAwake && v.wake > 0.6) { v.wasAwake = true; if (A.ctx && A.on) inhale(1.4, 3.5); } if (v.wake < 0.5) v.wasAwake = false; }
     else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
@@ -1172,7 +1268,8 @@ function update(dt, t) {
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
-  U.uGust.value = 0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0);
+  U.uGust.value = S.gusts * (0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0)); U.uWind.value = S.wind;
+  if (streamPts) streamPts.visible = S.streams; lensMat.uniforms.uBend.value = S.lensing ? 1 : 0;
   { const S = 52 / sunLight.shadow.mapSize.x;
     sunLight.target.position.set(Math.round(player.x / S) * S, 0, Math.round(player.z / S) * S);
     sunLight.position.copy(sunLight.target.position).addScaledVector(lightDir, 160); sunLight.target.updateMatrixWorld(); }
@@ -1180,8 +1277,8 @@ function update(dt, t) {
   // time: your watch runs at real time; the garden's calendar runs faster for you the deeper you stand in a well,
   // and every plant integrates its own proper time from the calendar at its own depth
   playerF = dilJS(camera.position.x, camera.position.y, camera.position.z); U.uPlayerF.value = playerF;
-  { const rate = SPEEDS[speedIdx], dCal = dt * rate / playerF;
-    if (rate > 0) { gardenDays += dCal; yourDays += dt * rate; garden.seasons.advance(dCal, dilJS); }
+  { const rate = S.seasonRate, dCal = dt * rate / playerF;
+    if (rate > 0) { gardenDays += dCal; yourDays += dt * rate; garden.seasons.advance(dCal, S.properTime ? dilJS : () => 1); }
     garden.setLawnSeason(calDoy());
     if (rate > 0 && (t * 4 | 0) !== ((t - dt) * 4 | 0)) { refreshSeasonUI(); }
     const gap = gardenDays - yourDays, show = playerF < 0.985 || gap > 0.5, el = $('dil');
@@ -1194,7 +1291,7 @@ function update(dt, t) {
   voidSlots.forEach((v, i) => {
     const lu = lensMat.uniforms;
     if (!v) { mirrorVoids[i].visible = false; U.uVoid.value[i].set(0, -100, 0, 0); U.uVoidAux.value[i].set(0, 0, 0, 0); lu.uLens.value[i].set(0, 0, 0, 0); return; }
-    U.uVoid.value[i].set(v.pos.x, v.pos.y, v.pos.z, v.drain);
+    U.uVoid.value[i].set(v.pos.x, v.pos.y, v.pos.z, Math.min(1, v.drain * S.drain));
     mirrorVoids[i].visible = true; mirrorVoids[i].position.copy(v.pos); mirrorVoids[i].scale.setScalar(v.R);
     U.uVoidAux.value[i].set(v.R, v.wake, v.reach, v.k);
     U.uVoidCol.value[i].copy(v.col);
@@ -1206,11 +1303,11 @@ function update(dt, t) {
   });
   { const G = voidSlots[GIANT]; if (!G) U.uDiskGlow.value.set(0, 0, 0); if (G) { diskU.uGiant.value.set(G.pos.x, G.pos.y, G.pos.z, G.R); diskU.uGW.value = 0.25 + 0.75 * G.wake;
       U.uDiskPos.value.copy(G.pos); U.uDiskGlow.value.set(1.0, 0.62, 0.32).multiplyScalar(0.55 * (0.2 + 0.8 * G.wake)); } }
-  const Lhere = drainAtJS(tmpP.copy(player));
+  const Lhere = drainAtJS(tmpP.copy(player)); OUT.light = Lhere; OUT.near = near;
   lensMat.uniforms.uAspect.value = innerWidth / innerHeight;
   { const lu = lensMat.uniforms, th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), G = voidSlots[GIANT];
     lu.uProj.value.set(th * camera.aspect, th); lu.uCamRot.value.setFromMatrix4(camera.matrixWorld);
-    lu.uGiant.value = GIANT; lu.uGiantW.value = G ? G.wake : 0; lu.uDiskCol.value.copy(G ? G.col : lu.uDiskCol.value);
+    lu.uGiant.value = GIANT; lu.uGiantW.value = G && S.disk ? G.wake : 0; lu.uDiskCol.value.copy(G ? G.col : lu.uDiskCol.value);
     lu.uDiskN.value.set(0, 1, 0).applyMatrix3(diskTilt).transformDirection(camera.matrixWorldInverse);
     holeMat.uniforms.uSkip.value = G && G.wake > 0.01 ? GIANT : -1; }
   lensMat.uniforms.uDark.value = Math.max(1 - Lhere, near * 0.6);

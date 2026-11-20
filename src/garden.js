@@ -1310,6 +1310,8 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     advance(dDays, dil) { if (dDays !== 0) for (let i = 0; i < NP; i++) PT.tau[i] += dDays * dil(PT.x[i], PT.y[i] + 0.4, PT.z[i]); writeStates(); },
     jump(dDays) { for (let i = 0; i < NP; i++) PT.tau[i] += dDays; writeStates(); },
     replant() { for (let i = 0; i < NP; i++) PT.planted[i] = PT.tau[i]; baseAge = 0; writeStates(); },
+    age() { return baseAge + (NP ? (PT.tau[0] - PT.planted[0]) / 365 : 0); },
+    setAge(y) { for (let i = 0; i < NP; i++) PT.planted[i] = PT.tau[i]; baseAge = Math.max(0, y); writeStates(); },
   };
   const lt = [1, 1, 1];
   function setLawnSeason(d) { lawnTint(((d % 365) + 365) % 365, lt); U.uSeasonTint.value.set(lt[0], lt[1], lt[2]); }
