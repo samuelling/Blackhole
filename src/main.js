@@ -15,7 +15,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one'
-  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound';
+  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound · F frame rate';
 
 let renderer;
 try {
@@ -1087,7 +1087,8 @@ function update(dt, t) {
   }
 }
 
-let slowT = 1 / 60, prAt = 0;
+let slowT = 1 / 60, prAt = 0, fpsS = 60, fpsAt = 0, showFps = QS.has('fps');
+addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; } });
 function frame() {
   const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
@@ -1101,6 +1102,8 @@ function frame() {
   renderAO();
   renderer.setRenderTarget(null);
   composer.render(dt);
+  fpsS = fpsS * 0.94 + 0.06 / Math.max(rawDt, 1e-3);
+  if (showFps && t - fpsAt > 0.5) { fpsAt = t; $('title').textContent = `GARDEN OF DELIGHT · ${Math.round(fpsS)} fps · ${bufW}×${bufH}`; }
   // adaptive resolution: if frames run slow for a while, render fewer pixels (never under test)
   if (started && !TEST) { slowT = slowT * 0.97 + rawDt * 0.03; if (t - prAt > 2.5 && slowT > 1 / 40 && PR > 0.7) { PR = Math.max(0.7, PR * 0.86); prAt = t; slowT = 1 / 60;
     renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); } } else prAt = t + 3;

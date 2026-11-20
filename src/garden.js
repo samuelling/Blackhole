@@ -371,6 +371,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   const wet = (x, z, r0, r1, a) => { const g = m2.createRadialGradient(px(x), pz(z), pl(r0), px(x), pz(z), pl(r1)); g.addColorStop(0, `rgba(0,0,255,${a})`); g.addColorStop(1, 'rgba(0,0,255,0)'); m2.globalCompositeOperation = 'lighter'; m2.fillStyle = g; m2.fillRect(px(x) - pl(r1), pz(z) - pl(r1), pl(r1) * 2, pl(r1) * 2); };
   const maskTex = new THREE.CanvasTexture(mc), mask2Tex = new THREE.CanvasTexture(m2c);
   for (const t of [maskTex, mask2Tex]) { t.colorSpace = THREE.NoColorSpace; t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; }
+  maskTex.generateMipmaps = true; maskTex.minFilter = THREE.LinearMipmapLinearFilter;   // its coarse mip levels double as a blurred map: how far into a path a point is
   U.uGroundMask = { value: maskTex }; U.uGroundMask2 = { value: mask2Tex };
   U.uMeadow = { value: layout.meadows.map(m => new THREE.Vector4(m.x, m.z, m.r, 0)) };
   U.uSeasonTint = U.uSeasonTint || { value: new V3(1, 1, 1) };
@@ -388,7 +389,8 @@ uniform sampler2D uGroundMask, uGroundMask2, tLD, tSD, tSN, tGD, tGN, tGA, tPD, 
         .replace('#include <map_fragment>', `
 vec2 gq = vWPos.xz; ${MASKUV}
 vec4 gm = texture2D(uGroundMask, muv), g2 = texture2D(uGroundMask2, muv);
-if (mout) { gm = vec4(1.0, 0.0, 0.0, 1.0); g2 = vec4(0.0, 1.0, 0.0, 1.0); }
+float gcore = smoothstep(0.5, 0.95, texture2D(uGroundMask, muv, 5.0).b);   // 1 along the trodden middle of a path, falling to 0 at its edges
+if (mout) { gm = vec4(1.0, 0.0, 0.0, 1.0); g2 = vec4(0.0, 1.0, 0.0, 1.0); gcore = 1.0; }
 float nz = vnoise(gq * 6.0) - 0.5, nz2 = vnoise(gq * 21.0) - 0.5;
 float wA = smoothstep(0.45, 0.62, 1.0 - (gm.r + gm.g + gm.b));
 float wG = smoothstep(0.36, 0.6, gm.b + nz * 0.24 + nz2 * 0.12) * (1.0 - wA);
@@ -405,6 +407,9 @@ float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 
 vec3 cL = texture2D(tLD, uvL).rgb * vec3(0.74, 1.0, 0.46) * 1.08 * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * uSeasonTint;
 vec3 cS = texture2D(tSD, uvS).rgb * (0.85 + 0.3 * vnoise(gq * 0.6)) * 0.85;
 vec3 cG = pow(mix(texture2D(tGD, uvG).rgb, texture2D(tGD, uvG2).rgb, gmix), vec3(1.4)) * vec3(0.9, 0.82, 0.7) * (0.8 + 0.3 * vnoise(gq * 0.35));
+float gmac = vnoise(gq * 0.9) * 0.6 + vnoise(gq * 3.1) * 0.4;
+cG *= mix(0.72, 1.16, gcore) * (0.84 + 0.32 * gmac);   // pale and compacted where feet go, darker and damper at the sides, patchy everywhere
+cG = mix(cG, vec3(0.1, 0.105, 0.05) * (0.7 + 0.6 * gmac), (1.0 - gcore) * smoothstep(0.45, 0.8, vnoise(gq * 2.3 + 11.0)) * 0.55);   // moss and leaf litter creeping in from the edges
 vec3 cP = texture2D(tPD, uvP).rgb * 0.95;
 vec3 aL = vec3(1.0, 0.92, 0.0), aS = vec3(1.0, 0.94, 0.0), aG = mix(texture2D(tGA, uvG).rgb, texture2D(tGA, uvG2).rgb, gmix), aP = texture2D(tPA, uvP).rgb;
 vec3 gArm = aL * wL + aS * wS + aG * wG + aP * wP;
@@ -661,7 +666,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     const list = ff < 0.34 ? FRONT : ff < 0.7 ? MID : BACK;
     const k = drift(x, z, list, 2.4, salt + (ff < 0.34 ? 0 : ff < 0.7 ? 50 : 100));
     const r = radiusOf(k) * 0.9;
-    if (!spaceOk(x, z, r, 0.98)) return;
+    if (!spaceOk(x, z, r, 0.84)) return;   // close enough that neighbours knit together and hide the soil
     claim(x, z, r); addPlant(k, x, z, { salt });
   }
 
@@ -693,7 +698,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       }
     }
     const segs = closed ? n : n - 1;
-    for (let i = 0; i < segs; i++) { const i1 = (i + 1) % n; for (let k = 0; k < np - 1; k++) { const a = i * np + k, b = i * np + k + 1, c = i1 * np + k, d = i1 * np + k + 1; idx.push(a, c, b, b, c, d); } }
+    for (let i = 0; i < segs; i++) { const i1 = (i + 1) % n; for (let k = 0; k < np - 1; k++) { const a = i * np + k, b = i * np + k + 1, c = i1 * np + k, d = i1 * np + k + 1; idx.push(a, b, c, b, d, c); } }   // wound to face outward
     if (!closed) for (const [i, s] of [[0, 1], [n - 1, -1]]) {
       const c0 = pos.length / 3; pos.push(pts[i][0], H * 0.45, pts[i][1]); uv.push(0, 0);
       for (let k = 0; k < np - 1; k++) s > 0 ? idx.push(c0, i * np + k + 1, i * np + k) : idx.push(c0, i * np + k, i * np + k + 1);
@@ -1157,7 +1162,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   }
   // low ground cover between plants in the beds
   {
-    const pts = [], add = (x, z) => { if (!blocked(x, z) && clear(x, z)) pts.push([x, z]); }, dens = lite ? 7 : 14;
+    const pts = [], add = (x, z) => { if (!blocked(x, z) && clear(x, z)) pts.push([x, z]); }, dens = lite ? 9 : 20;
     for (const s of layout.loopS) for (let i = 0; i < 2 * dens; i++) { const d = rr(1.7, 5.6), x = s.x + s.ox * d + rr(-0.25, 0.25), z = s.z + s.oz * d + rr(-0.25, 0.25); if (layout.inWalls(x, z, 0.4) && !(Math.abs(x) < 4.4 && z > 49.8)) add(x, z); }
     for (const s of [-1, 1]) for (let i = 0; i < 8 * 3.7 * dens; i++) add(s * rr(AV.x0 - 0.1, AV.x1 + 0.1), rr(AV.z0, AV.z1));
     for (let i = 0; i < 220 * dens; i++) { const a = rng() * TAU, r = Math.sqrt(rr((ring.bedIn + 0.3) ** 2, (ring.bedOut - 0.25) ** 2)), x = Math.cos(a) * r, z = Math.sin(a) * r; if (Math.abs(x) > 2.0 && Math.abs(z) > 2.0) add(x, z); }
@@ -1165,8 +1170,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     const cg = new THREE.PlaneGeometry(1, 1); cg.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(pts.map(([x, z]) => nearestPid(x, z))), 1));
     const im = new THREE.InstancedMesh(cg, mat, pts.length), m = new THREE.Matrix4(), q = new Q(), sc = new V3(), c = new THREE.Color(), p = new V3();
     pts.forEach(([x, z], i) => {
-      q.setFromEuler(new THREE.Euler(-Math.PI / 2 + rr(-0.6, 0.6), rng() * TAU, rr(-0.45, 0.45), 'YXZ')); const k = rr(0.3, 0.52); sc.set(k, k, k);
-      m.compose(p.set(x, rr(0.04, 0.2), z), q, sc); im.setMatrixAt(i, m); const b = rr(0.5, 0.95); im.setColorAt(i, c.setRGB(b * rr(0.85, 1.05), b, b * rr(0.8, 1)));
+      const tuft = i % 5 < 2, k = tuft ? rr(0.3, 0.55) : rr(0.3, 0.52); sc.set(k, k, k);   // two in five stand up as leafy tufts, filling between the plants; the rest lie as rosettes
+      q.setFromEuler(new THREE.Euler(tuft ? -rr(0.25, 0.85) : -Math.PI / 2 + rr(-0.6, 0.6), rng() * TAU, rr(-0.45, 0.45), 'YXZ'));
+      m.compose(p.set(x, tuft ? k * 0.4 : rr(0.04, 0.2), z), q, sc); im.setMatrixAt(i, m); const b = tuft ? rr(0.5, 0.82) : rr(0.5, 0.95); im.setColorAt(i, c.setRGB(b * rr(0.85, 1.05), b, b * rr(0.8, 1)));
     });
     im.customDepthMaterial = P.depth(TX.card_cover, { sway: 0.3, key: 'cover', grow: true, part: 'leaf' }); im.castShadow = false; im.receiveShadow = true; im.frustumCulled = false; scene.add(im);
   }

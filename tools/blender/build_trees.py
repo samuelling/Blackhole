@@ -61,11 +61,19 @@ def grow(kind, seed):
         b, _, tg = at(T, u); d = unit(tg * 0.6 + rand3() * 0.5 + unit(b - C) * 0.3 - UP * (0.7 if weep else 0.35)); s = U(0.46, 0.7)
         x = unit(np.cross(d, rand3())); cards.append((b - d * s * 0.12, x, d, s)); cards.append((b - d * s * 0.12, np.cross(d, x), d, s * U(0.85, 1)))
     for S in sec + prim:
-        for j in range(5 if S['lv'] == 2 else 3):
+        for j in range((3 if weep else 5) if S['lv'] == 2 else 3):
             u = (0.25 + 0.73 * (j + U(0, 1)) / 5) if S['lv'] == 2 else U(0.8, 1); s, _, tg = at(S, u)
             d = unit(rand3() + unit(s - C) * 0.6 + tg * 0.4 - UP * (0.9 if weep else 0.2)); T = add_twig(s, inside(s + d * U(0.35, 0.75)))
             leaf(T, U(0.5, 0.75)); leaf(T, 1.0)
         leaf(S, 1.0)
+    if weep:                                  # the weeping habit: long pendulous shoots hanging from the ends of the branches, nearly to the ground
+        for S in sec + prim:
+            for j in range(2 if S['lv'] == 2 else 3):
+                s, _, tg = at(S, U(0.7, 1.0)); out = unit(np.array([s[0], s[1], 0.0]) + rand3() * np.array([0.3, 0.3, 0])); L = min(U(1.4, 3.0), s[2] - U(0.8, 1.4))
+                if L < 0.6: continue
+                p = spline([s, s + out * 0.18 - UP * L * 0.35, s + out * 0.3 - UP * L], 0.3); T = dict(p=p, r=taper(len(p), 0.006, 0.0025), lv=3); twig.append(T)
+                for q in np.arange(0.3, L, 0.34):
+                    b, _, tg2 = at(T, q / L); d = unit(tg2 * 0.8 + rand3() * 0.35); sz = U(0.36, 0.5); cards.append((b - d * sz * 0.1, unit(np.cross(d, rand3())), d, sz))
     skel = np.vstack([L['p'] for L in sec + prim]); lp = np.array([c[0] for c in cards])
     for _ in range(420):                      # make sure no part of the crown's shell is left bare
         d = rand3()
