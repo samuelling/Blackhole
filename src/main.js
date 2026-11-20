@@ -14,8 +14,8 @@ const QS = new URLSearchParams(location.search), LOW = QS.get('q') === 'low', TE
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
-  ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one'
-  : 'WASD / arrows walk · mouse looks · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound · F frame rate';
+  ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound · F frame rate';
 
 let renderer;
 try {
@@ -69,6 +69,7 @@ const U = {
   uDay: { value: 0 }, uTwi: { value: 0 }, uStarGain: { value: 1 },
   uWind: { value: 0.35 }, uGust: { value: 0 }, uWindDir: { value: new THREE.Vector2(0.8, 0.6) },
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
+  uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
 };
 
@@ -869,7 +870,8 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', () => { mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); });
+canvas.addEventListener('mousedown', () => { mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
@@ -896,24 +898,84 @@ const endTouch = e => {
     const o = touches.get(t.identifier);
     if (o) {
       const quick = performance.now() - o.t0 < 260 && Math.hypot(o.x - o.x0, o.y - o.y0) < 14, now = performance.now();
-      if (quick) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
+      const hit = quick ? pickVoid(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1)) : null;
+      if (hit) { collapseVoid(hit); lastTap = 0; }
+      else if (quick) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
     }
     touches.delete(t.identifier);
   }
 };
 canvas.addEventListener('touchend', endTouch); canvas.addEventListener('touchcancel', endTouch);
 
+// ------------------------------------------------------------------ collapsing a void: Hawking evaporation, hugely sped up
+// A black hole radiates as a body at T = hbar c^3 / (8 pi G M k): the smaller it gets, the hotter and brighter. Losing mass at
+// dM/dt ∝ -1/M^2 means M^3 falls linearly, M(t) = M0 (1 - t/T)^(1/3), so it shrinks slowly, then all at once, and ends in a flash.
+// For a hole of this size T is about 10^57 years (and it would be colder than the cosmic background, so it would grow, not shrink).
+const reformQ = [], evapSprites = [], flash = { t0: -9, pos: new THREE.Vector3(), col: new THREE.Color(), k: 1 };
+const glowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.2, 'rgba(255,255,255,0.45)'); r.addColorStop(0.5, 'rgba(255,255,255,0.08)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
+const glowSprite = () => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false })); s.visible = false; s.renderOrder = 7; scene.add(s); return s; };
+for (let i = 0; i <= MAXV; i++) evapSprites.push(glowSprite());   // the last one is the flash
+const _ray = new THREE.Raycaster(), _nd = new THREE.Vector2();
+function pickVoid(nx, ny) {   // the nearest void whose shadow (or, for a sleeping bead, a small target round it) lies under this screen point
+  _nd.set(nx, ny); _ray.setFromCamera(_nd, camera); const o = _ray.ray.origin, d = _ray.ray.direction; let best = null, bt = 1e9;
+  for (const v of voidSlots) { if (!v || v.evap) continue; const w = tmpV.copy(v.pos).sub(o), tp = w.dot(d); if (tp < 0.5 || tp > 90) continue;
+    const perp = w.addScaledVector(d, -tp).length(); if (perp < Math.max(v.R * 1.3, 0.025 * tp + 0.25) && tp < bt) { bt = tp; best = v; } }
+  return best;
+}
+const tempCol = (T, out) => {   // blackbody-ish colour for a temperature on a 0..1 scale: dull red, orange, white, then blue-white
+  return out.setRGB(Math.min(1, 0.5 + T * 1.6), Math.min(1, Math.max(0, T * 1.4 - 0.1)), Math.min(1.25, Math.max(0, T * 1.6 - 0.55)));
+};
+function collapseVoid(v) {
+  const t = clock.elapsedTime, slot = voidSlots.indexOf(v);
+  v.evap = { t0: t, T: v.giant ? 5.5 : 1.6 + 1.3 * v.k, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot };
+  if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
+  if (A.ctx && A.on) { const ac = A.ctx, t0 = ac.currentTime, T = v.evap.T;   // a rising whistle as it heats, then the pop
+    const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(70, t0); o.frequency.exponentialRampToValueAtTime(3200, t0 + T);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.12, t0 + T * 0.97); g.gain.exponentialRampToValueAtTime(0.0001, t0 + T + 0.05);
+    o.connect(g); g.connect(A.master); g.connect(A.send); o.start(t0); o.stop(t0 + T + 0.1);
+    const s = ac.createBufferSource(); s.buffer = A.noise; const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(9000, t0 + T); f.frequency.exponentialRampToValueAtTime(120, t0 + T + 1.6);
+    const gn = ac.createGain(); gn.gain.setValueAtTime(0.0001, t0 + T); gn.gain.linearRampToValueAtTime(0.35 * Math.min(1.4, 0.5 + 0.35 * v.k), t0 + T + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + T + 1.8);
+    s.connect(f); f.connect(gn); gn.connect(A.master); gn.connect(A.send); s.start(t0 + T); s.stop(t0 + T + 2); }
+}
+let firstCollapse = false;
+function evapStep(t) {
+  let fl = 0; const fc = new THREE.Color(); U.uFlashCol.value.set(0, 0, 0);
+  voidSlots.forEach((v, i) => {
+    const sp = evapSprites[i]; if (!v || !v.evap) { sp.visible = false; return; }
+    const E = v.evap, e = E.hold != null ? E.hold : (t - E.t0) / E.T;
+    if (e >= 1) {   // gone: a flash where it was; the garden's own voids condense again later
+      flash.t0 = t; flash.pos.copy(v.pos); flash.col.copy(v.col); flash.k = v.k; sp.visible = false; voidSlots[i] = null;
+      if (!v.spawned) reformQ.push({ slot: i, at: t + (v.giant ? 75 : 45), home: v.home.clone(), k: v.k, giant: !!v.giant }); return; }
+    const m = Math.cbrt(1 - e);                                  // mass left
+    v.R = E.R0 * m; v.wake = E.wake0 * m; v.drain = E.drain0 * m * m; v.scar = 0; v.reach = Math.max(0.5, v.reach * (0.995));
+    const heat = Math.min(1, 0.08 / Math.max(m, 0.08)), lum = Math.min(40, 0.2 / (m * m + 0.005)) * (0.4 + 0.6 * Math.min(1, v.k));   // T ∝ 1/M, power ∝ 1/M²
+    tempCol(heat, fc); sp.visible = true; sp.position.copy(v.pos); sp.scale.setScalar(E.R0 * (2.2 + 1.5 * (1 - m)) + 0.3);
+    sp.material.color.copy(fc).multiplyScalar(Math.min(6, lum * 0.25));
+    if (lum > fl) { fl = lum; U.uFlashPos.value.copy(v.pos); U.uFlashCol.value.set(fc.r, fc.g, fc.b).multiplyScalar(lum * 0.06 * Math.max(1, v.k)); }
+  });
+  const fs = evapSprites[MAXV], a = t - flash.t0;   // the final burst: blue-white, then fading through the void's stolen colours
+  if (a >= 0 && a < 2.2) { const s = Math.exp(-a * 2.6); fs.visible = true; fs.position.copy(flash.pos); fs.scale.setScalar((1.5 + 6 * flash.k) * (0.4 + Math.sqrt(a)));
+    fc.setRGB(0.8, 0.9, 1.25).lerp(flash.col, Math.min(1, a * 1.2)); fs.material.color.copy(fc).multiplyScalar(14 * s);
+    if (s * 30 > fl) { U.uFlashPos.value.copy(flash.pos); U.uFlashCol.value.set(fc.r, fc.g, fc.b).multiplyScalar(3.5 * s * (0.6 + 0.6 * flash.k)); } }
+  else fs.visible = false;
+  for (let j = reformQ.length - 1; j >= 0; j--) { const r = reformQ[j]; if (t < r.at) continue; reformQ.splice(j, 1);
+    let slot = voidSlots[r.slot] ? voidSlots.findIndex(v => !v) : r.slot; if (slot < 0) continue;
+    const nv = makeVoid(r.home.x, r.home.y, r.home.z, slot, r.k); if (r.giant) nv.giant = true; }
+  if (document.pointerLockElement === canvas) $('aim').classList.toggle('hot', !!pickVoid(0, 0));
+}
 function openVoid() {
   const k = 0.4 + 1.8 * Math.pow(Math.random(), 1.6);
   const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const p = player.clone().addScaledVector(f, 6 + 4 * k); p.y = Math.max(2.3, 1.4 + 1.3 * k);
   if (Math.hypot(p.x, p.z) > 90) return;
   for (const v of voidSlots) if (v && v.pos.distanceTo(p) < 3 + 2 * (k + v.k)) return;
-  let slot = voidSlots.findIndex(v => !v);
+  let slot = voidSlots.findIndex((v, i) => !v && !reformQ.some(r => r.slot === i));
   if (slot < 0) { // reuse the oldest void you made, else the farthest sleeping one
     let best = -1, score = -1e9;
-    voidSlots.forEach((v, i) => { const s = v.giant ? -1e9 : v.spawned ? 1e6 - v.born : (v.wake < 0.05 ? v.pos.distanceTo(player) : -1e5); if (s > score) { score = s; best = i; } });
-    slot = best;
+    voidSlots.forEach((v, i) => { if (!v || v.evap) return; const s = v.giant ? -1e9 : v.spawned ? 1e6 - v.born : (v.wake < 0.05 ? v.pos.distanceTo(player) : -1e5); if (s > score) { score = s; best = i; } });
+    slot = best; if (slot < 0) return;
   }
   makeVoid(p.x, p.y, p.z, slot, k, true);
 }
@@ -1055,10 +1117,11 @@ function update(dt, t) {
   // voids: wake, drift, pull
   grav.set(0, 0, 0);
   let near = 0, nearPull = 0;
+  evapStep(t);
   for (const v of voidSlots) {
-    if (!v) continue;
+    if (!v || v.evap) continue;
     const d = player.distanceTo(v.pos);
-    const k = v.k, wakeR = v.giant ? 25 : 5.5 + 7 * Math.pow(k, 0.9);
+    const k = v.k, wakeR = v.giant ? 28 : 5.5 + 7 * Math.pow(k, 0.9);
     let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
     const rate = target > v.wake ? 0.45 : 0.08;
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
@@ -1066,7 +1129,7 @@ function update(dt, t) {
     v.drain = Math.max(v.wake, v.scar * 0.8);
     const w = v.wake * v.wake * (3 - 2 * v.wake);
     v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k;
-    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); v.reach = Math.min(v.reach, v.giant ? 21 : 13);
+    v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); v.reach = Math.min(v.reach, v.giant ? 25 : 13);
     if (v.giant) { if (!v.wasAwake && v.wake > 0.6) { v.wasAwake = true; if (A.ctx && A.on) inhale(1.4, 3.5); } if (v.wake < 0.5) v.wasAwake = false; }
     else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
     if (v.wake < 0.02) v.wasAwake = false;
@@ -1141,7 +1204,7 @@ function update(dt, t) {
     lu.uLens.value[i].set(tmpP.x * 0.5 + 0.5, tmpP.y * 0.5 + 0.5, (v.R / dist) / tanH * 0.5, dist);
     lu.uLensB.value[i].set(v.R, v.wake, 0, 0); lu.uLensC.value[i].copy(v.col);
   });
-  { const G = voidSlots[GIANT]; if (G) { diskU.uGiant.value.set(G.pos.x, G.pos.y, G.pos.z, G.R); diskU.uGW.value = 0.25 + 0.75 * G.wake;
+  { const G = voidSlots[GIANT]; if (!G) U.uDiskGlow.value.set(0, 0, 0); if (G) { diskU.uGiant.value.set(G.pos.x, G.pos.y, G.pos.z, G.R); diskU.uGW.value = 0.25 + 0.75 * G.wake;
       U.uDiskPos.value.copy(G.pos); U.uDiskGlow.value.set(1.0, 0.62, 0.32).multiplyScalar(0.55 * (0.2 + 0.8 * G.wake)); } }
   const Lhere = drainAtJS(tmpP.copy(player));
   lensMat.uniforms.uAspect.value = innerWidth / innerHeight;
@@ -1192,8 +1255,9 @@ $('enter').disabled = false; $('enter').textContent = 'enter the garden';
 window.__umbra = { // debug handle
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
-    const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }
+    const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }
       const f = dilJS(camera.position.x, camera.position.y, camera.position.z), d = days / 60; gardenDays += d / f; yourDays += d; garden.seasons.advance(d / f, dilJS); }
     refreshSeasonUI(); refreshTimeUI();
   },
+  collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

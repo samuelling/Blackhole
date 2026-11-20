@@ -32,6 +32,8 @@
   #dil { position:absolute; top:16px; right:20px; font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.7; letter-spacing:.05em; color:var(--dim); text-align:right; transition:opacity .8s; opacity:0; }
   #dil b { color:var(--ink); font-weight:400; }
   #dLabel { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); min-width:96px; text-align:center; }
+  #aim { position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%; border:1px solid rgba(233,228,218,.45); opacity:0; transition:all .2s; pointer-events:none; }
+  #aim.on { opacity:1; } #aim.hot { width:22px; height:22px; margin:-11px 0 0 -11px; border-color:rgba(255,226,180,.9); }
   #hint { position:absolute; bottom:72px; left:50%; transform:translateX(-50%); font-family:'IBM Plex Mono',monospace;
     font-size:11px; letter-spacing:.08em; color:var(--dim); white-space:nowrap; transition:opacity 2s; text-align:center; }
   #btns { position:absolute; right:18px; bottom:18px; display:flex; flex-wrap:wrap; justify-content:flex-end; max-width:min(1100px, 92vw); gap:8px; pointer-events:auto; }
@@ -62,6 +64,7 @@
 <div id="hud">
   <div id="title">GARDEN OF DELIGHT</div>
   <div id="hint"></div>
+  <div id="aim"></div>
   <div id="dil"></div>
   <div id="btns"><div class="time"><button id="bSpeed">season: paused</button><input type="range" id="dSlider" min="0" max="364" step="1" aria-label="day of the year"><span id="dLabel"></span><button id="bReplant" title="replant (R)" style="min-width:0">↺</button></div><div class="time"><input type="range" id="tSlider" min="0" max="24" step="0.01" aria-label="time of day"><button id="bTime">time: night</button></div><div class="time" title="how hard the voids pull on you"><input type="range" id="pSlider" min="0" max="150" step="5" style="width:64px" aria-label="how hard the voids pull on you"><button id="bPull" style="min-width:0">pull 55%</button></div><button id="bVoid">open a void</button><button id="bClock" title="how strongly the voids slow time">clocks: ×7</button><button id="bSound">sound: on</button></div>
 </div>

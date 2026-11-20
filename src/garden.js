@@ -50,7 +50,7 @@ export function makeLayout() {
   const arches = [[-21, 27, 0, 1], [-21, -8, 0, 1], [21, 16, 0, 1], [21, -8, 0, 1], [0, -17, 0, 1]];   // x, z, tangent
   const bench = { x: 0, z: -28.0 };
   // x, y, z, size — index 1 is the giant above the grand fountain
-  const voids = [[0, 2.6, 37.0, 1.0], [0, 11.5, 0, 3.0], [-13, 3.0, 37.5, 1.25], [13, 2.6, 37.5, 0.9], [-17.2, 2.6, 0, 0.8], [13.4, 4.6, 22.2, 0.5], [0.5, 2.8, -22.5, 1.0], [22.6, 2.6, -12, 0.7], [-22.8, 2.4, 14, 0.45], [-14.2, 4.8, -16.8, 0.55]];
+  const voids = [[0, 2.6, 37.0, 1.0], [0, 16.5, 0, 3.0], [-13, 3.0, 37.5, 1.25], [13, 2.6, 37.5, 0.9], [-17.2, 2.6, 0, 0.8], [13.4, 4.6, 22.2, 0.5], [0.5, 2.8, -22.5, 1.0], [22.6, 2.6, -12, 0.7], [-22.8, 2.4, 14, 0.45], [-14.2, 4.8, -16.8, 0.55]];
   const start = { x: 0, z: 52.6 };
   const pathS = [];
   const line = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0); for (let d = 0; d <= L; d += 0.5) pathS.push([x0 + (x1 - x0) * d / L, z0 + (z1 - z0) * d / L]); };
@@ -185,7 +185,7 @@ uniform float uTexSz;
 #ifdef TRIPLANAR
 uniform sampler2D uArm; uniform float uTriS; uniform float uMoss; uniform float uWet;
 #endif
-uniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; varying vec3 vWPos;
+uniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; uniform vec3 uFlashPos; uniform vec3 uFlashCol; varying vec3 vWPos;
 `;
   const TRI_MAP = `
 vec3 twn = normalize(inverseTransformDirection(normalize(vNormal), viewMatrix)) * (gl_FrontFacing ? 1.0 : -1.0);
@@ -224,6 +224,8 @@ diffuseColor.rgb *= tcol.rgb * mix(1.0, tarm.r, 0.85);
   outgoingLight = gshift(outgoingLight, vWPos);
   vec3 dd = uDiskPos - vWPos; float dl = length(dd);
   outgoingLight += diffuseColor.rgb * uDiskGlow * (0.35 + 0.65 * max(dot(normalize((viewMatrix * vec4(dd / dl, 0.0)).xyz), normal), 0.0)) / (1.0 + dl * dl / 180.0);
+  vec3 fd = uFlashPos - vWPos; float fl = length(fd);   // an evaporating void's glow and final flash
+  outgoingLight += diffuseColor.rgb * uFlashCol * (0.3 + 0.7 * max(dot(normalize((viewMatrix * vec4(fd / max(fl, 1e-3), 0.0)).xyz), normal), 0.0)) / (1.0 + fl * fl / 6.0);
 }`;
   function patch(m, o = {}) {
     const a2c = m.alphaToCoverage === true && m.alphaTest > 0;
