@@ -7,6 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { createDrawer, to01, from01 } from './settings.js';
+import { createBody } from './body.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
@@ -32,8 +33,8 @@ let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
 const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
-  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1 };
-const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale'];
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true };
+const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -56,7 +57,7 @@ const starCat = await fetch(new URL('../assets/sky/stars.json', import.meta.url)
 $('enter').textContent = 'planting…'; await new Promise(r => setTimeout(r, 30));
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.15, 1000);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.07, 1000);   // near enough to see your own chest
 camera.rotation.order = 'YXZ';
 
 function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
@@ -554,6 +555,9 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 // ------------------------------------------------------------------ the garden itself
 scene.fog = new THREE.FogExp2(0x000000, U.uFogDensity.value);
 const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, isTouch, low: LOW, grassScale: parseFloat(QS.get('grass')) || 1 });
+// your own body: a cel-shaded hard suit you see when you look down, and that casts your shadow
+const body = assets.models.astronaut ? createBody({ model: assets.models.astronaut, U, COMMON }) : null;
+if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true; sunLight.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
 Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
@@ -717,9 +721,10 @@ const cubeCam = new THREE.CubeCamera(0.3, 600, cubeRT); let cubeFace = 0, cubeRe
 function renderEnv(needed) {
   if (!ENV_ON || !needed) return;
   const px0 = U.uPx.value; U.uPx.value = 192; garden.grass.visible = false; cubeCam.position.copy(camera.position);
+  const bodyOn = body && body.root.visible; if (bodyOn) body.root.visible = false;   // the probe sits inside your head
   if (!cubeReady) { cubeCam.update(renderer, scene); cubeReady = true; }
   else if (cubeTick++ % 2 === 0) { cubeCam.updateMatrixWorld(true); renderer.setRenderTarget(cubeRT, cubeFace); renderer.render(scene, cubeCam.children[cubeFace]); cubeFace = (cubeFace + 1) % 6; }
-  U.uPx.value = px0; garden.grass.visible = true;
+  U.uPx.value = px0; garden.grass.visible = true; if (bodyOn) body.root.visible = true;
 }
 const lensMat = new THREE.ShaderMaterial({
   uniforms: {
@@ -922,7 +927,7 @@ addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
   if (document.pointerLockElement === canvas || mouseDown) {
-    yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022; pitch = Math.max(-1.35, Math.min(1.35, pitch));
+    yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022; pitch = Math.max(-1.45, Math.min(1.35, pitch));
   }
 });
 const touches = new Map(); let lastTap = 0;
@@ -935,7 +940,7 @@ canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
     const o = touches.get(t.identifier); if (!o) continue;
-    if (o.type === 'look') { yaw -= (t.clientX - o.x) * 0.0055; pitch -= (t.clientY - o.y) * 0.0055; pitch = Math.max(-1.35, Math.min(1.35, pitch)); }
+    if (o.type === 'look') { yaw -= (t.clientX - o.x) * 0.0055; pitch -= (t.clientY - o.y) * 0.0055; pitch = Math.max(-1.45, Math.min(1.35, pitch)); }
     o.x = t.clientX; o.y = t.clientY;
   }
 }, { passive: false });
@@ -974,6 +979,7 @@ const tempCol = (T, out) => {   // blackbody-ish colour for a temperature on a 0
   return out.setRGB(Math.min(1, 0.5 + T * 1.6), Math.min(1, Math.max(0, T * 1.4 - 0.1)), Math.min(1.25, Math.max(0, T * 1.6 - 0.55)));
 };
 function collapseVoid(v) {
+  if (body) body.reach(clock.elapsedTime);
   const t = clock.elapsedTime, slot = voidSlots.indexOf(v);
   v.evap = { t0: t, T: (v.giant ? 5.5 : 1.6 + 1.3 * v.k) * S.evapTime, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot };
   if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
@@ -1197,6 +1203,8 @@ const SETTINGS = [
   { id: 'bloom', tab: 'light', label: 'Glow', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.bloom, set: v => { S.bloom = v; save(); } },
   { id: 'fog', tab: 'light', label: 'Haze', kind: 'range', min: 0, max: 3, fmt: fmtPct, get: () => S.fog, set: v => { S.fog = v; save(); } },
   { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.clouds, set: v => { S.clouds = v; U.uCloud.value = v; save(); } },
+  { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
+    note: 'look down to see yourself; your shadow comes with it' },
   { id: 'ao', tab: 'light', group: 'Quality', label: 'Ambient occlusion', kind: 'toggle', get: () => S.ao, set: v => { S.ao = v; save(); } },
   { id: 'scale', tab: 'light', label: 'Render resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: fmtPct, get: () => S.scale, set: v => { S.scale = v; save(); applyScale(); },
     note: 'lower it if the garden runs slowly; it also lowers by itself if frames drop' },
@@ -1325,9 +1333,12 @@ function update(dt, t) {
 
   const moving = Math.min(1, Math.hypot(mx, mz));
   bobPhase += dt * moving * speed * 2.2;
-  camera.position.set(player.x, 1.65 + Math.sin(bobPhase) * 0.035 * moving, player.z);
+  // with a body, the eye bobs with its footfalls; without one, the old slow sway
+  const bob = body ? body.update(dt, { x: player.x, z: player.z, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
+  camera.position.set(player.x, 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
+  if (body) body.setInk(0.0027 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));   // ink lines a constant width on screen
   camera.updateMatrixWorld();
   if (SKY) {   // the celestial sphere and the moon travel with you, so they sit at infinity
     starsObj.matrix.copy(_skyM).setPosition(camera.position); starsObj.matrixWorldNeedsUpdate = true; U.uLimit.value = S.limit;
@@ -1399,7 +1410,9 @@ function frame() {
   if (!started) { yaw = Math.sin(t * 0.07) * 0.12; pitch = 0.04 + Math.sin(t * 0.05) * 0.02; }
   update(dt, t);
   garden.update(dt, t, camera);
+  if (body) body.pass('mirror');   // a view from outside sees your helmet; you, inside it, don't
   garden.preRender(camera, bufW, bufH);
+  if (body) body.pass('eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = ENV_ON && cubeReady && need ? 1 : 0; }
   renderer.shadowMap.needsUpdate = true;
@@ -1424,4 +1437,4 @@ window.__umbra = { // debug handle
     refreshSeasonUI(); refreshTimeUI();
   },
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
-  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };
+  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

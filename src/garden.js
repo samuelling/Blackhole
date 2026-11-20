@@ -68,7 +68,7 @@ const CARDS = ['leaf_atlas', 'card_yew', 'card_box', 'card_lime', 'card_cover', 
 const MODELS = ['street_lamp_01', 'large_iron_gate', 'painted_wooden_bench', 'concrete_cat_statue'];
 // Models are glTF saved as .json with the buffer embedded as base64 (tools/gltf_embed.py). The buffer is unpacked here and
 // handed to GLTFLoader as an in-memory GLB, so nothing but same-origin fetches is needed (data: URLs are often blocked).
-async function loadModel(url) {
+export async function loadModel(url) {
   const r = await fetch(url); if (!r.ok) throw new Error(r.status + ' ' + url);
   const g = await r.json(), b = g.buffers && g.buffers[0]; let bin = null;
   if (b && b.uri && b.uri.startsWith('data:')) { const s = atob(b.uri.slice(b.uri.indexOf(',') + 1)); bin = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) bin[i] = s.charCodeAt(i); delete b.uri; }
@@ -81,7 +81,7 @@ async function loadModel(url) {
 }
 export async function loadAssets(renderer, onProgress = () => {}) {
   const base = new URL('../assets/', import.meta.url).href, tl = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 3;
+  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 4;
   const tick = () => onProgress(++done / total);
   const T = (file, srgb, repeat) => new Promise((res, rej) => tl.load(base + 'tex/' + file + '.webp', t => {
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; tick(); res(t); }, undefined, () => rej(new Error('could not load ' + file))));
@@ -95,6 +95,7 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   // trees grown in Blender (tools/blender/build_trees.py); simpler procedural trees stand in without them
   jobs.push(loadModel(base + 'models/props.json').then(sc => { models.props = sc; tick(); }, () => tick()));   // coping stones, lantern (build_props.py)
   jobs.push(loadModel(base + 'models/trees.json').then(sc => { models.trees = sc; tick(); }, () => tick()));
+  jobs.push(loadModel(base + 'models/astronaut.json').then(sc => { models.astronaut = sc; tick(); }, () => tick()));   // your own body (build_astronaut.py); you walk as a bare camera without it
   await Promise.all(jobs);
   return { tex, models };
 }
