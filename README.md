@@ -42,7 +42,28 @@ Small on purpose, so every surface can be close-up quality. Materials are photo-
 
 ### Assets and credits
 
-All CC0: textures and models from [Poly Haven](https://polyhaven.com) (gravel_floor, sparse_grass, yellow_flower_mulch, cobblestone_square, castle_brick_02_red, white_plaster_02, bark_brown_02; street_lamp_01, large_iron_gate, painted_wooden_bench, concrete_cat_statue) and leaf scans from [ambientCG](https://ambientcg.com) (LeafSet and Foliage sets). `tools/build_assets.py` cuts the leaf scans into the atlas and foliage cards. Models are glTF with the buffer embedded, saved as `.json` so any static host will serve them (`tools/gltf_embed.py`). The water normal map is from the three.js examples (MIT).
+Star positions, magnitudes and colours: the Hipparcos catalogue via d3-celestial's `stars.6.json` (BSD-3-Clause, © 2015 Olaf Frohn). Textures and models are CC0: from [Poly Haven](https://polyhaven.com) (gravel_floor, sparse_grass, yellow_flower_mulch, cobblestone_square, castle_brick_02_red, white_plaster_02, bark_brown_02; street_lamp_01, large_iron_gate, painted_wooden_bench, concrete_cat_statue) and leaf scans from [ambientCG](https://ambientcg.com) (LeafSet and Foliage sets). `tools/build_assets.py` cuts the leaf scans into the atlas and foliage cards. Models are glTF with the buffer embedded, saved as `.json` so any static host will serve them (`tools/gltf_embed.py`). The water normal map is from the three.js examples (MIT).
+
+## Settings
+
+**O** (or the *settings* button) opens a drawer with four tabs. Everything in it is remembered between visits.
+
+- **Garden:** season speed, day of the year, garden age (time since planting), whether each plant keeps its own proper time near the voids, replant, wind and gusts.
+- **Voids:** pull on you, exact or ×7 clocks, size, how much light they eat, how far away they notice you, lensing, the great void's disk, the streams of stolen light, evaporation time, whether the garden's voids re-form, and buttons to open a void or evaporate the nearest or all of them.
+- **Light:** the place under the sky (latitude and longitude, *use my location*, or back to Watertown, MA), the faintest stars shown, moon size, sky mode (night, live, set) and hour, exhibit lights, moonlight, exposure, glow, haze, cloud, ambient occlusion and render resolution.
+- **Hands:** Invisible Hands. Start or join a room and another app, or the console on a phone (https://samuelling.github.io/InvisibleHands/console/), can move 20 of the controls (season speed, day of the year, garden age, wind, gusts, pull, exact clocks, void size, light eaten, lensing, disk, streams, open a void, evaporate the nearest, hour, exhibit lights, moonlight, exposure, glow, cloud), each marked with the Invisible Hands tag. The garden publishes four readings back: the light where you stand, your clock rate, how near a void is, and how awake the great void is. Your location is never shared.
+
+## The sky
+
+The sky is the real one over the chosen place (Watertown, MA by default; north is toward the bench, south toward the gate).
+
+- **Sun** by a standard solar-position formula, with refraction near the horizon.
+- **Moon** by a truncated Meeus lunar series with parallax: position to about 0.2°, at its true size (half a degree; the *moon size* setting enlarges it), lit by the real sun direction so its phase, terminator and tilt are right, with faint earthshine. Moonlight on the garden follows its phase and height: new-moon nights are darker.
+- **Stars:** 5,044 Hipparcos stars to magnitude 6 with their true colours (from B–V), precessed to the date, dimmed and set twinkling more near the horizon. The *faintest stars* setting stands in for light pollution: around magnitude 3.5–4 under Watertown's real sky.
+- **Planets:** Mercury, Venus, Mars, Jupiter and Saturn from JPL's approximate orbital elements, with their brightness.
+- **Milky Way** along the true galactic plane, brightest toward Sagittarius.
+
+Checked against PyEphem: stars to 0.01°, planets to about 0.05°, the moon to about 0.2° and its phase to 0.1%. In *live* mode it is the sky right now. In *night* and *set* modes it is the sky for the garden's calendar date at that hour, in your browser's time zone.
 
 ## How it works
 

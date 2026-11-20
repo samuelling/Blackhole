@@ -8,6 +8,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { createDrawer, to01, from01 } from './settings.js';
 import './invisible-hands.js';
+import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
 
 // ------------------------------------------------------------------ setup
@@ -28,9 +29,11 @@ try {
 const PR_MAX = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : LOW ? 1 : 1.5);
 let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
 // the settings drawer's values (see SETTINGS below); most are remembered between visits
-const S = { seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
-  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.5, ao: true, scale: 1 };
-const SAVED = ['properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale'];
+const D2R = Math.PI / 180;
+const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
+const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1 };
+const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -49,6 +52,7 @@ const canvas = renderer.domElement;
 let assets;
 try { assets = await loadAssets(renderer, f => { $('enter').textContent = `loading… ${Math.round(f * 100)}%`; }); }
 catch (e) { $('err').style.display = 'flex'; $('err').textContent = 'The garden could not load its textures (' + e.message + '). Check the connection and reload.'; throw e; }
+const starCat = await fetch(new URL('../assets/sky/stars.json', import.meta.url)).then(r => r.ok ? r.json() : null).catch(() => null);   // Hipparcos stars to magnitude 6
 $('enter').textContent = 'planting…'; await new Promise(r => setTimeout(r, 30));
 
 const scene = new THREE.Scene();
@@ -79,7 +83,7 @@ const U = {
   uDay: { value: 0 }, uTwi: { value: 0 }, uStarGain: { value: 1 },
   uWind: { value: 0.35 }, uGust: { value: 0 }, uWindDir: { value: new THREE.Vector2(0.8, 0.6) },
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
-  uCloud: { value: 0.5 }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
+  uCloud: { value: 0.35 }, uLimit: { value: 5.5 }, uMoonDir: { value: new THREE.Vector3(0, 0.5, -0.8) }, uGalN: { value: new THREE.Vector3(0, 1, 0) }, uGalC: { value: new THREE.Vector3(0, 0, 1) }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
 };
 
@@ -445,15 +449,14 @@ const CLOUD_GLSL = `
     uniform float uCloud;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
       return smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }`;
-let moon, envSkyMat;
-const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
+let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
-    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF; uniform float uTime;
+    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF; uniform float uTime; uniform vec3 uMoonDir, uGalN, uGalC; uniform float uLimit;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
@@ -464,7 +467,7 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
     void main(){
       vec3 d = normalize(vD);
       vec3 c = mix(vec3(0.014,0.018,0.032), vec3(0.0015,0.002,0.006), smoothstep(-0.02, 0.55, d.y));
-      float band = exp(-pow(dot(d, normalize(vec3(0.55,0.35,0.76))), 2.0)*22.0);
+      float band = exp(-pow(dot(d, uGalN), 2.0)*22.0) * (0.55 + 0.9*pow(max(dot(d, uGalC), 0.0), 3.0)) * smoothstep(3.0, 6.0, uLimit);   // the Milky Way, along the true galactic plane, brightest toward Sagittarius
       float n = vn(d.xy*9.0)*0.6 + vn(d.zy*23.0)*0.4;
       c += vec3(0.018,0.02,0.03) * band * n * smoothstep(-0.05, 0.2, d.y) * (1.0 - uDay);
       vec3 dayc = mix(vec3(0.56,0.68,0.84), vec3(0.10,0.25,0.62), smoothstep(0.0, 0.6, d.y));
@@ -475,7 +478,7 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
       c += vec3(1.0,0.9,0.75) * (pow(sd, 1400.0)*40.0*(1.0 - uNoSun) + pow(sd, 14.0)*0.35*uDay + pow(sd, 3.0)*0.08*uDay) * up;
       { // broken cloud: lit and self-shadowed from the sun (or faintly by the moon), warm underneath at dusk
         float cl = cloudAt(d, uTime);
-        if (cl > 0.0) { vec3 Ld = uSunDir.y > -0.05 ? uSunDir : normalize(vec3(-0.25, 0.38, -1.0));
+        if (cl > 0.0) { vec3 Ld = uSunDir.y > -0.05 ? uSunDir : uMoonDir;
           float sh = cloudAt(normalize(d + Ld*0.07), uTime), lit = 1.0 - 0.6*sh;
           vec3 cd = mix(vec3(0.5, 0.55, 0.63), vec3(1.0, 0.98, 0.95), lit) * (0.75 + 0.5*pow(sd, 3.0));
           vec3 cn = vec3(0.011, 0.014, 0.024) * (0.5 + 0.9*lit);
@@ -487,35 +490,65 @@ const MOON_COL = new THREE.Color().setRGB(1.05, 1.07, 1.2);
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud };
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit };
 
-  const N = 2200, pos = [], col = [], sz = [], sd = [];
-  for (let i = 0; i < N; i++) {
-    const v = new THREE.Vector3(rr(-1, 1), rr(-0.08, 1), rr(-1, 1)).normalize().multiplyScalar(440);
-    pos.push(v.x, v.y, v.z);
-    const b = Math.pow(rng(), 3) * 2.2 + 0.25, t = rng();
-    col.push(b * (0.8 + 0.2 * t), b * 0.88, b * (1.05 - 0.15 * t)); sz.push(rr(1.0, 2.4)); sd.push(rng());
+  // the real night sky: 5,000 catalogue stars to magnitude 6, plus the five naked-eye planets (the last five entries),
+  // laid out on the celestial sphere and turned each frame to the time and place (see updateSky)
+  const cat = starCat ? starCat.d : [], NS = cat.length / 4, NP = PLANETS.length, N = NS + NP;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), mag = new Float32Array(N), sd = new Float32Array(N), tw = new Float32Array(N);
+  for (let i = 0; i < NS; i++) {
+    const ra = cat[i * 4] * D2R, dec = cat[i * 4 + 1] * D2R, c = bvToRGB(cat[i * 4 + 3]);
+    pos.set([Math.cos(dec) * Math.cos(ra) * 440, Math.cos(dec) * Math.sin(ra) * 440, Math.sin(dec) * 440], i * 3);
+    col.set(c, i * 3); mag[i] = cat[i * 4 + 2]; sd[i] = rng(); tw[i] = 1;
   }
+  const PCOL = { mercury: [1, 0.92, 0.82], venus: [1, 0.98, 0.9], mars: [1, 0.62, 0.42], jupiter: [1, 0.95, 0.84], saturn: [1, 0.9, 0.7] };
+  PLANETS.forEach((k, j) => { col.set(PCOL[k], (NS + j) * 3); tw[NS + j] = 0.12; sd[NS + j] = rng(); });   // planets hardly twinkle
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('aColor', new THREE.Float32BufferAttribute(col, 3));
-  g.setAttribute('aSize', new THREE.Float32BufferAttribute(sz, 1));
-  g.setAttribute('aSeed', new THREE.Float32BufferAttribute(sd, 1));
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aMag', new THREE.BufferAttribute(mag, 1)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 1)); g.setAttribute('aTw', new THREE.BufferAttribute(tw, 1));
+  starsGeo = g;
   const stars = new THREE.Points(g, new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; attribute vec3 aColor; attribute float aSize; attribute float aSeed; varying vec3 vC;
+    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud, uLimit: U.uLimit }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; uniform float uLimit; attribute vec3 aColor; attribute float aMag; attribute float aSeed; attribute float aTw; varying vec3 vC;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }` + CLOUD_GLSL + `
-      void main(){ vC = aColor*(0.7+0.3*sin(uTime*(1.0+aSeed*3.0)+aSeed*90.0)) * smoothstep(-0.05, 0.12, normalize(position).y) * uStarGain * (1.0 - 0.94*cloudAt(normalize(position), uTime));
-      gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize = aSize*uPR; }`,
+      void main(){
+        vec3 w = normalize((modelMatrix * vec4(position, 0.0)).xyz);           // direction in the sky
+        float h = max(w.y, 0.0), X = 1.0 / (h + 0.025 * exp(-11.0 * h));      // airmass: light crosses more air near the horizon
+        float m = aMag + 0.22 * (X - 1.0);                                     // ...and is dimmed by it (extinction)
+        float flux = pow(10.0, -0.4 * (m - 1.0));                              // brightness relative to a first-magnitude star
+        float tw = 1.0 + aTw * (0.18 + 0.25 * min(X, 6.0) / 6.0) * sin(uTime * (7.0 + aSeed * 9.0) + aSeed * 90.0);   // twinkling, worst low down
+        vC = aColor * min(pow(flux, 0.6), 4.0) * 2.6 * tw *   /* the eye's response is closer to flux^0.6 than to flux */ smoothstep(uLimit + 0.4, uLimit - 0.6, m) * smoothstep(-0.02, 0.04, w.y) * uStarGain * (1.0 - 0.94*cloudAt(w, uTime));
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = (1.6 + 2.2 * clamp((3.5 - m) / 5.0, 0.0, 1.3)) * uPR;
+      }`,
     fragmentShader: `varying vec3 vC; void main(){ vec2 q=gl_PointCoord*2.0-1.0; float r2=dot(q,q); if(r2>1.0) discard; gl_FragColor=vec4(vC*exp(-r2*3.0),1.0); }`,
   }));
-  stars.frustumCulled = false; stars.renderOrder = -1; scene.add(stars);
+  stars.frustumCulled = false; stars.renderOrder = -1; stars.matrixAutoUpdate = false; scene.add(stars); starsObj = stars;
 
-  moon = new THREE.Mesh(new THREE.SphereGeometry(9, 32, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(1.05, 1.07, 1.2) }));
-  moon.material.depthWrite = false;
-  moon.position.set(-0.25, 0.38, -1).normalize().multiplyScalar(420); moon.renderOrder = -1; scene.add(moon);
+  // the moon at its true size (half a degree across) and phase: a sphere lit by the real sun direction, so the lit side,
+  // the terminator and its tilt are right; with faint earthshine on the dark side
+  moon = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), new THREE.ShaderMaterial({
+    uniforms: { uSunDir: U.uSunDir, uDay: U.uDay }, depthWrite: false,
+    vertexShader: `varying vec3 vN; varying vec3 vP; void main(){ vN = normalize((modelMatrix * vec4(normal, 0.0)).xyz); vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform vec3 uSunDir; uniform float uDay; varying vec3 vN; varying vec3 vP;
+      float h3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+      float n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(mix(h3(i), h3(i+vec3(1,0,0)), f.x), mix(h3(i+vec3(0,1,0)), h3(i+vec3(1,1,0)), f.x), f.y),
+                   mix(mix(h3(i+vec3(0,0,1)), h3(i+vec3(1,0,1)), f.x), mix(h3(i+vec3(0,1,1)), h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
+      void main(){
+        float maria = smoothstep(0.48, 0.62, n3(vP * 1.6 + 3.0) * 0.65 + n3(vP * 4.0) * 0.35);          // the dark seas, fixed on the face that always looks at us
+        float alb = mix(0.82, 0.48, maria) * (0.9 + 0.2 * n3(vP * 14.0));
+        float lit = smoothstep(-0.02, 0.08, dot(normalize(vN), uSunDir));
+        vec3 c = vec3(1.0, 0.98, 0.94) * alb * (2.4 * lit + 0.035);
+        gl_FragColor = vec4(c * mix(1.0, 0.55, uDay), 1.0);
+      }` }));
+  moon.renderOrder = -1; scene.add(moon);
+  moonHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d'), r = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+    r.addColorStop(0, 'rgba(255,255,255,0.5)'); r.addColorStop(0.25, 'rgba(255,255,255,0.12)'); r.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = r; x.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })(),
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, color: 0x8899bb }));
+  moonHalo.renderOrder = -1; scene.add(moonHalo);
 }
 
 // ------------------------------------------------------------------ the garden itself
@@ -527,7 +560,7 @@ Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -
 sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.024;
 scene.add(sunLight, sunLight.target);
 const hemi = new THREE.HemisphereLight(0x5a6a90, 0x1a1612, 0.15); scene.add(hemi);
-const MOON_DIR = new THREE.Vector3(-0.25, 0.38, -1).normalize();
+const MOON_DIR = new THREE.Vector3(-0.25, 0.38, -1).normalize();   // replaced each frame by the real moon (updateSky)
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envScene = new THREE.Scene(); envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), envSkyMat));
 let envRT = null, envKey = '', envAt = -1;
@@ -1015,20 +1048,24 @@ $('enter').addEventListener('click', () => {
 // ------------------------------------------------------------------ time of day
 // The garden's entrance faces south (−z), so west is +x. Latitude ≈ 42°N; longitude is
 // taken from your time zone's standard meridian, so "live" sun is right to within ~half an hour.
-const D2R = Math.PI / 180;
-function sunDirAt(date) {
-  const lat = 42.4 * D2R, y = date.getFullYear();
-  const stdOff = Math.max(new Date(y, 0, 1).getTimezoneOffset(), new Date(y, 6, 1).getTimezoneOffset());
-  const lon = -stdOff / 4;
-  const n = Math.floor((date - new Date(y, 0, 0)) / 864e5);
-  const B = 2 * Math.PI * (n - 81) / 364, eot = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
-  const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-  const H = ((utcH + lon / 15 + eot / 60) - 12) * 15 * D2R;
-  const dec = 23.44 * D2R * Math.sin(2 * Math.PI * (284 + n) / 365);
-  const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(H));
-  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(lat) - Math.tan(dec) * Math.cos(lat)); // from south, + toward west
-  return new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
+// the whole sky for the garden's place and moment, recomputed at most a few times a second
+let SKY = null, skyKey = '';
+const _galN = new THREE.Vector3(), _galC = new THREE.Vector3(), _skyM = new THREE.Matrix4();
+const eqVec = (raDeg, decDeg, out) => out.set(Math.cos(decDeg * D2R) * Math.cos(raDeg * D2R), Math.cos(decDeg * D2R) * Math.sin(raDeg * D2R), Math.sin(decDeg * D2R));
+function updateSky(date) {
+  const key = Math.round(date.getTime() / 250) + '|' + S.lat + '|' + S.lon;
+  if (key !== skyKey) { skyKey = key; SKY = skyAt(date, S.lat, S.lon, THREE.Vector3);
+    eqMatrix(SKY.lat, SKY.lst, _skyM, SKY.P);
+    // planets: their J2000-free directions are already in the scene frame; store them on the sphere as if catalogue entries
+    if (starsGeo) { const p = starsGeo.attributes.position, m = starsGeo.attributes.aMag, NS = p.count - PLANETS.length, inv = _skyM.clone().invert();
+      SKY.planets.forEach((pl, j) => { const v = pl.dir.clone().applyMatrix4(inv).multiplyScalar(440); p.setXYZ(NS + j, v.x, v.y, v.z); m.setX(NS + j, pl.mag); });
+      p.needsUpdate = true; m.needsUpdate = true; }
+    U.uGalN.value.copy(eqVec(192.85948, 27.12825, _galN)).applyMatrix4(_skyM).normalize();   // galactic north pole
+    U.uGalC.value.copy(eqVec(266.40499, -28.93617, _galC)).applyMatrix4(_skyM).normalize();  // galactic centre, in Sagittarius
+  }
+  return SKY;
 }
+function sunDirAt(date) { return updateSky(date).sun.clone(); }
 // ------------------------------------------------------------------ the garden's calendar, your watch, and time dilation
 const SPEEDS = [0, 1, 7, 30];   // the season button steps through these
 let gardenDays = 0, yourDays = 0, playerF = 1;
@@ -1063,7 +1100,7 @@ function refreshTimeUI() {
   const d = garderDate();
   $('bTime').textContent = timeMode === 'night' ? 'time: night' : (timeMode === 'live' ? 'live · ' : 'set · ') + fmtTime(d);
   if (timeMode !== 'manual') $('tSlider').value = d.getHours() + d.getMinutes() / 60;
-  if (drawer && drawer.isOpen) { drawer.sync('hour'); drawer.sync('timeMode'); }
+  if (drawer && drawer.isOpen) { drawer.sync('hour'); drawer.sync('timeMode'); drawer.sync('skyInfo'); }
 }
 function setTimeMode(m) {
   timeMode = m; try { if (m !== 'manual') localStorage.setItem('umbra-time', m); } catch (e) {}
@@ -1078,26 +1115,27 @@ addEventListener('keydown', e => { if (started && e.code === 'KeyT') setTimeMode
 refreshTimeUI(); setInterval(refreshTimeUI, 15000); refreshSeasonUI();
 
 const _a = new THREE.Vector3(), _sunCol = new THREE.Color(), FOG_NIGHT = new THREE.Color(0.004, 0.006, 0.012), FOG_DAY = new THREE.Color(0.40, 0.48, 0.60), FOG_TWI = new THREE.Color(0.30, 0.17, 0.14);
-const lightDir = new THREE.Vector3(0, 1, 0);
+const lightDir = new THREE.Vector3(0, 1, 0), _up = new THREE.Vector3(0, 1, 0), _moonAmb = new THREE.Vector3(0.026, 0.034, 0.06);   // skyglow on a moonless night, plus moonlight at full moon
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 function applyTimeOfDay() {
   const sd = sunDirAt(garderDate()), sy = sd.y;
   const day = sstep(-0.10, 0.22, sy), twi = Math.exp(-(((sy + 0.02) / 0.11) ** 2));
   U.uSunDir.value.copy(sd); U.uDay.value = day; U.uTwi.value = twi;
   // ambient: moonlight → skylight, with warm twilight
-  _a.set(0.030, 0.040, 0.072).multiplyScalar(S.moon).lerp(new THREE.Vector3(0.42, 0.50, 0.64), day).add(new THREE.Vector3(0.10, 0.05, 0.035).multiplyScalar(twi));
+  _a.set(0.012, 0.016, 0.03).addScaledVector(_moonAmb, Math.pow(SKY.moonLit, 1.3) * sstep(-0.05, 0.3, SKY.moon.y)).multiplyScalar(S.moon).lerp(new THREE.Vector3(0.42, 0.50, 0.64), day).add(new THREE.Vector3(0.10, 0.05, 0.035).multiplyScalar(twi));
   U.uAmb.value.copy(_a);
   _sunCol.setRGB(1.0, 0.55, 0.30).lerp(new THREE.Color(1.0, 0.95, 0.88), sstep(0.0, 0.35, sy));
   const sunPhys = 3.6 * sstep(-0.02, 0.25, sy);
   U.uSun.value.set(_sunCol.r, _sunCol.g, _sunCol.b).multiplyScalar(sunPhys * Math.max(sy, 0) / Math.PI * 1.3);
   U.uSunCol.value.set(_sunCol.r, _sunCol.g, _sunCol.b).multiplyScalar(sunPhys);
   if (sy > -0.03) { sunLight.color.copy(_sunCol); sunLight.intensity = sunPhys; lightDir.copy(sd); }
-  else { sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.3 * (1 - day); lightDir.copy(MOON_DIR); }
+  else { const mup = sstep(-0.02, 0.15, SKY.moon.y); sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.42 * (1 - day) * Math.pow(SKY.moonLit, 1.3) * mup * S.moon; lightDir.copy(mup > 0.01 ? SKY.moon : _up); }
   hemi.intensity = 0.05 + 0.3 * (1 - day);
   U.uFogColor.value.copy(FOG_NIGHT).lerp(FOG_DAY, day).lerp(FOG_TWI, twi * 0.5 * (1 - day * 0.6));
   U.uLightGain.value = (1 - 0.45 * sstep(0.12, 0.5, sy)) * S.exhibit;   // the exhibit's lights stay up until the sun is well clear of the wall
   U.uStarGain.value = (1 - day) ** 3;
-  moon.material.color.copy(MOON_COL).multiplyScalar(1 - day); moon.visible = day < 0.98;
+  MOON_DIR.copy(SKY.moon); U.uMoonDir.value.copy(SKY.moon);
+  moon.visible = SKY.moon.y > -0.02; moonHalo.visible = moon.visible && day < 0.6;
   scene.fog.color.copy(U.uFogColor.value);
   refreshEnv(`${Math.round(sy * 80)}|${Math.round(day * 20)}|${Math.round(twi * 10)}`, clock.elapsedTime);
   renderer.toneMappingExposure = (1.05 + 0.12 * day) * S.exposure;
@@ -1145,6 +1183,14 @@ const SETTINGS = [
   { id: 'hour', tab: 'light', label: 'Hour', kind: 'range', min: 0, max: 24, step: 0.25, hands: true, fmt: fmtHour,
     get: () => { const d = garderDate(); return timeMode === 'manual' ? manualHour : d.getHours() + d.getMinutes() / 60; },
     set: v => { manualHour = Math.min(23.99, v); if (timeMode !== 'manual') { setTimeMode('manual'); drawer && drawer.sync('timeMode'); } refreshTimeUI(); } },
+  { id: 'skyInfo', tab: 'light', group: 'Sky and place', label: '', kind: 'info', get: skySummary },
+  { id: 'lat', tab: 'light', label: 'Latitude', kind: 'number', min: -90, max: 90, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'N' : 'S'}`, get: () => S.lat, set: v => { S.lat = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); } },
+  { id: 'lon', tab: 'light', label: 'Longitude', kind: 'number', min: -180, max: 180, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'E' : 'W'}`, get: () => S.lon, set: v => { S.lon = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); } },
+  { id: 'myLocation', tab: 'light', label: 'Use my location', kind: 'action', set: useMyLocation },
+  { id: 'watertown', tab: 'light', label: 'Watertown, MA', kind: 'action', set: () => setPlace(WATERTOWN.lat, WATERTOWN.lon, 'Watertown, MA') },
+  { id: 'limit', tab: 'light', label: 'Faintest stars', kind: 'range', min: 2, max: 6.5, step: 0.1, fmt: v => `magnitude ${v.toFixed(1)}`, get: () => S.limit, set: v => { S.limit = v; save(); },
+    note: 'about 3.5 to 4 under the real sky over Watertown; 6.5 from a dark site far from city light' },
+  { id: 'moonSize', tab: 'light', label: 'Moon size', kind: 'range', min: 1, max: 4, log: true, fmt: v => v < 1.05 ? 'true (½°)' : fmtX(v), get: () => S.moonSize, set: v => { S.moonSize = v; save(); } },
   { id: 'exhibit', tab: 'light', group: 'The exhibit', label: 'Exhibit lights', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.exhibit, set: v => { S.exhibit = v; save(); } },
   { id: 'moon', tab: 'light', label: 'Moonlight', kind: 'range', min: 0.25, max: 4, log: true, hands: true, fmt: fmtX, get: () => S.moon, set: v => { S.moon = v; save(); } },
   { id: 'exposure', tab: 'light', group: 'Camera', label: 'Exposure', kind: 'range', min: 0.5, max: 2, log: true, hands: true, fmt: fmtX, get: () => S.exposure, set: v => { S.exposure = v; save(); } },
@@ -1155,6 +1201,21 @@ const SETTINGS = [
   { id: 'scale', tab: 'light', label: 'Render resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: fmtPct, get: () => S.scale, set: v => { S.scale = v; save(); applyScale(); },
     note: 'lower it if the garden runs slowly; it also lowers by itself if frames drop' },
 ];
+function setPlace(lat, lon, name = '') { S.lat = Math.max(-90, Math.min(90, lat)); S.lon = ((lon + 540) % 360) - 180; S.place = name; save(); for (const id of ['lat', 'lon', 'skyInfo', 'hour']) drawer && drawer.sync(id); refreshTimeUI(); }
+function useMyLocation() {
+  if (!navigator.geolocation) { setHint('this browser cannot share a location · type the latitude and longitude instead', 6000); return; }
+  setHint('asking for your location…', 4000);
+  navigator.geolocation.getCurrentPosition(p => { setPlace(+p.coords.latitude.toFixed(4), +p.coords.longitude.toFixed(4), 'your location'); setHint('the sky is now the sky over you', 5000); },
+    () => setHint('location not available here · type the latitude and longitude instead', 6000), { timeout: 12000, maximumAge: 600000 });
+}
+function skySummary() {
+  if (!SKY) return '';
+  const where = (S.place ? S.place + ' · ' : '') + `${Math.abs(S.lat).toFixed(4)}° ${S.lat >= 0 ? 'N' : 'S'}, ${Math.abs(S.lon).toFixed(4)}° ${S.lon >= 0 ? 'E' : 'W'}`;
+  const alt = v => Math.round(Math.asin(v.y) / D2R), m = SKY.moon;
+  const moonTxt = `moon: ${phaseName(SKY.moonLit, SKY.moonWaxing)}, ${Math.round(SKY.moonLit * 100)}% lit, ` + (alt(m) > 0 ? `${alt(m)}° up in the ${compass(m)}` : 'below the horizon');
+  const up = SKY.planets.filter(p => p.dir.y > 0.02 && p.mag < 2.5).map(p => p.name[0].toUpperCase() + p.name.slice(1));
+  return `${where}\n${moonTxt}\n${up.length ? 'planets up: ' + up.join(', ') : 'no bright planets up'}\nfor ${garderDate().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${timeMode === 'live' ? 'live' : 'the garden’s calendar'})`;
+}
 function jumpToDoy(target) { const cur = ((calDoy() % 365) + 365) % 365; let dd = target - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; if (Math.abs(dd) < 1e-3) return;
   gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); }
 function applyScale() { PR = PR_MAX * S.scale; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); }
@@ -1268,6 +1329,12 @@ function update(dt, t) {
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
   camera.updateMatrixWorld();
+  if (SKY) {   // the celestial sphere and the moon travel with you, so they sit at infinity
+    starsObj.matrix.copy(_skyM).setPosition(camera.position); starsObj.matrixWorldNeedsUpdate = true; U.uLimit.value = S.limit;
+    const r = 420 * Math.tan(SKY.moonRadius) * S.moonSize;
+    moon.position.copy(camera.position).addScaledVector(SKY.moon, 420); moon.scale.setScalar(r); moon.up.copy(U.uGalN.value); moon.lookAt(camera.position);
+    moonHalo.position.copy(moon.position); moonHalo.scale.setScalar(r * 9); moonHalo.material.opacity = 0.55 * SKY.moonLit * (1 - U.uDay.value) * (1 - 0.8 * S.clouds);
+  }
   U.uGust.value = S.gusts * (0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0)); U.uWind.value = S.wind;
   if (streamPts) streamPts.visible = S.streams; lensMat.uniforms.uBend.value = S.lensing ? 1 : 0;
   { const S = 52 / sunLight.shadow.mapSize.x;

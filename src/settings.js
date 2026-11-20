@@ -49,6 +49,10 @@ const CSS = `
 #gdDrawer .tog.on, #gdDrawer .seg button.on { color:#14110c; background:var(--ink, #e9e4da); border-color:var(--ink, #e9e4da); }
 #gdDrawer .act:hover, #gdDrawer .tog:hover, #gdDrawer .seg button:hover { border-color:rgba(233,228,218,.45); }
 #gdDrawer .seg { display:flex; gap:4px; }
+#gdDrawer .num { width:110px; background:rgba(233,228,218,.06); border:1px solid rgba(233,228,218,.2); border-radius:6px; color:var(--ink, #e9e4da); font:inherit; padding:5px 8px; text-align:right; }
+#gdDrawer .row output.sub { grid-column:1 / -1; text-align:left; font-size:9px; color:var(--faint, #7d786f); }
+#gdDrawer .row.info { display:block; }
+#gdDrawer .row output.infoText { display:block; text-align:left; white-space:pre-line; line-height:1.6; color:var(--dim, #b8b2a6); font-size:10px; }
 #gdDrawer .acts { display:flex; flex-wrap:wrap; gap:6px; padding:10px 0; }
 #gdDrawer .hands { padding-top:10px; }
 #gdDrawer .hands input { font:inherit; }
@@ -94,7 +98,11 @@ export function createDrawer({ tabs, controls, tag = null, onOpenChange = () => 
       const seg = document.createElement('div'); seg.className = 'seg'; r.opts = [];
       for (const o of c.options) { const b = document.createElement('button'); b.textContent = o.label; b.addEventListener('click', () => { c.set(o.value); sync(c.id); c.onHand && c.onHand(); }); seg.append(b); r.opts.push([o.value, b]); }
       row.append(seg);
-    }
+    } else if (c.kind === 'number') {
+      const inp = document.createElement('input'); inp.type = 'number'; inp.step = 'any'; inp.min = c.min; inp.max = c.max; inp.className = 'num'; inp.setAttribute('aria-label', c.label);
+      inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) c.set(Math.min(c.max, Math.max(c.min, v))); sync(c.id); });
+      row.append(inp); r.num = inp; out.className = 'sub'; row.append(out);
+    } else if (c.kind === 'info') { row.classList.add('info'); lab.remove(); out.className = 'infoText'; row.append(out); }
     if (c.note) { const n = document.createElement('div'); n.className = 'note'; n.textContent = c.note; row.append(n); }
     pane.append(row); rows[c.id] = r;
   }
@@ -103,6 +111,7 @@ export function createDrawer({ tabs, controls, tag = null, onOpenChange = () => 
     const r = rows[id]; if (!r || !r.c.get) return; const c = r.c, val = c.get();
     if (r.out) r.out.textContent = c.fmt ? c.fmt(val) : String(val);
     if (r.inp && !fromSlider) r.inp.value = Math.round(to01(c, val) * 1000);
+    if (r.num && document.activeElement !== r.num) r.num.value = +(+val).toFixed(4);
     if (r.btn) { r.btn.classList.toggle('on', !!val); r.btn.textContent = val ? 'on' : 'off'; }
     if (r.opts) for (const [v, b] of r.opts) b.classList.toggle('on', v === val);
   }
