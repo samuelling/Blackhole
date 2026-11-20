@@ -50,10 +50,23 @@ Star positions, magnitudes and colours: the Hipparcos catalogue via d3-celestial
 
 **O** (or the *settings* button) opens a drawer with four tabs. Everything in it is remembered between visits.
 
-- **Garden:** season speed, day of the year, garden age (time since planting), whether each plant keeps its own proper time near the voids, replant, wind and gusts, and whether you have a body.
+- **Garden:** season speed (paused, real time, up to two months a second), *make it now*, day of the year, garden age (time since planting), whether each plant keeps its own proper time near the voids, replant, the weather (live or by hand: rain, snow, snow lying, wind, gusts), and whether you have a body.
 - **Voids:** pull on you, exact or ×7 clocks, size, how much light they eat, how far away they notice you, lensing, the great void's disk, the streams of stolen light, evaporation time, whether the garden's voids re-form, and buttons to open a void or evaporate the nearest or all of them.
 - **Light:** the place under the sky (latitude and longitude, *use my location*, or back to Watertown, MA), the faintest stars shown, moon size, sky mode (night, live, set) and hour, exhibit lights, moonlight, exposure, glow, haze, cloud, ambient occlusion and render resolution.
 - **Hands:** Invisible Hands. Start or join a room and another app, or the console on a phone (https://samuelling.github.io/InvisibleHands/console/), can move 20 of the controls (season speed, day of the year, garden age, wind, gusts, pull, exact clocks, void size, light eaten, lensing, disk, streams, open a void, evaporate the nearest, hour, exhibit lights, moonlight, exposure, glow, cloud), each marked with the Invisible Hands tag. The garden publishes four readings back: the light where you stand, your clock rate, how near a void is, and how awake the great void is. Your location is never shared.
+
+## Weather
+
+By default the garden has the weather that the place under the sky is having now (Light tab; Watertown, MA unless you change it): cloud cover, wind speed, direction and gustiness, rain, snow, fog, and snow already lying. Conditions come from [Open-Meteo](https://open-meteo.com) (free, no key), asked again every ten minutes. Only the latitude and longitude are sent, rounded to two decimals (about a kilometre).
+
+- **Rain and snow** fall in a box that travels with you. Each streak and flake is lit by the light where it is, so rain glints in the exhibit's colours, goes dark inside a void's reach and bends toward the horizon on its way down. The wind slants it.
+- **Overcast** is a solid grey deck that hides the sun, moon and stars and cuts the direct light; fog, rain and snow thicken the haze.
+- **Snow settles** on whatever faces the sky (lawn, paths, hedge tops, stone, leaves), patchily at first, and melts when it stops. **Rain** darkens and glosses the ground, which dries slowly.
+- **Sound:** rain hiss and a low wind that rises with the gusts.
+- **By hand:** Garden tab → Weather. Moving Rain, Snow, Snow lying, Wind, Gusts or Cloud takes over from the live weather, starting from what it is at that moment; *local, live* hands it back.
+- **Where it works:** a page hosted on claude.ai may not call outside services, so there the live weather is unavailable and the sliders are used; the GitHub Pages copy (or any ordinary web host) can reach it. No thunder or lightning yet.
+
+**Make it now** (Garden tab) sets today's date, a real-time calendar, the live sky and the live weather in one press. *Real time* on its own runs the seasons at one day per day; the season button on the main controls steps through it too.
 
 ## The sky
 

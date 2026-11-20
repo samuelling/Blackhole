@@ -8,6 +8,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
+import { fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
@@ -33,8 +34,8 @@ let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
 const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
-  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true };
-const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body'];
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0 };
+const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -86,6 +87,7 @@ const U = {
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
   uCloud: { value: 0.35 }, uLimit: { value: 5.5 }, uMoonDir: { value: new THREE.Vector3(0, 0.5, -0.8) }, uGalN: { value: new THREE.Vector3(0, 1, 0) }, uGalC: { value: new THREE.Vector3(0, 0, 1) }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
+  uSnowCover: { value: 0 }, uRainWet: { value: 0 }, uOver: { value: 0 },   // weather: snow lying, wet from rain, overcast
 };
 
 const COMMON = /* glsl */`
@@ -447,13 +449,14 @@ const globeMat = new THREE.ShaderMaterial({
 const starPR = { value: PR };
 const CLOUD_GLSL = `
     float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
-    uniform float uCloud;
+    uniform float uCloud; uniform float uOver;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
-      return smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }`;
+      float broken = smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22);
+      return max(broken, uOver * (0.86 + 0.14*fbm(p*0.6))) * smoothstep(0.012, 0.14, d.y); }   // uOver: a solid deck, for rain, snow and fog`;
 let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
@@ -462,9 +465,10 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
     float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<5;i++){ s += a*vn(p); p = p*2.03 + vec2(17.0, 5.0); a *= 0.5; } return s; }
-    uniform float uCloud;
+    uniform float uCloud; uniform float uOver;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
-      return smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22) * smoothstep(0.012, 0.14, d.y); }
+      float broken = smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22);
+      return max(broken, uOver * (0.86 + 0.14*fbm(p*0.6))) * smoothstep(0.012, 0.14, d.y); }   // uOver: a solid deck, for rain, snow and fog
     void main(){
       vec3 d = normalize(vD);
       vec3 c = mix(vec3(0.014,0.018,0.032), vec3(0.0015,0.002,0.006), smoothstep(-0.02, 0.55, d.y));
@@ -484,14 +488,15 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
           vec3 cd = mix(vec3(0.5, 0.55, 0.63), vec3(1.0, 0.98, 0.95), lit) * (0.75 + 0.5*pow(sd, 3.0));
           vec3 cn = vec3(0.011, 0.014, 0.024) * (0.5 + 0.9*lit);
           vec3 cc = mix(cn, cd, uDay) + vec3(1.0, 0.45, 0.2) * lit * uTwi * (0.35 + 0.9*pow(sd, 2.0));
-          c = mix(c, cc, cl * 0.9); } }
+          cc *= mix(1.0, 0.5, uOver);   // a rain deck is grey, not white
+          c = mix(c, cc, cl * mix(0.9, 0.985, uOver)); } }
       c *= mix(vec3(1.0), vec3(0.8, 0.93, 1.35), clamp(log2(1.0 / uPlayerF) * 0.35, 0.0, 1.0));   // the sky, blueshifted when you sit deep in a well
       gl_FragColor = vec4(c, 1.0);
     }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit };
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit };
 
   // the real night sky: 5,000 catalogue stars to magnitude 6, plus the five naked-eye planets (the last five entries),
   // laid out on the celestial sphere and turned each frame to the time and place (see updateSky)
@@ -509,7 +514,7 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
   g.setAttribute('aMag', new THREE.BufferAttribute(mag, 1)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 1)); g.setAttribute('aTw', new THREE.BufferAttribute(tw, 1));
   starsGeo = g;
   const stars = new THREE.Points(g, new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud, uLimit: U.uLimit }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud, uOver: U.uOver, uLimit: U.uLimit }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; uniform float uLimit; attribute vec3 aColor; attribute float aMag; attribute float aSeed; attribute float aTw; varying vec3 vC;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -882,6 +887,11 @@ function initAudio() {
     const ns = ac.createBufferSource(); ns.buffer = buf; ns.loop = true;
     const nf = ac.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 110; nf.Q.value = 1.2;
     const ng = ac.createGain(); ng.gain.value = 0.9; ns.connect(nf); nf.connect(ng); ng.connect(rg); ns.start();
+    // weather: rain is hissing noise, wind a low band of it that rises with the gusts
+    { const g = ac.createGain(); g.gain.value = 0; g.connect(master); A.rainG = g; const src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1500; const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8500; src.connect(hp); hp.connect(lp); lp.connect(g); src.start(); }
+    { const g = ac.createGain(); g.gain.value = 0; g.connect(master); A.windG = g; const src = ac.createBufferSource(); src.buffer = buf; src.loop = true; src.playbackRate.value = 0.55;
+      const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 300; bp.Q.value = 0.6; A.windF = bp; src.connect(bp); bp.connect(g); src.start(); }
   } catch (e) { A.ctx = null; }
 }
 function chime(L) {
@@ -1073,7 +1083,8 @@ function updateSky(date) {
 }
 function sunDirAt(date) { return updateSky(date).sun.clone(); }
 // ------------------------------------------------------------------ the garden's calendar, your watch, and time dilation
-const SPEEDS = [0, 1, 7, 30];   // the season button steps through these
+const REAL_TIME = 1 / 86400;   // days per second: the calendar keeping pace with the real one
+const SPEEDS = [0, REAL_TIME, 1, 7, 30];   // the season button steps through these
 let gardenDays = 0, yourDays = 0, playerF = 1;
 const calDoy = () => garden.seasons.DOY0 + gardenDays;
 const dilJS = (x, y, z) => { let s = 0; for (const v of voidSlots) if (v) s += v.R * U.uGT.value / Math.max(0.05, Math.hypot(x - v.pos.x, y - v.pos.y, z - v.pos.z)); return Math.sqrt(Math.max(0.0144, 1 - s)); };
@@ -1083,7 +1094,7 @@ function refreshSeasonUI() {
   $('dLabel').textContent = `${doyLabel(d)} · yr ${yr}`; $('bSpeed').textContent = S.seasonRate > 0 ? rateLbl(S.seasonRate) : 'season: paused'; drawer && drawer.sync('seasonRate'); drawer && drawer.sync('dayOfYear');
   if (document.activeElement !== $('dSlider')) $('dSlider').value = ((Math.floor(d) % 365) + 365) % 365;
 }
-$('bSpeed').addEventListener('click', e => { e.stopPropagation(); const i = SPEEDS.findIndex(p => p > S.seasonRate + 1e-6); S.seasonRate = i < 0 ? 0 : SPEEDS[i]; refreshSeasonUI(); hands && hands.recenter('seasonRate'); if (S.seasonRate === 1) setHint('seasons running · near a void, time slows: its plants fall behind the calendar', 7000); });
+$('bSpeed').addEventListener('click', e => { e.stopPropagation(); const i = SPEEDS.findIndex(p => p > S.seasonRate + 1e-6); S.seasonRate = i < 0 ? 0 : SPEEDS[i]; refreshSeasonUI(); hands && hands.recenter('seasonRate'); if (S.seasonRate === REAL_TIME) setHint('seasons at real time · “make it now” in settings sets today’s date, sky and weather too', 7000); else if (S.seasonRate === 1) setHint('seasons running · near a void, time slows: its plants fall behind the calendar', 7000); });
 $('dSlider').addEventListener('input', e => { e.stopPropagation(); jumpToDoy(parseFloat(e.target.value)); hands && hands.recenter('dayOfYear'); });
 for (const ev of ['mousedown', 'touchstart']) $('dSlider').addEventListener(ev, e => e.stopPropagation(), { passive: true });
 $('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seasons.replant(); setHint('replanted · they will fill in over about three years', 6000); });
@@ -1120,7 +1131,51 @@ $('tSlider').addEventListener('touchstart', e => e.stopPropagation(), { passive:
 addEventListener('keydown', e => { if (started && e.code === 'KeyT') setTimeMode(timeMode === 'live' ? 'night' : 'live'); });
 refreshTimeUI(); setInterval(refreshTimeUI, 15000); refreshSeasonUI();
 
-const _a = new THREE.Vector3(), _sunCol = new THREE.Color(), FOG_NIGHT = new THREE.Color(0.004, 0.006, 0.012), FOG_DAY = new THREE.Color(0.40, 0.48, 0.60), FOG_TWI = new THREE.Color(0.30, 0.17, 0.14);
+// ------------------------------------------------------------------ weather
+// WX is the weather the garden is having right now; it eases toward either the live conditions over the place the sky
+// is set to (LIVE, from Open-Meteo) or the sliders. Everything else reads WX, never the sliders.
+const WX = { cloud: S.clouds, over: 0, wind: S.wind, gusts: S.gusts, dirX: 0.8, dirZ: 0.6, rain: 0, snow: 0, fog: 0, ground: 0 };
+let LIVE = null, wxErr = '', wxAt = -1e9, wxBusy = false, snowAcc = S.snowGround, wetAcc = 0, wxKey = '';
+const IMPERIAL = /^en-US/i.test(navigator.language || '');
+const precip = createPrecip({ U, COMMON, count: LOW ? 4500 : 9000 }); scene.add(precip.group);
+function weatherTarget() {
+  if (S.weather === 'live' && LIVE) return weatherToScene(LIVE);
+  const wet = Math.max(S.rain, S.snow);
+  return { cloud: S.clouds, over: Math.max(sstep(0.7, 1, S.clouds), wet > 0.02 ? 0.85 + 0.15 * wet : 0), wind: S.wind, gusts: S.gusts, dirX: 0.8, dirZ: 0.6, rain: S.rain, snow: S.snow, fog: 0, ground: S.snowGround };
+}
+function stepWeather(dt, t) {
+  if (S.weather === 'live' && !wxBusy && performance.now() - wxAt > 600000) pullWeather();   // ask again every ten minutes
+  const T = weatherTarget(), k = Math.min(1, dt * 0.6);
+  for (const f of ['cloud', 'over', 'wind', 'gusts', 'rain', 'snow', 'fog', 'ground', 'dirX', 'dirZ']) WX[f] += (T[f] - WX[f]) * k;
+  const dl = Math.hypot(WX.dirX, WX.dirZ) || 1; WX.dirX /= dl; WX.dirZ /= dl;
+  // snow settles while it falls and melts when it stops; rain wets the ground and it dries slowly
+  snowAcc = Math.min(1, Math.max(0, snowAcc + (WX.snow > 0.03 ? dt * (0.3 + WX.snow) / 70 : -dt / (WX.rain > 0.03 ? 45 : 160))));
+  if (S.weather !== 'live' || !LIVE) snowAcc = Math.max(snowAcc, Math.min(S.snowGround, snowAcc + dt / 4));
+  wetAcc = Math.min(1, Math.max(0, wetAcc + (WX.rain > 0.03 ? dt * (0.4 + WX.rain) / 18 : -dt / 120)));
+  U.uSnowCover.value = Math.max(WX.ground, snowAcc); U.uRainWet.value = Math.max(wetAcc, 0.5 * U.uSnowCover.value * (WX.snow > 0.03 ? 0 : 0.3));
+  const ms = WX.wind * 11; precip.update(dt, WX.rain, WX.snow, WX.dirX * ms * 0.75, WX.dirZ * ms * 0.75);
+}
+function pullWeather(force) {
+  if (wxBusy || (!force && S.weather !== 'live')) return;
+  wxBusy = true; wxAt = performance.now(); const key = S.lat.toFixed(2) + ',' + S.lon.toFixed(2);
+  fetchWeather(S.lat, S.lon).then(w => { const first = !LIVE || wxKey !== key; LIVE = w; wxKey = key; wxErr = ''; snowAcc = Math.max(snowAcc, weatherToScene(w).ground);
+    if (first && S.weather === 'live') setHint(`${S.place || 'here'}: ${describeWeather(w, IMPERIAL)}`, 7000); },
+    e => { LIVE = null; wxErr = (e && e.message) || 'no answer'; })
+    .finally(() => { wxBusy = false; syncWeather(); });
+}
+function takeWeather() {   // moving any weather control by hand takes over from the live weather, starting from what it is now
+  if (S.weather !== 'live') return;
+  if (LIVE) { S.clouds = WX.cloud; S.wind = WX.wind; S.gusts = WX.gusts; S.rain = WX.rain; S.snow = WX.snow; S.snowGround = U.uSnowCover.value; }
+  S.weather = 'set'; save(); syncWeather();
+}
+function syncWeather() { for (const id of ['weather', 'weatherInfo', 'rain', 'snow', 'snowGround', 'wind', 'gusts', 'clouds']) drawer && drawer.sync(id); }
+function weatherSummary() {
+  if (S.weather !== 'live') return 'set by hand: the sliders below, and Cloud and Haze under Light';
+  if (LIVE) return `${S.place || `${S.lat.toFixed(2)}°, ${S.lon.toFixed(2)}°`}: ${describeWeather(LIVE, IMPERIAL)}\nas of ${(LIVE.time || '').slice(11) || 'now'} local · open-meteo.com · moving a slider takes over`;
+  if (wxBusy) return 'asking open-meteo.com for the weather…';
+  return `the live weather can’t be reached from this page${wxErr ? ' (' + wxErr + ')' : ''}; using the sliders below.\nPages on claude.ai may not call outside services; the GitHub Pages copy can.`;
+}
+const _a = new THREE.Vector3(), _sunCol = new THREE.Color(), FOG_NIGHT = new THREE.Color(0.004, 0.006, 0.012), FOG_DAY = new THREE.Color(0.40, 0.48, 0.60), FOG_TWI = new THREE.Color(0.30, 0.17, 0.14), _fogGrey = new THREE.Color();
 const lightDir = new THREE.Vector3(0, 1, 0), _up = new THREE.Vector3(0, 1, 0), _moonAmb = new THREE.Vector3(0.026, 0.034, 0.06);   // skyglow on a moonless night, plus moonlight at full moon
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 function applyTimeOfDay() {
@@ -1129,35 +1184,41 @@ function applyTimeOfDay() {
   U.uSunDir.value.copy(sd); U.uDay.value = day; U.uTwi.value = twi;
   // ambient: moonlight → skylight, with warm twilight
   _a.set(0.012, 0.016, 0.03).addScaledVector(_moonAmb, Math.pow(SKY.moonLit, 1.3) * sstep(-0.05, 0.3, SKY.moon.y)).multiplyScalar(S.moon).lerp(new THREE.Vector3(0.42, 0.50, 0.64), day).add(new THREE.Vector3(0.10, 0.05, 0.035).multiplyScalar(twi));
+  _a.multiplyScalar(1 - 0.42 * WX.over * day);         // and a dull day is darker all round
   U.uAmb.value.copy(_a);
   _sunCol.setRGB(1.0, 0.55, 0.30).lerp(new THREE.Color(1.0, 0.95, 0.88), sstep(0.0, 0.35, sy));
-  const sunPhys = 3.6 * sstep(-0.02, 0.25, sy);
+  const dim = 1 - 0.84 * WX.over;                      // a solid deck lets little direct light through
+  const sunPhys = 3.6 * sstep(-0.02, 0.25, sy) * dim;
   U.uSun.value.set(_sunCol.r, _sunCol.g, _sunCol.b).multiplyScalar(sunPhys * Math.max(sy, 0) / Math.PI * 1.3);
   U.uSunCol.value.set(_sunCol.r, _sunCol.g, _sunCol.b).multiplyScalar(sunPhys);
   if (sy > -0.03) { sunLight.color.copy(_sunCol); sunLight.intensity = sunPhys; lightDir.copy(sd); }
-  else { const mup = sstep(-0.02, 0.15, SKY.moon.y); sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.42 * (1 - day) * Math.pow(SKY.moonLit, 1.3) * mup * S.moon; lightDir.copy(mup > 0.01 ? SKY.moon : _up); }
+  else { const mup = sstep(-0.02, 0.15, SKY.moon.y); sunLight.color.setRGB(0.55, 0.66, 1.0); sunLight.intensity = 0.42 * (1 - day) * Math.pow(SKY.moonLit, 1.3) * mup * S.moon * dim; lightDir.copy(mup > 0.01 ? SKY.moon : _up); }
   hemi.intensity = 0.05 + 0.3 * (1 - day);
   U.uFogColor.value.copy(FOG_NIGHT).lerp(FOG_DAY, day).lerp(FOG_TWI, twi * 0.5 * (1 - day * 0.6));
+  U.uFogColor.value.lerp(_fogGrey.setRGB(0.34, 0.36, 0.39).multiplyScalar(0.03 + 0.97 * day), WX.over * 0.85);
   U.uLightGain.value = (1 - 0.45 * sstep(0.12, 0.5, sy)) * S.exhibit;   // the exhibit's lights stay up until the sun is well clear of the wall
-  U.uStarGain.value = (1 - day) ** 3;
+  U.uStarGain.value = (1 - day) ** 3 * (1 - WX.over);
   MOON_DIR.copy(SKY.moon); U.uMoonDir.value.copy(SKY.moon);
-  moon.visible = SKY.moon.y > -0.02; moonHalo.visible = moon.visible && day < 0.6;
+  moon.visible = SKY.moon.y > -0.02 && WX.over < 0.7; moonHalo.visible = moon.visible && day < 0.6;
   scene.fog.color.copy(U.uFogColor.value);
-  refreshEnv(`${Math.round(sy * 80)}|${Math.round(day * 20)}|${Math.round(twi * 10)}`, clock.elapsedTime);
+  refreshEnv(`${Math.round(sy * 80)}|${Math.round(day * 20)}|${Math.round(twi * 10)}|${Math.round(WX.over * 4)}`, clock.elapsedTime);
   renderer.toneMappingExposure = (1.05 + 0.12 * day) * S.exposure;
-  U.uFogDensity.value = (0.0125 - 0.0072 * day) * S.fog; scene.fog.density = U.uFogDensity.value;
+  U.uFogDensity.value = (0.0125 - 0.0072 * day) * S.fog * (1 + 3.2 * WX.fog + 0.7 * WX.rain + 1.2 * WX.snow); scene.fog.density = U.uFogDensity.value;
   bloom.threshold = 0.62 + 0.5 * day; bloom.strength = (0.75 - 0.3 * day) * S.bloom;
 }
 
 // ------------------------------------------------------------------ settings drawer: one registry for the drawer, saved preferences and Invisible Hands
 const fmtPct = v => `${Math.round(v * 100)}%`, fmtX = v => `×${v.toFixed(v < 1 ? 2 : 1)}`;
-rateLbl = r => r <= 0 ? 'paused' : r < 1 ? `${Math.round(r * 24)} hours / s` : r < 6.5 ? `${r.toFixed(r < 2 ? 1 : 0)} day${r < 1.5 ? '' : 's'} / s` : r < 28 ? `${(r / 7).toFixed(1)} weeks / s` : `${(r / 30.4).toFixed(1)} months / s`;
+rateLbl = r => r <= 0 ? 'paused' : r < 0.001 ? 'real time' : r < 1 ? `${Math.round(r * 24)} hours / s` : r < 6.5 ? `${r.toFixed(r < 2 ? 1 : 0)} day${r < 1.5 ? '' : 's'} / s` : r < 28 ? `${(r / 7).toFixed(1)} weeks / s` : `${(r / 30.4).toFixed(1)} months / s`;
 const fmtHour = h => { const hh = Math.floor(h) % 24, mm = Math.round((h % 1) * 60) % 60; return `${(hh % 12) || 12}:${String(mm).padStart(2, '0')} ${hh < 12 ? 'am' : 'pm'}`; };
 const nearestVoid = (awake) => { let best = null, bd = 1e9; for (const v of voidSlots) { if (!v || v.evap || (awake && v.wake < 0.05)) continue; const d = v.pos.distanceTo(player); if (d < bd) { bd = d; best = v; } } return best; };
 const SETTINGS = [
   // Garden
   { id: 'seasonRate', tab: 'garden', group: 'Seasons', label: 'Season speed', kind: 'range', min: 0.25, max: 60, log: true, zero: true, hands: true, fmt: rateLbl,
-    get: () => S.seasonRate, set: v => { S.seasonRate = v; refreshSeasonUI(); }, note: 'how fast the calendar runs for the plants' },
+    get: () => S.seasonRate, set: v => { S.seasonRate = v; refreshSeasonUI(); drawer && drawer.sync('realTime'); }, note: 'how fast the calendar runs for the plants' },
+  { id: 'realTime', tab: 'garden', label: 'Real time', kind: 'toggle', get: () => S.seasonRate > 0 && S.seasonRate < 0.001, set: v => { S.seasonRate = v ? REAL_TIME : 0; refreshSeasonUI(); },
+    note: 'one day per day' },
+  { id: 'now', tab: 'garden', label: 'Make it now', kind: 'action', set: makeItNow, note: 'today’s date at real-time speed, with the live sky and the local weather' },
   { id: 'dayOfYear', tab: 'garden', label: 'Day of the year', kind: 'range', min: 0, max: 364, step: 1, hands: true, fmt: d => doyLabel(d),
     get: () => ((Math.floor(calDoy()) % 365) + 365) % 365, set: v => jumpToDoy(v) },
   { id: 'gardenAge', tab: 'garden', label: 'Garden age', kind: 'range', min: 0, max: 6, step: 0.1, hands: true, fmt: y => y < 0.95 ? `${Math.round(y * 12)} months` : `${y.toFixed(1)} years`,
@@ -1165,8 +1226,15 @@ const SETTINGS = [
   { id: 'properTime', tab: 'garden', label: 'Plants keep their own time', kind: 'toggle', get: () => S.properTime, set: v => { S.properTime = v; save(); },
     note: 'each plant ages by its own clock, slowed near a void; off, the whole garden shares the calendar' },
   { id: 'replant', tab: 'garden', label: 'Replant everything', kind: 'action', set: () => $('bReplant').click() },
-  { id: 'wind', tab: 'garden', group: 'Weather', label: 'Wind', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => S.wind, set: v => { S.wind = v; save(); } },
-  { id: 'gusts', tab: 'garden', label: 'Gusts', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.gusts, set: v => { S.gusts = v; save(); } },
+  { id: 'weather', tab: 'garden', group: 'Weather', label: 'Weather', kind: 'choice', options: [{ label: 'local, live', value: 'live' }, { label: 'set by hand', value: 'set' }],
+    get: () => S.weather, set: v => { if (v === 'set') takeWeather(); else { S.weather = 'live'; save(); pullWeather(true); } syncWeather(); } },
+  { id: 'weatherInfo', tab: 'garden', label: '', kind: 'info', get: weatherSummary },
+  { id: 'rain', tab: 'garden', label: 'Rain', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.rain : S.rain, set: v => { takeWeather(); S.rain = v; if (v > 0.02) S.snow = 0; save(); drawer && drawer.sync('snow'); } },
+  { id: 'snow', tab: 'garden', label: 'Snow', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.snow : S.snow, set: v => { takeWeather(); S.snow = v; if (v > 0.02) S.rain = 0; save(); drawer && drawer.sync('rain'); } },
+  { id: 'snowGround', tab: 'garden', label: 'Snow lying', kind: 'range', min: 0, max: 1, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? U.uSnowCover.value : S.snowGround, set: v => { takeWeather(); S.snowGround = v; snowAcc = v; save(); },
+    note: 'falling snow settles by itself and melts when it stops; this sets how much is already down' },
+  { id: 'wind', tab: 'garden', label: 'Wind', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.wind : S.wind, set: v => { takeWeather(); S.wind = v; save(); } },
+  { id: 'gusts', tab: 'garden', label: 'Gusts', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.gusts : S.gusts, set: v => { takeWeather(); S.gusts = v; save(); } },
   // Voids
   { id: 'pull', tab: 'voids', group: 'On you', label: 'Pull', kind: 'range', min: 0, max: 1.5, hands: true, fmt: fmtPct, get: () => PULL, set: v => setPull(v), note: 'how hard the voids tug you toward them' },
   { id: 'clocksExact', tab: 'voids', label: 'Exact clocks', kind: 'toggle', hands: true, get: () => clocksExact, set: v => setClocks(v),
@@ -1190,8 +1258,8 @@ const SETTINGS = [
     get: () => { const d = garderDate(); return timeMode === 'manual' ? manualHour : d.getHours() + d.getMinutes() / 60; },
     set: v => { manualHour = Math.min(23.99, v); if (timeMode !== 'manual') { setTimeMode('manual'); drawer && drawer.sync('timeMode'); } refreshTimeUI(); } },
   { id: 'skyInfo', tab: 'light', group: 'Sky and place', label: '', kind: 'info', get: skySummary },
-  { id: 'lat', tab: 'light', label: 'Latitude', kind: 'number', min: -90, max: 90, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'N' : 'S'}`, get: () => S.lat, set: v => { S.lat = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); } },
-  { id: 'lon', tab: 'light', label: 'Longitude', kind: 'number', min: -180, max: 180, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'E' : 'W'}`, get: () => S.lon, set: v => { S.lon = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); } },
+  { id: 'lat', tab: 'light', label: 'Latitude', kind: 'number', min: -90, max: 90, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'N' : 'S'}`, get: () => S.lat, set: v => { S.lat = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); pullWeather(); } },
+  { id: 'lon', tab: 'light', label: 'Longitude', kind: 'number', min: -180, max: 180, fmt: v => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? 'E' : 'W'}`, get: () => S.lon, set: v => { S.lon = v; S.place = ''; save(); drawer && drawer.sync('skyInfo'); pullWeather(); } },
   { id: 'myLocation', tab: 'light', label: 'Use my location', kind: 'action', set: useMyLocation },
   { id: 'watertown', tab: 'light', label: 'Watertown, MA', kind: 'action', set: () => setPlace(WATERTOWN.lat, WATERTOWN.lon, 'Watertown, MA') },
   { id: 'limit', tab: 'light', label: 'Faintest stars', kind: 'range', min: 2, max: 6.5, step: 0.1, fmt: v => `magnitude ${v.toFixed(1)}`, get: () => S.limit, set: v => { S.limit = v; save(); },
@@ -1202,14 +1270,14 @@ const SETTINGS = [
   { id: 'exposure', tab: 'light', group: 'Camera', label: 'Exposure', kind: 'range', min: 0.5, max: 2, log: true, hands: true, fmt: fmtX, get: () => S.exposure, set: v => { S.exposure = v; save(); } },
   { id: 'bloom', tab: 'light', label: 'Glow', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.bloom, set: v => { S.bloom = v; save(); } },
   { id: 'fog', tab: 'light', label: 'Haze', kind: 'range', min: 0, max: 3, fmt: fmtPct, get: () => S.fog, set: v => { S.fog = v; save(); } },
-  { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.clouds, set: v => { S.clouds = v; U.uCloud.value = v; save(); } },
+  { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.cloud : S.clouds, set: v => { takeWeather(); S.clouds = v; save(); } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'ao', tab: 'light', group: 'Quality', label: 'Ambient occlusion', kind: 'toggle', get: () => S.ao, set: v => { S.ao = v; save(); } },
   { id: 'scale', tab: 'light', label: 'Render resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: fmtPct, get: () => S.scale, set: v => { S.scale = v; save(); applyScale(); },
     note: 'lower it if the garden runs slowly; it also lowers by itself if frames drop' },
 ];
-function setPlace(lat, lon, name = '') { S.lat = Math.max(-90, Math.min(90, lat)); S.lon = ((lon + 540) % 360) - 180; S.place = name; save(); for (const id of ['lat', 'lon', 'skyInfo', 'hour']) drawer && drawer.sync(id); refreshTimeUI(); }
+function setPlace(lat, lon, name = '') { S.lat = Math.max(-90, Math.min(90, lat)); S.lon = ((lon + 540) % 360) - 180; S.place = name; save(); for (const id of ['lat', 'lon', 'skyInfo', 'hour']) drawer && drawer.sync(id); refreshTimeUI(); pullWeather(); }
 function useMyLocation() {
   if (!navigator.geolocation) { setHint('this browser cannot share a location · type the latitude and longitude instead', 6000); return; }
   setHint('asking for your location…', 4000);
@@ -1223,6 +1291,11 @@ function skySummary() {
   const moonTxt = `moon: ${phaseName(SKY.moonLit, SKY.moonWaxing)}, ${Math.round(SKY.moonLit * 100)}% lit, ` + (alt(m) > 0 ? `${alt(m)}° up in the ${compass(m)}` : 'below the horizon');
   const up = SKY.planets.filter(p => p.dir.y > 0.02 && p.mag < 2.5).map(p => p.name[0].toUpperCase() + p.name.slice(1));
   return `${where}\n${moonTxt}\n${up.length ? 'planets up: ' + up.join(', ') : 'no bright planets up'}\nfor ${garderDate().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${timeMode === 'live' ? 'live' : 'the garden’s calendar'})`;
+}
+function makeItNow() {
+  const n = new Date(); jumpToDoy((n - new Date(n.getFullYear(), 0, 1)) / 86400000);
+  S.seasonRate = REAL_TIME; S.weather = 'live'; save(); setTimeMode('live'); pullWeather(true); refreshSeasonUI(); syncWeather(); for (const id of ['realTime', 'timeMode', 'hour']) drawer && drawer.sync(id);
+  setHint('the garden is now: today’s date, this hour’s sky, the weather outside', 6000);
 }
 function jumpToDoy(target) { const cur = ((calDoy() % 365) + 365) % 365; let dd = target - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; if (Math.abs(dd) < 1e-3) return;
   gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); }
@@ -1257,7 +1330,7 @@ $('bSettings').addEventListener('click', e => { e.stopPropagation(); drawer.togg
 { const b = $('bHands'), ic = handsIcon(12); if (ic) b.prepend(ic); b.addEventListener('click', e => { e.stopPropagation(); drawer.toggle('hands'); }); if (!hands) b.style.display = 'none'; }
 addEventListener('keydown', e => { if (e.code === 'KeyO') drawer.toggle(); if (e.code === 'Escape' && drawer.isOpen) drawer.close(); });
 document.addEventListener('keydown', e => { const t = e.target; if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !/^(range|button|checkbox)$/.test(t.type)))) e.stopPropagation(); });   // typing a room code doesn't walk you about
-U.uCloud.value = S.clouds; if (S.scale !== 1) applyScale();
+if (S.scale !== 1) applyScale();
 
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
@@ -1344,9 +1417,10 @@ function update(dt, t) {
     starsObj.matrix.copy(_skyM).setPosition(camera.position); starsObj.matrixWorldNeedsUpdate = true; U.uLimit.value = S.limit;
     const r = 420 * Math.tan(SKY.moonRadius) * S.moonSize;
     moon.position.copy(camera.position).addScaledVector(SKY.moon, 420); moon.scale.setScalar(r); moon.up.copy(U.uGalN.value); moon.lookAt(camera.position);
-    moonHalo.position.copy(moon.position); moonHalo.scale.setScalar(r * 9); moonHalo.material.opacity = 0.55 * SKY.moonLit * (1 - U.uDay.value) * (1 - 0.8 * S.clouds);
+    moonHalo.position.copy(moon.position); moonHalo.scale.setScalar(r * 9); moonHalo.material.opacity = 0.55 * SKY.moonLit * (1 - U.uDay.value) * (1 - 0.8 * WX.cloud);
   }
-  U.uGust.value = S.gusts * (0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0)); U.uWind.value = S.wind;
+  stepWeather(dt, t);
+  U.uGust.value = WX.gusts * (0.5 + 0.5 * Math.sin(t * 0.31) * Math.sin(t * 0.17 + 1.0)); U.uWind.value = WX.wind; U.uWindDir.value.set(WX.dirX, WX.dirZ); U.uCloud.value = WX.cloud; U.uOver.value = WX.over;
   if (streamPts) streamPts.visible = S.streams; lensMat.uniforms.uBend.value = S.lensing ? 1 : 0;
   { const S = 52 / sunLight.shadow.mapSize.x;
     sunLight.target.position.set(Math.round(player.x / S) * S, 0, Math.round(player.z / S) * S);
@@ -1397,6 +1471,8 @@ function update(dt, t) {
     { const shift = Math.min(900, 1200 * Math.log2(1 / playerF) * 0.5); for (const o of A.oscs || []) o.detune.setTargetAtTime(o._det + shift, ct, 0.3); }
     A.padG.gain.setTargetAtTime(0.05 + 0.13 * Lhere, ct, 0.5);
     A.rumble.gain.setTargetAtTime(0.32 * near + 0.05 * nearPull, ct, 0.4);
+    if (A.rainG) { const gust = U.uGust.value; A.rainG.gain.setTargetAtTime(0.2 * Math.pow(WX.rain, 0.7), ct, 0.8);
+      A.windG.gain.setTargetAtTime(Math.min(0.3, 0.16 * Math.max(0, WX.wind - 0.15) * (0.5 + 0.5 * gust)), ct, 0.6); A.windF.frequency.setTargetAtTime(220 + 300 * WX.wind + 160 * gust, ct, 0.7); }
     if (Math.random() < dt * 1.6 * Lhere * Lhere) chime(Lhere);
   }
 }
@@ -1410,12 +1486,13 @@ function frame() {
   if (!started) { yaw = Math.sin(t * 0.07) * 0.12; pitch = 0.04 + Math.sin(t * 0.05) * 0.02; }
   update(dt, t);
   garden.update(dt, t, camera);
+  precip.group.visible = false;      // rain and snow are drawn for the eye only, not for the water's mirror or the lens probe
   if (body) body.pass('mirror');   // a view from outside sees your helmet; you, inside it, don't
   garden.preRender(camera, bufW, bufH);
   if (body) body.pass('eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = ENV_ON && cubeReady && need ? 1 : 0; }
-  renderer.shadowMap.needsUpdate = true;
+  renderer.shadowMap.needsUpdate = true; precip.group.visible = true;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
   renderAO();
   renderer.setRenderTarget(null);
@@ -1437,4 +1514,6 @@ window.__umbra = { // debug handle
     refreshSeasonUI(); refreshTimeUI();
   },
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
-  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };
+  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX,
+  weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

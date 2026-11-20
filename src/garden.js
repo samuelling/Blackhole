@@ -187,7 +187,20 @@ uniform float uTexSz;
 uniform sampler2D uArm; uniform float uTriS; uniform float uMoss; uniform float uWet;
 #endif
 uniform float uExhibit; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; uniform vec3 uFlashPos; uniform vec3 uFlashCol; varying vec3 vWPos;
+uniform float uSnowCover; uniform float uRainWet;
 `;
+  // weather on every surface: snow lies on whatever faces the sky, patchy until there is a lot of it; rain darkens and glosses
+  const FWEATHER = `
+#ifdef STANDARD
+{ vec3 wnw = inverseTransformDirection(normal, viewMatrix);
+  if (uSnowCover > 0.002) {
+    float sn = vnoise(vWPos.xz * 2.3) * 0.55 + vnoise(vWPos.xz * 9.0) * 0.3 + vnoise(vWPos.xz * 31.0) * 0.15;
+    float edge = 1.0 - uSnowCover * 1.2;
+    float sc = smoothstep(edge, edge + 0.22, smoothstep(0.2, 0.75, wnw.y) * (0.62 + 0.38 * sn));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.78, 0.83, 0.92), sc); roughnessFactor = mix(roughnessFactor, 0.9, sc); }
+  if (uRainWet > 0.002) { float wf = uRainWet * smoothstep(-0.2, 0.5, wnw.y); diffuseColor.rgb *= mix(1.0, 0.66, wf); roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.45, wf); }
+}
+#endif`;
   const TRI_MAP = `
 vec3 twn = normalize(inverseTransformDirection(normalize(vNormal), viewMatrix)) * (gl_FrontFacing ? 1.0 : -1.0);
 vec3 tbw = pow(abs(twn), vec3(4.0)); tbw /= (tbw.x + tbw.y + tbw.z);
@@ -256,6 +269,7 @@ objectNormal = normalize(vec3(-4.0 * aShape.x * position.x, 1.0, -4.0 * aShape.x
       sh.vertexShader = v;
       if (!o.depth) {
         let f = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + FHEAD).replace('#include <opaque_fragment>', FDRAIN + '\n#include <opaque_fragment>');
+        f = f.replace('#include <lights_physical_fragment>', FWEATHER + '\n#include <lights_physical_fragment>');
         if (o.grow) f = f.replace('#include <color_fragment>', '#include <color_fragment>\n' + GTINT);
         if (o.floret) f = f.replace('#include <map_fragment>', '').replace('#include <color_fragment>', `#include <color_fragment>
 { vec4 fm = texture2D(map, vMapUv);
