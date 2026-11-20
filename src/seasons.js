@@ -12,14 +12,15 @@ const BLOOM = {
   lavandula: [1, 2, 3], liatris: [2, 3], lupinus: [0, 1, 2], panicum: [2, 3, 4], papaver: [1, 2], penstemon: [0, 1], platycodon: [1, 2, 3],
   roseKO: [1, 2, 3, 4], roseDA: [1, 2, 3, 4], schizachyrium: [3, 4], sporobolus: [3, 4], stachys: [1, 2], veronica: [1, 2, 3], anemone: [3, 4],
   pennisetum: [3, 4], aquilegia: [0], thymus: [1, 2], solidago: [4], echinaceaS: [1, 2, 3],
+  sesleria: [3, 4], deschampsia: [1, 2, 3], hakonechloa: [4], molinia: [2, 3, 4], verbena: [2, 3, 4], sanguisorba: [2, 3, 4], persicaria: [2, 3, 4], knautia: [1, 2, 3, 4], astrantia: [1, 2], alliumS: [2, 3],
 };
-const GRASS = new Set(['calamagrostis', 'panicum', 'schizachyrium', 'sporobolus', 'pennisetum']);
+const GRASS = new Set(['calamagrostis', 'panicum', 'schizachyrium', 'sporobolus', 'pennisetum', 'sesleria', 'deschampsia', 'hakonechloa', 'molinia']);
 const WOODY = new Set(['roseKO', 'roseDA', 'hydrangea']);
 const EVERGREEN = new Set(['lavandula', 'thymus', 'dianthus', 'stachys']);
 const EARLY = new Set(['aquilegia', 'iris', 'irisG', 'peony', 'baptisia', 'alliumG', 'dianthus', 'lupinus', 'digitalis', 'papaver', 'geranium', 'amsonia', 'penstemon']);
-const LATE = new Set(['aster', 'helenium', 'eutrochium', 'solidago', 'perovskia', 'sedum', 'anemone', 'hibiscus', 'asclepias']);
+const LATE = new Set(['persicaria', 'sanguisorba', 'aster', 'helenium', 'eutrochium', 'solidago', 'perovskia', 'sedum', 'anemone', 'hibiscus', 'asclepias']);
 // seed heads and plumes that stand after flowering (Shortwood's `persist`, extended into winter for grasses)
-const SEEDHEADS = new Set(['achillea', 'echinops', 'sedum', 'echinacea', 'rudbeckia', 'eutrochium', 'hydrangea', 'calamagrostis', 'panicum', 'schizachyrium', 'sporobolus', 'pennisetum', 'alliumG', 'alliumM']);
+const SEEDHEADS = new Set(['sesleria', 'deschampsia', 'hakonechloa', 'molinia', 'verbena', 'sanguisorba', 'alliumS', 'achillea', 'echinops', 'sedum', 'echinacea', 'rudbeckia', 'eutrochium', 'hydrangea', 'calamagrostis', 'panicum', 'schizachyrium', 'sporobolus', 'pennisetum', 'alliumG', 'alliumM']);
 // foliage that dies down in summer after flowering (Shortwood's `dormant`)
 const SUMMER_DORMANT = { alliumG: 1.6, papaver: 2.3 };
 

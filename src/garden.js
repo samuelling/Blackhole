@@ -660,27 +660,6 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const BACK = ['delphinium', 'digitalis', 'lupinus', 'alliumG', 'perovskia', 'baptisia', 'eutrochium', 'roseDA', 'calamagrostis', 'echinops', 'helenium', 'aster', 'monardaJ', 'hydrangea', 'delphinium', 'digitalis', 'lupinus'];
   for (const L of [FRONT, MID, BACK]) for (let i = L.length - 1; i >= 0; i--) if (!LOOKS[L[i]] || !SIZE[L[i]]) L.splice(i, 1);
   const radiusOf = k => SIZE[k][1] / 2 * IN;
-  // Borders are colour-themed and planted in repeating blocks, so each one reads as a composition with a rhythm:
-  // an edging ribbon at the front, then low, middle and tall tiers whose species recur at set intervals along the walk.
-  const THEMES = {
-    cool:  { edge: 'nepeta',     front: ['geranium', 'salvia', 'veronica', 'lavandula'], mid: ['iris', 'platycodon', 'agastache', 'alliumM', 'penstemon'], back: ['delphinium', 'perovskia', 'baptisia', 'echinops', 'alliumG', 'aster'] },
-    pink:  { edge: 'dianthus',   front: ['geranium', 'stachys', 'aquilegia'], mid: ['phloxJ', 'peony', 'echinacea', 'anemone', 'sedum', 'roseKO'], back: ['digitalis', 'lupinus', 'eutrochium', 'roseDA', 'monardaJ'] },
-    white: { edge: 'stachys',    front: ['alchemilla', 'leucanthemum', 'geranium'], mid: ['leucanthemum', 'phloxR', 'irisG', 'lilium', 'anemone'], back: ['hydrangea', 'digitalis', 'calamagrostis', 'delphinium'] },
-    hot:   { edge: 'alchemilla', front: ['coreopsis', 'echinaceaS', 'salvia'], mid: ['achillea', 'hemerocallis', 'papaver', 'monardaF', 'lilium'], back: ['helenium', 'calamagrostis', 'hemerocallis', 'achillea', 'roseDA'] },
-  };
-  for (const T of Object.values(THEMES)) { for (const key of ['front', 'mid', 'back']) { T[key] = T[key].filter(k => LOOKS[k] && SIZE[k]); if (!T[key].length) T[key] = ['nepeta']; } if (!LOOKS[T.edge] || !SIZE[T.edge]) T.edge = 'nepeta'; }
-  // round the loop walk: blues by the entrance and up the west side, pinks, a white garden along the north wall, pinks again, then the hot border down the east
-  const themeAt = (x, z) => z > 44 ? (x < 0 ? 'cool' : 'hot') : z < -21 ? 'white' : (z > 12 ? (x < 0 ? 'cool' : 'hot') : 'pink');
-  function borderPlant(x, z, f, salt, s = x + z, th = null) {
-    if (blocked(x, z)) return;
-    const T = THEMES[th || themeAt(x, z)], ff = f + (vn2(x * 0.6, z * 0.6, salt) - 0.5) * 0.14;
-    const tier = ff < 0.34 ? 'front' : ff < 0.7 ? 'mid' : 'back', list = T[tier], len = tier === 'front' ? 1.5 : tier === 'mid' ? 2.3 : 3.1;
-    const k = f < 0.1 ? T.edge : list[((Math.floor((s + f * 2.4) / len) + (tier === 'mid' ? 1 : 0)) % list.length + list.length) % list.length];   // blocks lean diagonally, so the drifts interlock
-    const r = radiusOf(k) * 0.9;
-    if (!spaceOk(x, z, r, 0.84)) return;   // close enough that neighbours knit together and hide the soil
-    claim(x, z, r); addPlant(k, x, z, { salt });
-  }
-
   // ---------------------------------------------------------------- hedges & topiary: clipped forms shelled with scanned sprigs
   const hedgeBase = texOf(noiseTex(512, 512, '#223319', [[16000, ['#2f4423', '#1b2913', '#3a5229', '#24361a'], [1.5, 4]]], 5), renderer);
   const HK = {
@@ -1163,37 +1142,111 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   // ---------------------------------------------------------------- planting
   const keepOut = [...layout.lamps.map(([x, z]) => [x, z, 0.45]), [layout.bench.x, layout.bench.z + 0.9, 2.9], ...treeSpecs.map(T => [T.x, T.z, 0.85])];
   const clear = (x, z) => { for (const [kx, kz, kr] of keepOut) if ((x - kx) ** 2 + (z - kz) ** 2 < kr * kr) return false; return true; };
-  // the deep wall border, all the way round the loop walk
-  layout.loopS.forEach((s, si) => { for (let d = 1.8; d < 12; d += 0.31) {
-    const j = d < 2.2 ? 0 : rr(-0.13, 0.13), x = s.x + s.ox * d + j, z = s.z + s.oz * d - j;   // the edging rows run true
-    if (!layout.inWalls(x, z, 0.42)) break;
-    if ((Math.abs(x) < 4.5 && z > 49.8) || !clear(x, z)) continue;
-    borderPlant(x, z, (d - 1.8) / 3.5, 23, si * 0.5);
-  } });
-  // entrance avenue: double border under the tunnel of lights
-  for (const s of [-1, 1]) for (let z = AV.z0 + 0.2; z <= AV.z1 - 0.2; z += 0.3) for (let d = AV.x0; d <= AV.x1; d += 0.3) borderPlant(s * (d + rr(-0.12, 0.12)), z + rr(-0.12, 0.12), (d - AV.x0) / (AV.x1 - AV.x0), 11, z, 'pink');
+  // ---------------------------------------------------------------- planting design
+  // Layered, matrix-style planting (after Oudolf & Kingsbury's "Planting: A New Perspective", Rainer & West's "Planting in
+  // a Post-Wild World", Dunnett's naturalistic schemes), held inside the clipped English frame of hedges, box and yew:
+  //   structure  ~10%  long-lived plants with strong form, in odd-numbered groups on a steady beat: the bones of the bed;
+  //   theme      ~30%  the showy seasonal plants, in long, thin, interlocking drifts (Jekyll) that recur along the bed;
+  //   scatter     ~5%  see-through and self-seeding emergents dotted singly, front included, so no bed is a staircase;
+  //   matrix     ~55%  a low, knitting ground layer, mostly a grass, filling every gap: a "green mulch", no bare soil.
+  // Each bed's palette suits its aspect (right plant, right place); Verbena bonariensis, Calamagrostis and the alliums
+  // recur in every bed so the garden reads as one. Seed heads and grasses stand through winter.
+  const SCHEMES = {
+    // north wall, facing south, the hottest and driest spot: a gravel-garden mix of silvers, blues and lilacs (Beth Chatto)
+    dry:    { matrix: [['sesleria', 0.5], ['nepeta', 0.3], ['thymus', 0.2]], structure: [['perovskia'], ['schizachyrium'], ['calamagrostis']],
+              theme: ['achillea', 'agastache', 'stachys', 'sedum', 'echinops', 'salvia', 'lavandula', 'liatris', 'amsonia'], scatter: ['verbena', 'alliumS', 'papaver', 'alliumG'] },
+    // east wall, facing west into the evening sun: late-summer prairie in hot colours (Oudolf's Lurie Garden, Hermannshof)
+    hot:    { matrix: [['sporobolus', 0.6], ['coreopsis', 0.25], ['gaillardia', 0.15]], structure: [['calamagrostis'], ['panicum'], ['eutrochium']],
+              theme: ['helenium', 'rudbeckia', 'heliopsis', 'echinacea', 'achillea', 'hemerocallis', 'asclepias', 'monardaF', 'solidago'], scatter: ['verbena', 'knautia', 'alliumS'] },
+    // west wall, facing the morning sun: a cool Oudolf mix of blues, purples, plums and pinks
+    cool:   { matrix: [['sesleria', 0.45], ['geranium', 0.35], ['deschampsia', 0.2]], structure: [['calamagrostis'], ['baptisia', 'amsonia'], ['eutrochium']],
+              theme: ['salvia', 'veronica', 'echinacea', 'monardaJ', 'phloxJ', 'persicaria', 'sanguisorba', 'agastache', 'aster', 'liatris'], scatter: ['verbena', 'alliumS', 'knautia', 'alliumG'] },
+    // south wall, facing north, in its shadow: a green-and-white woodland-edge planting
+    shade:  { matrix: [['hakonechloa', 0.5], ['alchemilla', 0.3], ['geranium', 0.2]], structure: [['hydrangea'], ['molinia']],
+              theme: ['astrantia', 'anemone', 'digitalis', 'aquilegia', 'phloxR', 'leucanthemum'], scatter: ['digitalis', 'aquilegia'] },
+    // the entrance double border: high-summer pinks and plums, mirrored across the walk
+    avenue: { matrix: [['nepeta', 0.4], ['geranium', 0.3], ['sesleria', 0.3]], structure: [['calamagrostis']],
+              theme: ['phloxJ', 'echinacea', 'persicaria', 'sanguisorba', 'monardaJ', 'salvia', 'delphinium', 'lupinus', 'penstemon'], scatter: ['verbena', 'alliumG', 'alliumS', 'knautia'] },
+  };
+  const okK = k => LOOKS[k] && SIZE[k];
+  for (const S of Object.values(SCHEMES)) { S.theme = S.theme.filter(okK); S.scatter = S.scatter.filter(okK); S.matrix = S.matrix.filter(([k]) => okK(k)); S.structure = S.structure.map(g => g.filter(okK)).filter(g => g.length); }
+  const tallM = k => SIZE[k][0] * IN;
+  const prefDepth = k => clamp((tallM(k) - 0.35) / 0.9, 0, 1);              // where in the bed's depth a plant of this height belongs
+  const pickW = (list, h) => { let a = 0, t = list.reduce((s, [, w]) => s + w, 0) * h; for (const [k, w] of list) { a += w; if (t < a) return k; } return list[list.length - 1][0]; };
+  const bedCount = {};
+  const placeOne = (k, x, z, salt, kk, ok, scale = 1) => {
+    if (!k || blocked(x, z) || !clear(x, z) || (ok && !ok(x, z))) return false;
+    const r = radiusOf(k) * 0.9 * scale; if (!spaceOk(x, z, r, kk)) return false;
+    claim(x, z, r); addPlant(k, x, z, { salt, scale }); bedCount[k] = (bedCount[k] || 0) + 1; return true;
+  };
+  // a bed is a strip: pos(u, d) maps distance along it and depth into it to the ground; D(u) is its depth there
+  function layeredBed(S, { U, D, pos, salt, mirror = null, step = 0.27, rhythm = 3.6, ok = null }) {
+    const put = (k, u, d, kk, sc = 1) => { const [x, z] = pos(u, d); const done = placeOne(k, x, z, salt, kk, ok, sc); if (done && mirror) { const [mx, mz] = mirror(x, z); placeOne(k, mx, mz, salt + 7, kk, ok, sc); } return done; };
+    // 1. structure: odd-numbered groups on a steady beat, every third group stepping forward
+    for (let i = 0, u = rhythm * 0.5; u < U; u += rhythm, i++) {
+      const g = S.structure[i % S.structure.length], k = g[Math.floor(ihash(i, salt, 5) * g.length)], Dm = D(u); if (!k || Dm < 1.0) continue;
+      const d = Math.min(Dm - 0.4, Dm * (i % 3 === 2 ? 0.38 : 0.7)), n = radiusOf(k) < 0.4 ? 3 : 1;
+      for (let j = 0; j < n; j++) { const a = j / n * TAU + i; put(k, u + (n > 1 ? Math.cos(a) * 0.36 : 0), d + (n > 1 ? Math.sin(a) * 0.36 : 0), 0.7); }
+    }
+    const cand = [];
+    for (let u = 0; u < U; u += step) { const Dm = D(u); for (let d = 0.1; d < Dm - 0.12; d += step) cand.push([u + rr(-0.1, 0.1), d + rr(-0.09, 0.09), Dm]); }
+    // 2. scatter: single emergents, tall and see-through, anywhere but the very edge
+    if (S.scatter.length) for (const [u, d] of cand) if (d > 0.35 && ihash(Math.floor(u * 9), Math.floor(d * 9), salt + 3) < 0.035)
+      put(S.scatter[Math.floor(ihash(Math.floor(u * 5), Math.floor(d * 5), salt) * S.scatter.length)], u, d, 0.55);
+    // 3. theme: long diagonal drifts, broken into islands by the matrix
+    for (const [u, d, Dm] of cand) {
+      const f = d / Dm; if (f < 0.15) continue;                                // the front stays matrix: one clean ribbon along the path
+      if (vn2(u * 0.33, d * 0.45, salt + 11) < 0.47) continue;
+      const band = Math.floor((u + d * 1.7) / 1.5), L = S.theme, n = L.length, b0 = Math.floor(ihash(band, salt, 9) * n);
+      for (let t = 0; t < n; t++) { const k = L[(b0 + t) % n]; if (Math.abs(prefDepth(k) - f) < 0.38) { put(k, u, d, 0.84); break; } }
+    }
+    // 4. matrix: everything left
+    for (const [u, d] of cand) put(pickW(S.matrix, ihash(Math.floor(u * 7), Math.floor(d * 7), salt + 1)), u, d, 0.6, 1.2);   // planted tight and grown on, so it closes over the soil
+  }
+  // which border a point belongs to, by the wall it backs onto (and so by its aspect); a little noise softens the corners
+  const aspectAt = (x, z) => { const w = (vn2(x * 0.12, z * 0.12, 41) - 0.5) * 3;
+    const c = [['dry', z - B.z0 + w], ['shade', B.z1 - z - w], ['cool', x - B.x0 - w * 0.5], ['hot', B.x1 - x + w * 0.5]]; return c.reduce((a, b) => b[1] < a[1] ? b : a)[0]; };
+  // the wall borders round the loop walk, split into runs by aspect
+  { const S0 = layout.loopS, n = S0.length, ds = layout.loopLen / n, front = 1.8;
+    const depth = S0.map(s => { let d = front; while (d < 12 && layout.inWalls(s.x + s.ox * d, s.z + s.oz * d, 0.42)) d += 0.1; return Math.max(0, d - front - 0.1); });
+    const asp = S0.map(s => aspectAt(s.x + s.ox * 4, s.z + s.oz * 4));
+    let i0 = asp.findIndex((a, i) => a !== asp[(i - 1 + n) % n]); if (i0 < 0) i0 = 0;
+    const gateOk = (x, z) => !(Math.abs(x) < 4.5 && z > 49.8) && layout.inWalls(x, z, 0.42);
+    for (let k = 0, run = 0; k < n; run++) {
+      const a = asp[(i0 + k) % n], idx = []; while (k < n && asp[(i0 + k) % n] === a) idx.push((i0 + k++) % n);
+      const at = u => idx[clamp(Math.round(u / ds), 0, idx.length - 1)];
+      layeredBed(SCHEMES[a], { U: idx.length * ds, D: u => depth[at(u)], pos: (u, d) => { const s = S0[at(u)]; return [s.x + s.ox * (front + d), s.z + s.oz * (front + d)]; }, salt: 23 + run * 17, ok: gateOk });
+    } }
+  // the entrance double border, mirrored across the walk: Calamagrostis standing in pairs like a colonnade
+  layeredBed(SCHEMES.avenue, { U: AV.z1 - AV.z0 - 0.2, D: () => AV.x1 - AV.x0, pos: (u, d) => [AV.x0 + d, AV.z0 + 0.1 + u], mirror: (x, z) => [-x, z], salt: 11, rhythm: 2.0 });
   // canal: lavender walks
   for (const s of [-1, 1]) for (let z = CN.z0; z <= CN.z1; z += 0.42) for (const x of [3.8, 4.28]) { const k = (Math.floor(z / 0.42) % 9 === 0) ? 'nepeta' : 'lavandula'; addPlant(k, s * x + rr(-0.05, 0.05), z + (x > 4 ? 0.21 : 0), { scale: 1.1 }); }
-  // parterre: roses, lavender edging, catmint, alliums, peonies
-  for (let q = 0; q < 4; q++) for (let r = ring.bedIn + 0.38; r <= ring.bedOut - 0.3; r += 0.5) for (let a = q * Math.PI / 2; a < (q + 1) * Math.PI / 2; a += 0.5 / r) {
-    const x = Math.cos(a) * r + rr(-0.1, 0.1), z = Math.sin(a) * r + rr(-0.1, 0.1);
-    if (Math.abs(x) < 2.05 || Math.abs(z) < 2.05 || blocked(x, z)) continue;
-    const band = Math.round((r - ring.bedIn - 0.38) / 0.5);   // concentric bands: lavender edging, two rings of roses, a ring of alliums through catmint, roses again
-    const k = (r < ring.bedIn + 0.6 || r > ring.bedOut - 0.6) ? 'lavandula' : band === 3 ? (Math.floor(a * r) % 3 === 0 ? 'alliumG' : 'nepeta') : band % 2 ? 'roseDA' : 'roseKO';
-    const rad = radiusOf(k) * 0.85; if (!spaceOk(x, z, rad, 0.75)) continue; claim(x, z, rad); addPlant(k, x, z, { salt: q });
-  }
+  // parterre: crisp lavender edging inside the box; within it roses on a regular beat through a matrix of catmint and lady's mantle, alliums rising through
+  { const rm = (ring.bedIn + ring.bedOut) / 2;
+    for (let q = 0; q < 4; q++) for (let a = q * Math.PI / 2 + 0.2; a < (q + 1) * Math.PI / 2 - 0.15; a += 1.35 / rm) { const x = Math.cos(a) * rm, z = Math.sin(a) * rm; if (Math.abs(x) > 2.2 && Math.abs(z) > 2.2) placeOne('roseDA', x, z, q, 0.7); }
+    for (let q = 0; q < 4; q++) for (let r = ring.bedIn + 0.38; r <= ring.bedOut - 0.3; r += 0.38) for (let a = q * Math.PI / 2; a < (q + 1) * Math.PI / 2; a += 0.38 / r) {
+      const x = Math.cos(a) * r + rr(-0.08, 0.08), z = Math.sin(a) * r + rr(-0.08, 0.08);
+      if (Math.abs(x) < 2.05 || Math.abs(z) < 2.05) continue;
+      const edge = r < ring.bedIn + 0.6 || r > ring.bedOut - 0.6, h = ihash(Math.floor(x * 6), Math.floor(z * 6), 77);
+      const k = edge ? 'lavandula' : h < 0.07 ? 'alliumG' : h < 0.12 ? 'alliumS' : h < 0.15 ? 'verbena' : h < 0.72 ? 'nepeta' : 'alchemilla';
+      placeOne(k, x, z, q, edge ? 0.75 : 0.62, null, edge || k === 'alliumG' || k === 'alliumS' || k === 'verbena' ? 1 : 1.15);
+    } }
   // wildflowers in the long grass
   for (const md of layout.meadows) {
     const n = Math.floor(md.r * md.r * (lite ? 1.6 : 3.4));
     for (let i = 0; i < n; i++) {
       const a = rng() * TAU, d = md.r * Math.sqrt(rng()) * 0.95, x = md.x + Math.cos(a) * d, z = md.z + Math.sin(a) * d;
       if (layout.distToPath(x, z) < 1.9 || !clear(x, z)) continue;
-      addFlowerStalk(drift(x, z, ['papaver', 'leucanthemum', 'leucanthemum', 'coreopsis', 'aster', 'geranium', 'achillea', 'papaver'], 2.2, 300), x, z, rr(0.35, 0.85), rr(0.45, 0.7));
+      addFlowerStalk(drift(x, z, ['echinacea', 'leucanthemum', 'rudbeckia', 'liatris', 'knautia', 'achillea', 'papaver', 'coreopsis'], 2.2, 300), x, z, rr(0.35, 0.85), rr(0.45, 0.7));
     }
+    // and clumps of prairie grass through it: the meadow's own matrix
+    for (let i = 0; i < Math.floor(md.r * md.r * 0.9); i++) { const a = rng() * TAU, d = md.r * Math.sqrt(rng()) * 0.92, x = md.x + Math.cos(a) * d, z = md.z + Math.sin(a) * d;
+      if (layout.distToPath(x, z) > 2.0) placeOne(rng() < 0.6 ? 'sporobolus' : 'schizachyrium', x, z, 300 + i, 0.9); }
   }
+  console.log('[garden] planting by species: ' + Object.entries(bedCount).sort((a, b) => b[1] - a[1]).map(([k, n]) => k + ' ' + n).join(', '));
   // low ground cover between plants in the beds
   {
-    const pts = [], add = (x, z) => { if (!blocked(x, z) && clear(x, z)) pts.push([x, z]); }, dens = lite ? 9 : 20;
+    const pts = [], add = (x, z) => { if (!blocked(x, z) && clear(x, z)) pts.push([x, z]); }, dens = lite ? 5 : 9;   // the matrix does most of the covering now
     for (const s of layout.loopS) for (let i = 0; i < 2 * dens; i++) { const d = rr(1.7, 5.6), x = s.x + s.ox * d + rr(-0.25, 0.25), z = s.z + s.oz * d + rr(-0.25, 0.25); if (layout.inWalls(x, z, 0.4) && !(Math.abs(x) < 4.4 && z > 49.8)) add(x, z); }
     for (const s of [-1, 1]) for (let i = 0; i < 8 * 3.7 * dens; i++) add(s * rr(AV.x0 - 0.1, AV.x1 + 0.1), rr(AV.z0, AV.z1));
     for (let i = 0; i < 220 * dens; i++) { const a = rng() * TAU, r = Math.sqrt(rr((ring.bedIn + 0.3) ** 2, (ring.bedOut - 0.25) ** 2)), x = Math.cos(a) * r, z = Math.sin(a) * r; if (Math.abs(x) > 2.0 && Math.abs(z) > 2.0) add(x, z); }

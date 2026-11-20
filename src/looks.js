@@ -117,7 +117,29 @@ export const LOOKS = {
                  flStyle: 'solidago', flCol: '#f2c21a', flIn: [4, 10], flN: 30, flAt: 'tips' },
   echinaceaS:  { form: 'upright', stems: 9, perStem: 4, basal: 10, lean: [0.3, 0.6], leaf: 'lance', leafIn: [2, 5.5], leafCol: '#3c5f30', stemCol: '#4c6236',
                  flStyle: 'coneflower', flCol: '#c8302a', flEye: '#7a3a14', flIn: 3.6, flN: 14, flAt: 'tips' },
+  // --- added for matrix planting (Garden of Delight): drawn with existing painters, sized from RHS/Missouri Botanical Garden descriptions
+  sesleria:    { form: 'grass', blades: 80, lean: [0.25, 0.8], leaf: 'blade', leafIn: [0.45, 1], bend: 0.7, bladeLen: 0.6, leafCol: '#8aa250', stemCol: '#b0a888',
+                 flStyle: 'plumeTuft', flCol: '#d6d0b8', flIn: [0.8, 5], flN: 22, plumeAt: 0.8, scapeLean: 0.25, stemR: 0.03, persist: [3, 4] },
+  deschampsia: { form: 'grass', blades: 90, lean: [0.3, 0.9], leaf: 'blade', leafIn: [0.4, 1], bend: 0.8, bladeLen: 0.4, leafCol: '#4e7038', stemCol: '#b8a070',
+                 flStyle: 'plumeAiry', flCol: '#cdb27c', flIn: [6, 12], flN: 30, plumeAt: 0.55, scapeLean: 0.2, stemR: 0.03, persist: [2, 4] },
+  hakonechloa: { form: 'grass', blades: 110, lean: [0.6, 1.1], leaf: 'blade', leafIn: [0.9, 1], bend: 0.95, bladeLen: 0.8, leafCol: '#a6b444', stemCol: '#9aa04a',
+                 flStyle: 'plumeTuft', flCol: '#c0b890', flIn: [0.6, 3], flN: 10, plumeAt: 0.85, scapeLean: 0.5, stemR: 0.02, persist: [4, 4] },
+  molinia:     { form: 'grass', blades: 90, lean: [0.05, 0.35], leaf: 'blade', leafIn: [0.6, 1], bend: 0.35, bladeLen: 0.32, leafCol: '#5c7a40', stemCol: '#b8a678',
+                 flStyle: 'plumeAiry', flCol: '#9a8a6a', flIn: [4, 14], flN: 26, plumeAt: 0.6, scapeLean: 0.12, stemR: 0.03, persist: [3, 4] },
+  verbena:     { form: 'upright', stems: 6, perStem: 2, opposite: true, basal: 6, lean: [0.08, 0.3], leaf: 'lance', leafIn: [0.7, 3.2], leafCol: '#4a6a3a', stemCol: '#4e6a3e', stemR: 0.06,
+                 flStyle: 'umbel', flCol: '#9a5ae0', flIn: 2.2, flN: 14, flAt: 'tips', persist: [4, 4] },
+  sanguisorba: { form: 'upright', stems: 10, perStem: 3, basal: 18, lean: [0.2, 0.55], leaf: 'fern', leafIn: [2, 5], leafCol: '#5e7a4a', stemCol: '#5a5a3a', stemR: 0.05,
+                 flStyle: 'liatris', flCol: '#7c1e30', flIn: [0.6, 1.3], flN: 34, flAt: 'tips', persist: [3, 4] },
+  persicaria:  { form: 'upright', stems: 16, perStem: 4, lean: [0.2, 0.55], leaf: 'broad', leafIn: [2.6, 5.5], leafCol: '#4a6e36', stemCol: '#6a5a3a',
+                 flStyle: 'liatris', flCol: '#c42a48', flIn: [0.45, 3.2], flN: 30, flAt: 'tips' },
+  knautia:     { form: 'upright', stems: 10, perStem: 3, basal: 14, lean: [0.3, 0.7], leaf: 'lance', leafIn: [1.2, 4], leafCol: '#5e7a4e', stemCol: '#6a7a52', stemR: 0.05,
+                 flStyle: 'echinops', flCol: '#9a1e48', flIn: 1.4, flN: 26, flAt: 'tips' },
+  astrantia:   { form: 'mound', moundH: 0.6, leaves: 40, leaf: 'palmate', leafIn: [3.6, 3.8], leafCol: '#3e6430', stemCol: '#5a6a48',
+                 flStyle: 'umbel', flCol: '#ead6dc', flIn: 1.5, flN: 22, flAt: 'stalks', stemR: 0.06 },
+  alliumS:     { form: 'strap', blades: 20, leaf: 'blade', leafIn: [0.4, 1], bend: 0.4, bladeLen: 0.5, leafCol: '#5a7a44', stemCol: '#5e7e48',
+                 flStyle: 'allium', flCol: '#8a2a5a', flIn: [1.0, 1.5], flN: 5, scapeLean: 0.2, stemR: 0.06, persist: [3, 4] },
 };
 
 // Mature height and spread (inches), from Shortwood Meadow's sourced species table.
-export const SIZE = {nepeta: [27, 33], phloxJ: [36, 27], phloxR: [32, 28], monardaF: [42, 36], monardaJ: [50, 40], echinacea: [40, 24], rudbeckia: [30, 24], aster: [48, 30], salvia: [20, 18], geranium: [18, 26], peony: [30, 30], iris: [40, 33], alchemilla: [15, 24], leucanthemum: [42, 30], perovskia: [48, 36], baptisia: [42, 42], amsonia: [30, 30], coreopsis: [16, 18], digitalis: [48, 21], achillea: [18, 11], agastache: [30, 21], alliumM: [18, 15], alliumG: [24, 15], asclepias: [21, 15], calamagrostis: [48, 24], delphinium: [48, 30], dianthus: [6, 9], echinops: [39, 21], eutrochium: [54, 21], gaillardia: [9, 15], helenium: [48, 30], heliopsis: [30, 21], hemerocallis: [11, 11], lilium: [30, 11], hibiscus: [30, 21], hydrangea: [48, 60], sedum: [21, 21], irisG: [30, 18], lavandula: [16, 15], liatris: [24, 9], lupinus: [42, 15], panicum: [54, 27], papaver: [30, 21], penstemon: [30, 18], platycodon: [21, 15], roseKO: [42, 42], roseDA: [54, 42], schizachyrium: [36, 21], sporobolus: [30, 30], stachys: [13, 15], veronica: [11, 8], anemone: [42, 21], pennisetum: [24, 24], aquilegia: [30, 15], thymus: [3, 8], solidago: [39, 33], echinaceaS: [21, 15]};
+export const SIZE = {nepeta: [27, 33], phloxJ: [36, 27], phloxR: [32, 28], monardaF: [42, 36], monardaJ: [50, 40], echinacea: [40, 24], rudbeckia: [30, 24], aster: [48, 30], salvia: [20, 18], geranium: [18, 26], peony: [30, 30], iris: [40, 33], alchemilla: [15, 24], leucanthemum: [42, 30], perovskia: [48, 36], baptisia: [42, 42], amsonia: [30, 30], coreopsis: [16, 18], digitalis: [48, 21], achillea: [18, 11], agastache: [30, 21], alliumM: [18, 15], alliumG: [24, 15], asclepias: [21, 15], calamagrostis: [48, 24], delphinium: [48, 30], dianthus: [6, 9], echinops: [39, 21], eutrochium: [54, 21], gaillardia: [9, 15], helenium: [48, 30], heliopsis: [30, 21], hemerocallis: [11, 11], lilium: [30, 11], hibiscus: [30, 21], hydrangea: [48, 60], sedum: [21, 21], irisG: [30, 18], lavandula: [16, 15], liatris: [24, 9], lupinus: [42, 15], panicum: [54, 27], papaver: [30, 21], penstemon: [30, 18], platycodon: [21, 15], roseKO: [42, 42], roseDA: [54, 42], schizachyrium: [36, 21], sporobolus: [30, 30], stachys: [13, 15], veronica: [11, 8], anemone: [42, 21], pennisetum: [24, 24], aquilegia: [30, 15], thymus: [3, 8], solidago: [39, 33], echinaceaS: [21, 15],
+  sesleria: [18, 18], deschampsia: [30, 22], hakonechloa: [14, 24], molinia: [72, 26], verbena: [60, 14], sanguisorba: [48, 18], persicaria: [42, 40], knautia: [26, 18], astrantia: [24, 18], alliumS: [26, 4]};
