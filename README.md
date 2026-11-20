@@ -40,7 +40,7 @@ Small on purpose, so every surface can be close-up quality. Materials are photo-
 - **You (Blender):** `tools/blender/build_astronaut.py` models the suit the way a hard suit is built: rigid shells joined by bearing rings, a dark ball at every joint, chest unit, wrist display, life-support pack, helmet. Fifteen segments, each with its origin at its joint, so `src/body.js` poses it by turning whole segments: legs by two-bone IK to feet that stay planted through each stride, arms swinging against them, cadence and stride from how fast you actually moved. Shading is cel: light arrives in flat bands (sun or moon with a hard-edged shadow, the exhibit's glow, sky, a small suit lamp), compressed so the suit never blows out, and each shell is drawn again inside-out and swollen along smoothed normals for an ink line of constant width on screen. The voids drain it like everything else; the instruments keep glowing. You never see your own helmet, but your shadow has it.
 - **Water:** one planar reflection pass shared by every pool and the canal (the voids appear in it as black spheres), a refracted stone floor with caustics, ripples, ribbons of falling water, foam and droplet jets.
 - **Light:** sun or moon with soft shadows following you, a sky with drifting cloud, environment lighting, fog; the exhibit's light pools and the voids' drain are injected into every material.
-- **Rendering:** 4× multisampling with alpha-to-coverage (smooth leaf edges without sorting), screen-space ambient occlusion from the depth buffer, bloom, a light colour grade, ACES tone mapping. Resolution drops by itself if frames run slow; `?q=low`, `?msaa=0` and `?ao=0` turn things down by hand.
+- **Rendering:** 4× multisampling with alpha-to-coverage (smooth leaf edges without sorting), screen-space ambient occlusion from the depth buffer, bloom, a light colour grade, ACES tone mapping. Quality is set per machine in the Graphics tab (below); `?gfx=`, `?q=low`, `?msaa=0` and `?ao=0` override it for one visit.
 
 ### Assets and credits
 
@@ -52,8 +52,29 @@ Star positions, magnitudes and colours: the Hipparcos catalogue via d3-celestial
 
 - **Garden:** season speed (paused, real time, up to two months a second), *make it now*, day of the year, garden age (time since planting), whether each plant keeps its own proper time near the voids, replant, the weather (live or by hand: rain, snow, snow lying, wind, gusts), and whether you have a body.
 - **Voids:** pull on you, exact or ×7 clocks, size, how much light they eat, how far away they notice you, lensing, the great void's disk, the streams of stolen light, evaporation time, whether the garden's voids re-form, and buttons to open a void or evaporate the nearest or all of them.
-- **Light:** the place under the sky (latitude and longitude, *use my location*, or back to Watertown, MA), the faintest stars shown, moon size, sky mode (night, live, set) and hour, exhibit lights, moonlight, exposure, glow, haze, cloud, ambient occlusion and render resolution.
+- **Light:** the place under the sky (latitude and longitude, *use my location*, or back to Watertown, MA), the faintest stars shown, moon size, sky mode (night, live, set) and hour, exhibit lights, moonlight, exposure, glow, haze and cloud.
+- **Graphics:** presets and every quality setting (see below).
 - **Hands:** Invisible Hands. Start or join a room and another app, or the console on a phone (https://samuelling.github.io/InvisibleHands/console/), can move 20 of the controls (season speed, day of the year, garden age, wind, gusts, pull, exact clocks, void size, light eaten, lensing, disk, streams, open a void, evaporate the nearest, hour, exhibit lights, moonlight, exposure, glow, cloud), each marked with the Invisible Hands tag. The garden publishes four readings back: the light where you stand, your clock rate, how near a void is, and how awake the great void is. Your location is never shared.
+
+## Graphics
+
+The **Graphics** tab picks a preset for the kind of machine it is running on, from the GPU's name where the browser reports it: **phone**, **laptop** (integrated graphics), **desktop** (a discrete GPU or an Apple Pro/Max/Ultra chip) or **ultra**. *Auto* shows what it guessed; any change makes it *custom*, remembered between visits. `?gfx=phone` (etc.) tries a preset for one visit without saving it.
+
+| | phone | laptop | desktop | ultra |
+|---|---|---|---|---|
+| Render resolution (pixels per point) | 1.25 | 1.0 | 1.5 | 2.0 |
+| Lower resolution when slow | on | on | on | off |
+| Frame rate limit | 30 | none | none | none |
+| Antialiasing | off | 2× | 4× | 8× |
+| Shadow map | 1K | 2K | 4K | 8K |
+| Ambient occlusion | off | off | on | on |
+| Water reflection resolution | 25% | 35% | 50% | 75% |
+| Lensing all round (cube map) | off | off | on | on |
+| Rain and snow | 40% | 70% | 100% | 150% |
+| Planting detail *(on reload)* | lite | full | full | full |
+| Grass *(on reload)* | 45% | 70% | 100% | 150% |
+
+Everything applies at once except planting detail and grass, which change how the garden is built; the tab says when a reload is pending and has a *Reload now* button. Resolution never exceeds the screen's own, and antialiasing and shadow size are capped at what the GPU supports. With *lower it when slow* on, resolution drops while frames run slower than 40 a second and climbs back when there is room. *Show frame rate* (or **F**) puts the rate and buffer size in the title.
 
 ## Weather
 

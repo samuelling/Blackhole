@@ -8,6 +8,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
+import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
@@ -28,8 +29,12 @@ try {
 } catch (e) {
   $('err').style.display = 'flex'; $('err').textContent = 'This garden needs WebGL, which this browser could not start.'; throw e;
 }
-const PR_MAX = Math.min(window.devicePixelRatio || 1, isTouch ? 1.25 : LOW ? 1 : 1.5);
-let PR = PR_MAX;   // drops by itself if frames run slow (see frame())
+// graphics: a preset for this kind of machine (gfx.js), or what the visitor chose; see the Graphics tab
+const { G, det: GPU } = loadGfx(renderer, isTouch, QS);
+const LITE = G.detail === 'lite';
+let PR_MAX = Math.min(window.devicePixelRatio || 1, G.res);
+let PR = PR_MAX;   // drops by itself if frames run slow, when G.adaptive (see frame())
+let slowT = 1 / 60, prAt = 0, fpsS = 60, fpsAt = 0, showFps = QS.has('fps');
 // the settings drawer's values (see SETTINGS below); most are remembered between visits
 const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
@@ -40,7 +45,7 @@ try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (co
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
 let hands = null, drawer = null, streamPts = null, rateLbl = r => String(r);   // set up with the settings drawer, further down
-const MSAA = isTouch || LOW ? 0 : QS.has('msaa') ? Math.max(0, parseInt(QS.get('msaa')) || 0) : 4;
+let MSAA = G.msaa;
 renderer.setPixelRatio(PR);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -134,7 +139,7 @@ float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
 const MOON = 'vec3(0.030,0.040,0.072)';
 
 // ------------------------------------------------------------------ light-map canvas (pools of light on the ground)
-const LM = isTouch ? 1024 : 2048;
+const LM = LITE ? 1024 : 2048;
 const lmCanvas = document.createElement('canvas'); lmCanvas.width = lmCanvas.height = LM;
 const lm = lmCanvas.getContext('2d'); lm.fillStyle = '#000'; lm.fillRect(0, 0, LM, LM);
 lm.globalCompositeOperation = 'lighter';
@@ -559,12 +564,12 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 
 // ------------------------------------------------------------------ the garden itself
 scene.fog = new THREE.FogExp2(0x000000, U.uFogDensity.value);
-const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, isTouch, low: LOW, grassScale: parseFloat(QS.get('grass')) || 1 });
+const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, low: LITE, grassScale: G.grass, reflScale: G.refl });
 // your own body: a cel-shaded hard suit you see when you look down, and that casts your shadow
 const body = assets.models.astronaut ? createBody({ model: assets.models.astronaut, U, COMMON }) : null;
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
-sunLight.castShadow = true; sunLight.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
+sunLight.castShadow = true; sunLight.shadow.mapSize.set(G.shadow, G.shadow);
 Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
 sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.024;
 scene.add(sunLight, sunLight.target);
@@ -603,7 +608,7 @@ curated.forEach(([x, y, z, k], i) => makeVoid(x, y, z, i, k));
 const GIANT = 1; voidSlots[GIANT].giant = true;   // the great one, above the grand fountain
 
 {
-  const counts = Array.from({ length: MAXV }, (_, i) => i === GIANT ? (isTouch ? 1500 : 3200) : 400), N = counts.reduce((a, b) => a + b, 0), seeds = new Float32Array(N * 4), vid = new Float32Array(N);
+  const counts = Array.from({ length: MAXV }, (_, i) => i === GIANT ? (LITE ? 1500 : 3200) : 400), N = counts.reduce((a, b) => a + b, 0), seeds = new Float32Array(N * 4), vid = new Float32Array(N);
   for (let i = 0, slot = 0, left = counts[0]; i < N; i++) { while (left === 0) left = counts[++slot]; seeds.set([rng(), rng(), rng(), rng()], i * 4); vid[i] = slot; left--; }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
@@ -617,7 +622,7 @@ const diskTilt = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRota
 U.uDiskPos = { value: new THREE.Vector3(0, 12.5, 0) }; U.uDiskGlow = { value: new THREE.Vector3() };
 const diskU = { uGiant: { value: new THREE.Vector4(0, 12.5, 0, 1) }, uGW: { value: 0.4 }, uTilt: { value: diskTilt } };
 {
-  const N = isTouch ? 6000 : 16000, sd = new Float32Array(N * 4);
+  const N = LITE ? 6000 : 16000, sd = new Float32Array(N * 4);
   for (let i = 0; i < N; i++) sd.set([rng(), rng(), rng(), rng()], i * 4);
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 4));
   const mat = new THREE.ShaderMaterial({
@@ -663,7 +668,7 @@ function makeRT() {
 }
 makeRT();
 // ambient occlusion from the depth buffer alone (half resolution): darkens creases, the foot of walls, the inside of hedges and borders
-const AO_ON = !isTouch && !LOW && QS.get('ao') !== '0';
+
 const FS_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
 const aoMat = new THREE.ShaderMaterial({
   uniforms: { tDepth: { value: rt.depthTexture }, uTexel: { value: new THREE.Vector2() }, uProj: { value: new THREE.Vector2() }, uNear: { value: camera.near }, uFar: { value: camera.far } },
@@ -699,8 +704,8 @@ const aoBlurMat = new THREE.ShaderMaterial({
 });
 const aoQuad = new FullScreenQuad(aoMat), aoBlurQuad = new FullScreenQuad(aoBlurMat);
 function renderAO() {
-  lensMat.uniforms.uAO.value = AO_ON && S.ao ? 0.85 : 0;
-  if (!AO_ON || !S.ao) return;
+  lensMat.uniforms.uAO.value = G.ao ? 0.85 : 0;
+  if (!G.ao) return;
   const th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
   aoMat.uniforms.uProj.value.set(th * camera.aspect, th); aoMat.uniforms.uTexel.value.set(1 / aoRT.width, 1 / aoRT.height); aoBlurMat.uniforms.uTexel.value.copy(aoMat.uniforms.uTexel.value);
   aoMat.uniforms.tDepth.value = rt.depthTexture;
@@ -720,11 +725,10 @@ function deflectionLUT(N = 512) {
   const t = new THREE.DataTexture(data, N, 1, THREE.RedFormat, THREE.HalfFloatType); t.minFilter = t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
 }
 // what lies beyond the frame: a small cube map round the walker, one face refreshed every other frame while a void is awake
-const ENV_ON = !isTouch && !LOW && QS.get('env') !== '0';
-const cubeRT = new THREE.WebGLCubeRenderTarget(ENV_ON ? 384 : 4, { type: THREE.HalfFloatType, generateMipmaps: false });
+const cubeRT = new THREE.WebGLCubeRenderTarget(LITE ? 256 : 384, { type: THREE.HalfFloatType, generateMipmaps: false });
 const cubeCam = new THREE.CubeCamera(0.3, 600, cubeRT); let cubeFace = 0, cubeReady = false, cubeTick = 0;
 function renderEnv(needed) {
-  if (!ENV_ON || !needed) return;
+  if (!G.env || !needed) return;
   const px0 = U.uPx.value; U.uPx.value = 192; garden.grass.visible = false; cubeCam.position.copy(camera.position);
   const bodyOn = body && body.root.visible; if (bodyOn) body.root.visible = false;   // the probe sits inside your head
   if (!cubeReady) { cubeCam.update(renderer, scene); cubeReady = true; }
@@ -733,7 +737,7 @@ function renderEnv(needed) {
 }
 const lensMat = new THREE.ShaderMaterial({
   uniforms: {
-    tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture }, tAO: { value: aoRT2.texture }, uAO: { value: AO_ON ? 0.85 : 0 },
+    tScene: { value: rt.texture }, tDepth: { value: rt.depthTexture }, tAO: { value: aoRT2.texture }, uAO: { value: G.ao ? 0.85 : 0 },
     tDefl: { value: deflectionLUT() }, tEnv: { value: cubeRT.texture }, uEnvOn: { value: 0 }, uProj: { value: new THREE.Vector2(1, 1) }, uCamRot: { value: new THREE.Matrix3() },
     uGiant: { value: -1 }, uGiantW: { value: 0 }, uBend: { value: 1 }, uDiskN: { value: new THREE.Vector3(0, 1, 0) }, uDiskCol: { value: new THREE.Vector3(1, 0.7, 0.4) }, uTime: U.uTime,
     uLens: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
@@ -1137,7 +1141,7 @@ refreshTimeUI(); setInterval(refreshTimeUI, 15000); refreshSeasonUI();
 const WX = { cloud: S.clouds, over: 0, wind: S.wind, gusts: S.gusts, dirX: 0.8, dirZ: 0.6, rain: 0, snow: 0, fog: 0, ground: 0 };
 let LIVE = null, wxErr = '', wxAt = -1e9, wxBusy = false, snowAcc = S.snowGround, wetAcc = 0, wxKey = '';
 const IMPERIAL = /^en-US/i.test(navigator.language || '');
-const precip = createPrecip({ U, COMMON, count: LOW ? 4500 : 9000 }); scene.add(precip.group);
+const precip = createPrecip({ U, COMMON, count: 13500 }); precip.setDensity(G.precip / 1.5); scene.add(precip.group);
 function weatherTarget() {
   if (S.weather === 'live' && LIVE) return weatherToScene(LIVE);
   const wet = Math.max(S.rain, S.snow);
@@ -1273,9 +1277,30 @@ const SETTINGS = [
   { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.cloud : S.clouds, set: v => { takeWeather(); S.clouds = v; save(); } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
-  { id: 'ao', tab: 'light', group: 'Quality', label: 'Ambient occlusion', kind: 'toggle', get: () => S.ao, set: v => { S.ao = v; save(); } },
-  { id: 'scale', tab: 'light', label: 'Render resolution', kind: 'range', min: 0.5, max: 1, step: 0.05, fmt: fmtPct, get: () => S.scale, set: v => { S.scale = v; save(); applyScale(); },
-    note: 'lower it if the garden runs slowly; it also lowers by itself if frames drop' },
+  { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
+  { id: 'gfxPreset', tab: 'gfx', label: 'Preset', kind: 'choice', options: ['auto', 'phone', 'laptop', 'desktop', 'ultra', 'custom'].map(v => ({ label: v, value: v })),
+    get: () => G.preset, set: setPreset, note: 'auto picks from your GPU; any change below makes it custom' },
+  { id: 'gfxFps', tab: 'gfx', label: 'Show frame rate', kind: 'toggle', get: () => showFps, set: v => { showFps = v; if (!v) $('title').textContent = 'GARDEN OF DELIGHT'; }, note: 'also F' },
+  { id: 'scale', tab: 'gfx', group: 'Speed', label: 'Render resolution', kind: 'range', min: 0.5, max: 2, step: 0.05, fmt: v => `×${v.toFixed(2)}` + (v > (window.devicePixelRatio || 1) ? ` (screen is ×${(window.devicePixelRatio || 1).toFixed(2)})` : ''),
+    get: () => G.res, set: v => gset('res', v), note: 'pixels per screen point; the biggest single cost' },
+  { id: 'gfxAdaptive', tab: 'gfx', label: 'Lower it when slow', kind: 'toggle', get: () => G.adaptive, set: v => gset('adaptive', v), note: 'drops resolution while frames run slow, raises it again when there is room' },
+  { id: 'gfxCap', tab: 'gfx', label: 'Frame rate limit', kind: 'choice', options: [{ label: 'none', value: 0 }, { label: '60', value: 60 }, { label: '30', value: 30 }], get: () => G.fpsCap, set: v => gset('fpsCap', v),
+    note: '30 is steadier on a phone and saves battery' },
+  { id: 'gfxMsaa', tab: 'gfx', group: 'Image', label: 'Antialiasing', kind: 'choice', options: [{ label: 'off', value: 0 }, { label: '2×', value: 2 }, { label: '4×', value: 4 }, { label: '8×', value: 8 }].filter(o => o.value <= (renderer.capabilities.maxSamples || 0)),
+    get: () => G.msaa, set: v => gset('msaa', v), note: 'smooths edges, leaf edges especially' },
+  { id: 'gfxShadow', tab: 'gfx', label: 'Shadow detail', kind: 'choice', options: [1024, 2048, 4096, 8192].filter(v => v <= renderer.capabilities.maxTextureSize).map(v => ({ label: v / 1024 + 'K', value: v })),
+    get: () => G.shadow, set: v => gset('shadow', v) },
+  { id: 'ao', tab: 'gfx', label: 'Ambient occlusion', kind: 'toggle', get: () => G.ao, set: v => gset('ao', v), note: 'soft darkening in creases and under hedges' },
+  { id: 'gfxBloom', tab: 'gfx', label: 'Glow', kind: 'toggle', get: () => G.bloom, set: v => gset('bloom', v), note: 'the halo round lights; strength is under Light' },
+  { id: 'gfxRefl', tab: 'gfx', label: 'Water reflections', kind: 'range', min: 0.2, max: 1, step: 0.05, fmt: fmtPct, get: () => G.refl, set: v => gset('refl', v), note: 'resolution of the pools’ and canal’s mirror' },
+  { id: 'gfxEnv', tab: 'gfx', label: 'Lensing all round', kind: 'toggle', get: () => G.env, set: v => gset('env', v),
+    note: 'near an awake void, render the garden behind you too, so bent light from off-screen is right; off, it is guessed from the screen' },
+  { id: 'gfxPrecip', tab: 'gfx', label: 'Rain and snow', kind: 'range', min: 0.2, max: 1.5, step: 0.05, fmt: fmtPct, get: () => G.precip, set: v => gset('precip', v), note: 'how many drops and flakes' },
+  { id: 'gfxDetail', tab: 'gfx', group: 'Garden (on reload)', label: 'Planting detail', kind: 'choice', options: [{ label: 'lite', value: 'lite' }, { label: 'full', value: 'full' }], get: () => G.detail, set: v => gset('detail', v),
+    note: 'leaves, sprigs, ivy, ground cover and fountain spray' },
+  { id: 'gfxGrass', tab: 'gfx', label: 'Grass', kind: 'range', min: 0.3, max: 1.5, step: 0.05, fmt: fmtPct, get: () => G.grass, set: v => gset('grass', v), note: 'blades on the lawns' },
+  { id: 'gfxPending', tab: 'gfx', label: '', kind: 'info', get: () => gfxPending(G).length ? `${gfxPending(G).map(k => k === 'detail' ? 'planting detail' : k).join(' and ')} will change when the page reloads` : 'the garden is built at these settings' },
+  { id: 'gfxReload', tab: 'gfx', label: 'Reload now', kind: 'action', set: () => location.reload() },
 ];
 function setPlace(lat, lon, name = '') { S.lat = Math.max(-90, Math.min(90, lat)); S.lon = ((lon + 540) % 360) - 180; S.place = name; save(); for (const id of ['lat', 'lon', 'skyInfo', 'hour']) drawer && drawer.sync(id); refreshTimeUI(); pullWeather(); }
 function useMyLocation() {
@@ -1299,7 +1324,29 @@ function makeItNow() {
 }
 function jumpToDoy(target) { const cur = ((calDoy() % 365) + 365) % 365; let dd = target - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; if (Math.abs(dd) < 1e-3) return;
   gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); }
-function applyScale() { PR = PR_MAX * S.scale; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); }
+function applyScale() { PR_MAX = Math.min(window.devicePixelRatio || 1, G.res); PR = PR_MAX; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); }
+// graphics settings: each applies at once, except planting detail and grass (gfx.js RELOAD)
+function applyGfx(k) {
+  if (!k || k === 'res') applyScale();
+  if (!k || k === 'msaa') { MSAA = G.msaa; onResize(); }
+  if (!k || k === 'shadow') { const sh = sunLight.shadow; sh.mapSize.set(G.shadow, G.shadow); if (sh.map) { sh.map.dispose(); sh.map = null; } }
+  if (!k || k === 'refl') garden.setReflScale(G.refl);
+  if (!k || k === 'bloom') bloom.enabled = G.bloom;
+  if (!k || k === 'precip') precip.setDensity(G.precip / 1.5);
+  if (!k || k === 'env') cubeReady = false;
+  if (!k || k === 'adaptive') prAt = 0;
+}
+function gset(k, v) { G[k] = v; G.preset = 'custom'; saveGfx(G); applyGfx(k); for (const id of ['gfxPreset', 'gfxPending']) drawer && drawer.sync(id); }
+function setPreset(p) {
+  if (p === 'custom') return;
+  Object.assign(G, PRESETS[p === 'auto' ? GPU.preset : p], { preset: p });
+  G.msaa = Math.min(G.msaa, renderer.capabilities.maxSamples || 0); G.shadow = Math.min(G.shadow, renderer.capabilities.maxTextureSize || 4096);
+  saveGfx(G); applyGfx();
+  for (const c of SETTINGS) if (c.tab === 'gfx') drawer && drawer.sync(c.id);
+  if (gfxPending(G).length) setHint('some of this preset changes how the garden is built · reload to see it all', 6000);
+}
+function gfxSummary() { return `GPU: ${GPU.gpu}
+looks like: ${GPU.preset}${G.preset === 'auto' ? ' (in use)' : ''} · now ${bufW}×${bufH}${showFps ? ` · ${Math.round(fpsS)} fps` : ''}`; }
 // Invisible Hands: the controls marked `hands` can be moved from another app or the console, and the garden publishes a few readings back
 const IH = globalThis.InvisibleHands;
 try {
@@ -1317,7 +1364,7 @@ try {
 for (const c of SETTINGS) if (c.hands && hands) c.onHand = () => hands.recenter(c.id);
 const handsIcon = size => { try { return IH.icon({ size }); } catch (e) { return null; } };
 drawer = createDrawer({
-  tabs: [{ id: 'garden', label: 'Garden' }, { id: 'voids', label: 'Voids' }, { id: 'light', label: 'Light' },
+  tabs: [{ id: 'garden', label: 'Garden' }, { id: 'voids', label: 'Voids' }, { id: 'light', label: 'Light' }, { id: 'gfx', label: 'Graphics' },
     { id: 'hands', label: 'Hands', icon: handsIcon(12), intro: 'Invisible Hands lets another app, or the console on a phone, move this garden’s controls over the internet, and read its light and clocks back. Controls with the mark can be moved. Start a room, then open the console with the same room.' }],
   controls: SETTINGS, tag: hands ? id => hands.tag(id) : null,
   onOpenChange: open => { if (open && document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1330,7 +1377,7 @@ $('bSettings').addEventListener('click', e => { e.stopPropagation(); drawer.togg
 { const b = $('bHands'), ic = handsIcon(12); if (ic) b.prepend(ic); b.addEventListener('click', e => { e.stopPropagation(); drawer.toggle('hands'); }); if (!hands) b.style.display = 'none'; }
 addEventListener('keydown', e => { if (e.code === 'KeyO') drawer.toggle(); if (e.code === 'Escape' && drawer.isOpen) drawer.close(); });
 document.addEventListener('keydown', e => { const t = e.target; if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !/^(range|button|checkbox)$/.test(t.type)))) e.stopPropagation(); });   // typing a room code doesn't walk you about
-if (S.scale !== 1) applyScale();
+applyGfx();
 
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
@@ -1477,9 +1524,10 @@ function update(dt, t) {
   }
 }
 
-let slowT = 1 / 60, prAt = 0, fpsS = 60, fpsAt = 0, showFps = QS.has('fps');
-addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; } });
+addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
+let lastDraw = 0;
 function frame() {
+  if (G.fpsCap) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
   const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
   applyTimeOfDay();
@@ -1491,7 +1539,7 @@ function frame() {
   garden.preRender(camera, bufW, bufH);
   if (body) body.pass('eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
-    renderEnv(need); lensMat.uniforms.uEnvOn.value = ENV_ON && cubeReady && need ? 1 : 0; }
+    renderEnv(need); lensMat.uniforms.uEnvOn.value = G.env && cubeReady && need ? 1 : 0; }
   renderer.shadowMap.needsUpdate = true; precip.group.visible = true;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
   renderAO();
@@ -1500,8 +1548,14 @@ function frame() {
   fpsS = fpsS * 0.94 + 0.06 / Math.max(rawDt, 1e-3);
   if (showFps && t - fpsAt > 0.5) { fpsAt = t; $('title').textContent = `GARDEN OF DELIGHT · ${Math.round(fpsS)} fps · ${bufW}×${bufH}`; }
   // adaptive resolution: if frames run slow for a while, render fewer pixels (never under test)
-  if (started && !TEST) { slowT = slowT * 0.97 + rawDt * 0.03; if (t - prAt > 2.5 && slowT > 1 / 40 && PR > 0.7) { PR = Math.max(0.7, PR * 0.86); prAt = t; slowT = 1 / 60;
-    renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); } } else prAt = t + 3;
+  // (and raise it again, up to the chosen resolution, once there is room; with a frame-rate limit only lowering is judged)
+  if (started && !TEST && G.adaptive) { slowT = slowT * 0.97 + rawDt * 0.03;
+    const slow = G.fpsCap ? 1.3 / G.fpsCap : 1 / 40, floor = Math.min(PR_MAX, 0.6);
+    let np = PR;
+    if (t - prAt > 2.5 && slowT > slow && PR > floor) np = Math.max(floor, PR * 0.86);
+    else if (!G.fpsCap && t - prAt > 8 && slowT < 1 / 57 && PR < PR_MAX) np = Math.min(PR_MAX, PR / 0.9);
+    if (np !== PR) { PR = np; prAt = t; slowT = np < PR ? 1 / 60 : slowT; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); drawer && drawer.isOpen && drawer.sync('gfxInfo'); } }
+  else prAt = t + 3;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -1514,6 +1568,6 @@ window.__umbra = { // debug handle
     refreshSeasonUI(); refreshTimeUI();
   },
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
-  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX,
+  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU,
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
   get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

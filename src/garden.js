@@ -333,13 +333,13 @@ function worldUV(geo, k = 1) { const p = geo.attributes.position, n = geo.attrib
   return geo; }
 
 // ======================================================================= the garden
-export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], lanterns = [], isTouch, low = false, grassScale = 1 }) {
+export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], lanterns = [], low = false, grassScale = 1, reflScale: reflScale0 = 0.5 }) {
   const P = makePatcher(U, COMMON), TX = assets.tex;
   console.log('[garden] GPU texture units per shader: ' + renderer.capabilities.maxTextures);
   const rng = PlantArt.rngOf(1969);
   const rr = (a, b) => a + (b - a) * rng();
   const pick = a => a[Math.floor(rng() * a.length)];
-  const lite = isTouch || low;
+  const lite = low;   // 'lite' detail: fewer leaves, sprigs, plants and grass, smaller masks and atlases (gfx.js)
   const DETAIL = lite ? 0.3 : 0.46, LS = lite ? 1.45 : 1.38;
   const { B, ring } = layout;
   const A2C = renderer.capabilities.isWebGL2 && !lite;
@@ -827,7 +827,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const foamT = texOf(foamC, renderer); foamT.repeat.set(6, 1);
   const foamMat = P.std({ map: foamT, transparent: true, depthWrite: false, roughness: 0.4 }, { key: 'foam' });
   // planar reflection, shared by every water surface (all at WATER_Y)
-  const reflScale = lite ? 0.3 : 0.5;
+  let reflScale = reflScale0;
   const reflRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
   const reflCam = new THREE.PerspectiveCamera();
   const ripples = Array.from({ length: 6 }, () => new THREE.Vector4());
@@ -1362,5 +1362,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass };
+  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; } };
 }

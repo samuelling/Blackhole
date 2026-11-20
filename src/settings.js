@@ -49,6 +49,7 @@ const CSS = `
 #gdDrawer .tog.on, #gdDrawer .seg button.on { color:#14110c; background:var(--ink, #e9e4da); border-color:var(--ink, #e9e4da); }
 #gdDrawer .act:hover, #gdDrawer .tog:hover, #gdDrawer .seg button:hover { border-color:rgba(233,228,218,.45); }
 #gdDrawer .seg { display:flex; gap:4px; }
+#gdDrawer .row.wide { grid-template-columns:1fr; } #gdDrawer .row.wide .seg { flex-wrap:wrap; }   /* many choices: label above, buttons wrap */
 #gdDrawer .num { width:110px; background:rgba(233,228,218,.06); border:1px solid rgba(233,228,218,.2); border-radius:6px; color:var(--ink, #e9e4da); font:inherit; padding:5px 8px; text-align:right; }
 #gdDrawer .row output.sub { grid-column:1 / -1; text-align:left; font-size:9px; color:var(--faint, #7d786f); }
 #gdDrawer .row.info { display:block; }
@@ -95,7 +96,7 @@ export function createDrawer({ tabs, controls, tag = null, onOpenChange = () => 
       b.addEventListener('click', () => { c.set(!c.get()); sync(c.id); c.onHand && c.onHand(); });
       row.append(b); r.btn = b;
     } else if (c.kind === 'choice') {
-      const seg = document.createElement('div'); seg.className = 'seg'; r.opts = [];
+      const seg = document.createElement('div'); seg.className = 'seg'; r.opts = []; if (c.options.length > 4) row.classList.add('wide');
       for (const o of c.options) { const b = document.createElement('button'); b.textContent = o.label; b.addEventListener('click', () => { c.set(o.value); sync(c.id); c.onHand && c.onHand(); }); seg.append(b); r.opts.push([o.value, b]); }
       row.append(seg);
     } else if (c.kind === 'number') {

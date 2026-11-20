@@ -115,5 +115,5 @@ void main(){
     if (snow.visible) { offS.x = (offS.x + wx * 0.8 * dt) % 26; offS.z = (offS.z + wz * 0.8 * dt) % 26; fallS = (fallS + 1.5 * dt) % 280;
       snowMat.uniforms.uOff.value.copy(offS); snowMat.uniforms.uFall.value = fallS; snowMat.uniforms.uAmount.value = snowAmt; }
   }
-  return { group, update };
+  return { group, update, setDensity: k => { geo.instanceCount = Math.max(200, Math.min(count, Math.round(count * k))); } };
 }
