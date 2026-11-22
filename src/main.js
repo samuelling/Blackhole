@@ -9,7 +9,8 @@ import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js'
 import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
-import { fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
+import { SPECIES as LEAF_SPECIES } from './senescence.js';
+import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
@@ -39,8 +40,8 @@ let slowT = 1 / 60, prAt = 0, fpsS = 60, fpsAt = 0, showFps = QS.has('fps');
 const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
-  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0 };
-const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround'];
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0, autumnTemp: 0, autumnSun: 0.55, autumnRain: 1, autumnFrost: false };
+const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -223,14 +224,18 @@ for (const m of meadows) {
 // ------------------------------------------------------------------ trees wrapped in light
 const trunks = [];
 const treeSpecs = [];
-function tree(x, z, kind, c1, c2, big = 1) {
-  const h = rr(2.5, 3.4) * big, s = rr(0.95, 1.35) * big;
+function tree(x, z, kind, c1, c2, big = 1, sp = null) {
+  const h = rr(2.5, 3.4) * big, s = rr(0.95, 1.35) * big * (kind === 'birch' ? 0.7 : 1);
   trunks.push({ x, z, h, s });
-  const cy = h + rr(1.4, 2.0) * big, A = rr(2.9, 3.6) * big, B = rr(2.1, 2.7) * big;
-  const spec = { x, z, h, s, cy, A, B, kind, strands: [] }; treeSpecs.push(spec);
+  const tall = kind === 'birch' ? 1.35 : kind === 'cone' ? 1.45 : 1, wide = kind === 'birch' ? 0.66 : kind === 'cone' ? 0.72 : 1;   // a birch and a spire are narrower and taller than a lime
+  const cy = h + rr(1.4, 2.0) * big * tall, A = rr(2.9, 3.6) * big * wide, B = rr(2.1, 2.7) * big * tall;
+  const spec = { x, z, h, s, cy, A, B, kind, sp, strands: [] }; treeSpecs.push(spec);
   const dir = () => { const v = new THREE.Vector3(rr(-1, 1), rr(-1, 1), rr(-1, 1)); return v.lengthSq() > 1 || v.lengthSq() < 1e-4 ? dir() : v.normalize(); };
-  if (kind === 'round') {
-    for (let i = 0; i < 300; i++) {
+  if (kind === 'cone') {            // a spire: lights strung round it, closing to the tip
+    for (let i = 0; i < 200; i++) { const f = Math.pow(rng(), 0.8), a = rng() * Math.PI * 2, r = A * (1 - 0.86 * f) * (0.86 + 0.2 * rng());
+      light(x + Math.cos(a) * r, cy - B + 0.3 + f * 2 * B * 0.97, z + Math.sin(a) * r, jit(rng() < 0.82 ? c1 : c2, .08), 0.25, 1.45); }
+  } else if (kind !== 'weep') {
+    for (let i = 0; i < (kind === 'round' ? 300 : 210); i++) {
       const d = dir(), k = 0.78 + 0.26 * rng();
       light(x + d.x * A * k, cy + d.y * B * k, z + d.z * A * k, jit(rng() < 0.82 ? c1 : c2, .08), 0.25, 1.45);
     }
@@ -257,7 +262,7 @@ function tree(x, z, kind, c1, c2, big = 1) {
 }
 {
   const pals = [[P.warm, P.gold], [P.green, P.cyan], [P.cyan, P.ice], [P.violet, P.rose], [P.magenta, P.violet], [P.gold, P.amber]];
-  layout.trees.forEach((t, i) => tree(t.x, t.z, t.kind, pals[i % pals.length][0], pals[i % pals.length][1], t.kind === 'weep' ? 0.92 : 1));
+  layout.trees.forEach((t, i) => tree(t.x, t.z, t.kind, pals[i % pals.length][0], pals[i % pals.length][1], t.kind === 'weep' ? 0.92 : 1, t.sp));
 }
 
 // ------------------------------------------------------------------ globe lawn, and globes tucked into the borders
@@ -1162,6 +1167,7 @@ function stepWeather(dt, t) {
 function pullWeather(force) {
   if (wxBusy || (!force && S.weather !== 'live')) return;
   wxBusy = true; wxAt = performance.now(); const key = S.lat.toFixed(2) + ',' + S.lon.toFixed(2);
+  if (histKey !== key) { histKey = key; fetchHistory(S.lat, S.lon).then(h => { REAL_DAYS = h; applyAutumn(); }, () => { REAL_DAYS = null; }); }   // the real autumn so far, for the leaves
   fetchWeather(S.lat, S.lon).then(w => { const first = !LIVE || wxKey !== key; LIVE = w; wxKey = key; wxErr = ''; snowAcc = Math.max(snowAcc, weatherToScene(w).ground);
     if (first && S.weather === 'live') setHint(`${S.place || 'here'}: ${describeWeather(w, IMPERIAL)}`, 7000); },
     e => { LIVE = null; wxErr = (e && e.message) || 'no answer'; })
@@ -1275,6 +1281,14 @@ const SETTINGS = [
   { id: 'bloom', tab: 'light', label: 'Glow', kind: 'range', min: 0, max: 2, hands: true, fmt: fmtPct, get: () => S.bloom, set: v => { S.bloom = v; save(); } },
   { id: 'fog', tab: 'light', label: 'Haze', kind: 'range', min: 0, max: 3, fmt: fmtPct, get: () => S.fog, set: v => { S.fog = v; save(); } },
   { id: 'clouds', tab: 'light', label: 'Cloud', kind: 'range', min: 0, max: 1, hands: true, fmt: fmtPct, get: () => S.weather === 'live' && LIVE ? WX.cloud : S.clouds, set: v => { takeWeather(); S.clouds = v; save(); } },
+  { id: 'autumnInfo', tab: 'garden', group: 'Autumn', label: '', kind: 'info', get: autumnSummary },
+  { id: 'autumnTemp', tab: 'garden', label: 'Autumn temperature', kind: 'range', min: -4, max: 4, step: 0.5, fmt: v => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(1) + ' °C', get: () => S.autumnTemp, set: v => { S.autumnTemp = v; save(); applyAutumn(); },
+    note: 'a warm autumn fills the trees’ cold tally slowly: colour comes later and lasts longer' },
+  { id: 'autumnSun', tab: 'garden', label: 'Sunshine', kind: 'range', min: 0.05, max: 1, step: 0.05, fmt: v => Math.round(100 * (1 - (0.78 - 0.56 * v))) + '% clear sky', get: () => S.autumnSun, set: v => { S.autumnSun = v; save(); applyAutumn(); },
+    note: 'bright days make the sugar that reds are built from' },
+  { id: 'autumnRain', tab: 'garden', label: 'Rainfall', kind: 'range', min: 0.6, max: 1.8, step: 0.05, fmt: fmtPct, get: () => S.autumnRain, set: v => { S.autumnRain = v; save(); applyAutumn(); },
+    note: 'a dry spell sharpens the reds; drought browns leaves and drops them early' },
+  { id: 'autumnFrost', tab: 'garden', label: 'Early hard frost', kind: 'toggle', get: () => S.autumnFrost, set: v => { S.autumnFrost = v; save(); applyAutumn(); }, note: 'the first week of October: leaves are killed green and brown where they hang' },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
@@ -1321,6 +1335,20 @@ function makeItNow() {
   const n = new Date(); jumpToDoy((n - new Date(n.getFullYear(), 0, 1)) / 86400000);
   S.seasonRate = REAL_TIME; S.weather = 'live'; save(); setTimeMode('live'); pullWeather(true); refreshSeasonUI(); syncWeather(); for (const id of ['realTime', 'timeMode', 'hour']) drawer && drawer.sync(id);
   setHint('the garden is now: today’s date, this hour’s sky, the weather outside', 6000);
+}
+// ------------------------------------------------------------------ autumn: the year's weather for the leaf model
+// Each garden year (counted from leaf-out) gets its own weather; with live weather on, the real days so far at this place are laid over it.
+let REAL_DAYS = null, histKey = '', leafYear = null;
+function applyAutumn() {
+  const y = Math.floor((calDoy() - 95) / 365); leafYear = y;
+  garden.setAutumn({ tOffset: S.autumnTemp, sun: S.autumnSun, rain: S.autumnRain, frost: S.autumnFrost, lat: S.lat, seed: 7 + 13 * y }, S.weather === 'live' && y === 0 ? REAL_DAYS : null);
+  drawer && drawer.sync('autumnInfo');
+}
+function autumnSummary() {
+  const A = garden.autumn(); if (!A) return '';
+  const lab = d => d >= 9999 ? 'holds on' : doyLabel(d - 1), short = { lime: 'lime', willow: 'willow', rubrum: 'red maple', saccharum: 'sugar maple', liquidambar: 'sweetgum', papyrifera: 'birch', rubra: 'red oak', biloba: 'ginkgo' };
+  const rows = LEAF_SPECIES.map((sp, i) => [A.stats[i].peak, `${short[sp.id]} ${lab(A.stats[i].peak)} → ${lab(A.stats[i].bare)}`]).sort((a, b) => a[0] - b[0]).map(r => r[1]);
+  return `this year, colour at its height → bare:\n${rows.slice(0, 4).join(' · ')}\n${rows.slice(4).join(' · ')}` + (A.W.real ? `\nfrom ${A.W.real} real days at ${S.place || 'this place'}, then a typical year` : '');
 }
 function jumpToDoy(target) { const cur = ((calDoy() % 365) + 365) % 365; let dd = target - cur; if (dd > 182) dd -= 365; if (dd < -182) dd += 365; if (Math.abs(dd) < 1e-3) return;
   gardenDays += dd; yourDays += dd; garden.seasons.jump(dd); refreshSeasonUI(); refreshTimeUI(); }
@@ -1377,7 +1405,7 @@ $('bSettings').addEventListener('click', e => { e.stopPropagation(); drawer.togg
 { const b = $('bHands'), ic = handsIcon(12); if (ic) b.prepend(ic); b.addEventListener('click', e => { e.stopPropagation(); drawer.toggle('hands'); }); if (!hands) b.style.display = 'none'; }
 addEventListener('keydown', e => { if (e.code === 'KeyO') drawer.toggle(); if (e.code === 'Escape' && drawer.isOpen) drawer.close(); });
 document.addEventListener('keydown', e => { const t = e.target; if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !/^(range|button|checkbox)$/.test(t.type)))) e.stopPropagation(); });   // typing a room code doesn't walk you about
-applyGfx();
+applyGfx(); applyAutumn();
 
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
@@ -1478,7 +1506,7 @@ function update(dt, t) {
   playerF = dilJS(camera.position.x, camera.position.y, camera.position.z); U.uPlayerF.value = playerF;
   { const rate = S.seasonRate, dCal = dt * rate / playerF;
     if (rate > 0) { gardenDays += dCal; yourDays += dt * rate; garden.seasons.advance(dCal, S.properTime ? dilJS : () => 1); }
-    garden.setLawnSeason(calDoy());
+    garden.setLawnSeason(calDoy()); if (Math.floor((calDoy() - 95) / 365) !== leafYear) applyAutumn();
     if (rate > 0 && (t * 4 | 0) !== ((t - dt) * 4 | 0)) { refreshSeasonUI(); }
     const gap = gardenDays - yourDays, show = playerF < 0.985 || gap > 0.5, el = $('dil');
     el.style.opacity = show ? 1 : 0;
@@ -1568,6 +1596,6 @@ window.__umbra = { // debug handle
     refreshSeasonUI(); refreshTimeUI();
   },
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
-  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU,
+  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
   get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };

@@ -38,9 +38,9 @@ function bloomEnd(k) { const L = BLOOM[k] || []; return L.length ? M0 + MD * (Ma
 // d: day of year in the plant's own time (0 = 1 Jan); age: years since planting
 export function plantState(k, d, age, out) {
   const mature = Math.min(1, 0.4 + 0.6 * age / 2.5);
-  if (k === 'tree') {   // deciduous: leaf-out in spring, colour in October, fall in November
-    const leaf = sm(95, 128, d) * (1 - sm(304, 326, d));
-    out[0] = leaf; out[1] = 0; out[2] = d < 160 ? -0.55 * (1 - sm(118, 160, d)) : sm(268, 305, d) * 0.85; out[3] = 0; return out;
+  if (k === 'tree') {   // deciduous: leaf-out in spring. Autumn colour and leaf fall are the pigment model's, leaf by leaf (senescence.js);
+    // through the winter the scale stays 1 so the leaves an oak holds on to can show. The garden overwrites out[1] and out[3] with the day and species.
+    out[0] = d < 95 ? 1 : sm(95, 128, d); out[1] = 0; out[2] = d >= 95 && d < 160 ? -0.4 * (1 - sm(118, 160, d)) : 0; out[3] = 0; return out;
   }
   const e0 = EARLY.has(k) ? 62 : LATE.has(k) ? 98 : 80;
   let leaf, tint, fl = bloomAt(k, d), ftint = 0;

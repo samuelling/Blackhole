@@ -39,6 +39,23 @@ export async function fetchWeather(lat, lon) {
     return normalize(await r.json());
   } finally { if (to) clearTimeout(to); }
 }
+/** The last three months of real days at a place, for the leaf model: { [day of year]: { tmin, tmax, rain (mm), sun (0..1 of the possible sunshine) } } */
+export async function fetchHistory(lat, lon) {
+  const q = `latitude=${lat.toFixed(2)}&longitude=${lon.toFixed(2)}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration,daylight_duration&past_days=92&forecast_days=1&timezone=auto`;
+  const r = await fetch('https://api.open-meteo.com/v1/forecast?' + q); if (!r.ok) throw new Error('the weather service answered ' + r.status);
+  return historyDays(await r.json(), new Date().getFullYear());
+}
+export function historyDays(j, year) {
+  const d = (j && j.daily) || {}, out = {}, T = d.time || [];
+  for (let i = 0; i < T.length; i++) {
+    const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(T[i] || ''); if (!m || +m[1] !== year) continue;
+    const doy = Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(+m[1], 0, 0)) / 86400000);
+    const tmax = d.temperature_2m_max && d.temperature_2m_max[i], tmin = d.temperature_2m_min && d.temperature_2m_min[i]; if (typeof tmax !== 'number' || typeof tmin !== 'number') continue;
+    const sun = d.sunshine_duration && d.daylight_duration && d.daylight_duration[i] > 0 ? Math.min(1, d.sunshine_duration[i] / d.daylight_duration[i]) : NaN;
+    out[doy] = { tmin, tmax, rain: num(d.precipitation_sum && d.precipitation_sum[i], NaN), sun };
+  }
+  return out;
+}
 const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 /** One line for people: "38°F · light rain · wind 11 mph from the NW, gusts 20" */
 export function describe(w, imperial) {

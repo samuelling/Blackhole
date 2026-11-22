@@ -56,6 +56,20 @@ Star positions, magnitudes and colours: the Hipparcos catalogue via d3-celestial
 - **Graphics:** presets and every quality setting (see below).
 - **Hands:** Invisible Hands. Start or join a room and another app, or the console on a phone (https://samuelling.github.io/InvisibleHands/console/), can move 20 of the controls (season speed, day of the year, garden age, wind, gusts, pull, exact clocks, void size, light eaten, lensing, disk, streams, open a void, evaporate the nearest, hour, exhibit lights, moonlight, exposure, glow, cloud), each marked with the Invisible Hands tag. The garden publishes four readings back: the light where you stand, your clock rate, how near a void is, and how awake the great void is. Your location is never shared.
 
+## Autumn
+
+The trees turn and drop their leaves by the pigment model from [Turning Grove](https://claude.ai/artifact/4EFFv4EkuWYdEv33kaUP1Z) (`src/senescence.js`), leaf by leaf.
+
+- **Onset** follows Delpierre et al. (2009): once daylength falls below a species' threshold, cold-degree-days accumulate until a critical sum is reached; drought adds to it, and the day length comes from the latitude set in the Light tab.
+- **Colour** is four pigments per leaf: chlorophyll is dismantled (faster in cold bright weather), carotenoids are unmasked, anthocyanin is built from sugar trapped by bright days and cold nights, tannins brown the dying leaf. The colour drawn is the light those pigments let back out (Beer-Lambert), so a half-turned maple leaf is orange because red sits over a yellowing blade.
+- **Every leaf is its own**: each bough's sun exposure is the sky visibility baked in Blender, so the outside of a crown turns first and reddest; each leaf on a twig card has its own identity (`trees_atlas_m`), turning and falling on its own day; within a leaf the tissue along the veins runs about a week behind the margins.
+- **Fall**: an abscission layer forms as the green goes; rain and frost finish it. Leaves come down through the air shaped and coloured like the tree they left, drift with the wind, are pulled toward an awake void, and gather as litter under the crowns, on the paths and afloat on the pools and canal. The litter browns, and is gone by spring. Red oak holds a fifth of its leaves, brown, through the winter; ginkgo lets go all at once after the first hard frost.
+- **Species**: small-leaved lime and weeping willow (the garden's original trees, with new parameters), plus red maple, sweetgum, paper birch and ginkgo planted in the garden, and sugar maple and red oak with them in the belt beyond the wall. In an ordinary year at 42°N colour peaks from about 10 October (red maple) to mid-November (ginkgo, willow).
+- **Weather**: each garden year gets its own generated weather. Garden tab → Autumn has autumn temperature, sunshine, rainfall and an early hard frost, with this year's dates per species. With live weather on, the last three months of real days at your place (Open-Meteo) are laid over the generated year for the first garden year. A tree near a void runs on its own slower clock, so it turns late.
+- Parameters are illustrative (tuned to typical timing), not fitted to data. Chlorophyll's green absorbance is higher than Turning Grove's, so summer leaves reflect about 15% in the green as real ones do.
+
+Leaf cards are drawn by `tools/build_leafcards.py` from botanical outlines (Turning Grove's six shapes plus lime and willow); `tools/blender/build_trees.py` now grows six forms (two limes, willow, birch, oak, and a spire for ginkgo and sweetgum).
+
 ## Graphics
 
 The **Graphics** tab picks a preset for the kind of machine it is running on, from the GPU's name where the browser reports it: **phone**, **laptop** (integrated graphics), **desktop** (a discrete GPU or an Apple Pro/Max/Ultra chip) or **ultra**. *Auto* shows what it guessed; any change makes it *custom*, remembered between visits. `?gfx=phone` (etc.) tries a preset for one visit without saving it.

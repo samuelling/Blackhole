@@ -8,6 +8,8 @@ import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 import { plantState, flagsFor, lawnTint } from './seasons.js';
+import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
+import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -45,7 +47,10 @@ export function makeLayout() {
   const meadow = { x: -13, z: 37.5, r: 5.6 };
   const meadows = [meadow, { x: -14.5, z: -16.5, r: 4.4 }];
   const globeLawn = { x: 13, z: 37.5, r: 5.0 };
-  const trees = [{ x: -13, z: 22.5, kind: 'round' }, { x: 13, z: 22.5, kind: 'round' }, { x: -23.4, z: -27.4, kind: 'weep' }, { x: 23.4, z: -27.4, kind: 'weep' }, { x: -14.5, z: -16.5, kind: 'round' }, { x: 14.5, z: -16.5, kind: 'round' }];
+  const trees = [{ x: -13, z: 22.5, kind: 'round', sp: 'lime' }, { x: 13, z: 22.5, kind: 'round', sp: 'lime' }, { x: -23.4, z: -27.4, kind: 'weep', sp: 'willow' }, { x: 23.4, z: -27.4, kind: 'weep', sp: 'willow' },
+    { x: -14.5, z: -16.5, kind: 'round', sp: 'lime' }, { x: 14.5, z: -16.5, kind: 'round', sp: 'lime' },
+    // from Turning Grove: a red maple and a sweetgum on the north lawns, a paper birch in the prairie, a ginkgo by the globes
+    { x: 6.5, z: -20.5, kind: 'round', sp: 'rubrum' }, { x: -6.5, z: -20.5, kind: 'cone', sp: 'liquidambar' }, { x: -16.2, z: 41, kind: 'birch', sp: 'papyrifera' }, { x: 16.4, z: 41.2, kind: 'cone', sp: 'biloba' }];
   const lamps = [[-22.9, 40], [-22.9, 14], [-22.9, -12], [22.9, 28], [22.9, 4], [22.9, -20], [-9, -26.9], [9, -26.9], [-11, 50.9], [11, 50.9]];
   const arches = [[-21, 27, 0, 1], [-21, -8, 0, 1], [21, 16, 0, 1], [21, -8, 0, 1], [0, -17, 0, 1]];   // x, z, tangent
   const bench = { x: 0, z: -28.0 };
@@ -64,7 +69,7 @@ export function makeLayout() {
 
 // ======================================================================= assets
 export const PBR_SETS = ['gravel_floor', 'sparse_grass', 'yellow_flower_mulch', 'cobblestone_square', 'castle_brick_02_red', 'white_plaster_02', 'bark_brown_02'];
-const CARDS = ['leaf_atlas', 'card_yew', 'card_box', 'card_lime', 'card_cover', 'card_ivy'];
+const CARDS = ['leaf_atlas', 'card_yew', 'card_box', 'card_lime', 'card_cover', 'card_ivy', 'trees_atlas'];
 const MODELS = ['street_lamp_01', 'large_iron_gate', 'painted_wooden_bench', 'concrete_cat_statue'];
 // Models are glTF saved as .json with the buffer embedded as base64 (tools/gltf_embed.py). The buffer is unpacked here and
 // handed to GLTFLoader as an in-memory GLB, so nothing but same-origin fetches is needed (data: URLs are often blocked).
@@ -81,7 +86,7 @@ export async function loadModel(url) {
 }
 export async function loadAssets(renderer, onProgress = () => {}) {
   const base = new URL('../assets/', import.meta.url).href, tl = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 1 + MODELS.length + 4;
+  let done = 0; const total = PBR_SETS.length * 3 + CARDS.length * 2 + 2 + MODELS.length + 4;
   const tick = () => onProgress(++done / total);
   const T = (file, srgb, repeat) => new Promise((res, rej) => tl.load(base + 'tex/' + file + '.webp', t => {
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; tick(); res(t); }, undefined, () => rej(new Error('could not load ' + file))));
@@ -89,6 +94,7 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   for (const s of PBR_SETS) { tex[s] = {}; for (const [m, srgb] of [['diff', true], ['nor', false], ['arm', false]]) jobs.push(T(`${s}_${m}`, srgb, true).then(t => { tex[s][m] = t; })); }
   for (const c of CARDS) { jobs.push(T(c, true, false).then(t => { tex[c] = t; })); jobs.push(T(c + '_n', false, false).then(t => { tex[c + '_n'] = t; })); }
   jobs.push(T('waternormals', false, true).then(t => { tex.waternormals = t; }));
+  jobs.push(T('trees_atlas_m', false, false).then(t => { tex.trees_atlas_m = t; }));   // which leaf, turn order, wood (tools/build_leafcards.py)
   for (const m of MODELS) jobs.push(loadModel(`${base}models/${m}/${m}.json`).then(sc => { models[m] = sc; tick(); }, () => { throw new Error('could not load ' + m); }));
   // stonework modelled in Blender (tools/blender/build_stone.py); the garden falls back to simple turned shapes without it
   jobs.push(loadModel(base + 'models/stone.json').then(sc => { models.stone = sc; tick(); }, () => tick()));
@@ -1054,12 +1060,20 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       instanced(propParts.lantern_metal, metalMat, Ms); instanced(propParts.lantern_glass, mat, Ms, lanterns.map(l => new THREE.Color(l[2][0] * 1.5, l[2][1] * 1.5, l[2][2] * 1.5))).castShadow = false; }
   }
 
-  // ---------------------------------------------------------------- trees: limbs as tapered tubes with scanned bark, canopies of scanned lime branchlets
+  // ---------------------------------------------------------------- trees: limbs fused in Blender with scanned bark; canopies of leafy twigs, a species each
+  const TREES = [], treeSp = {};
+  const BELT = [[-33, 44, 4.6, 'saccharum'], [-34, 18, 5.2, 'rubra'], [-33.5, -9, 4.4, 'lime'], [-31, -36, 5.4, 'rubrum'], [-8, -38, 4.8, 'saccharum'], [14, -37.5, 5.6, 'rubra'], [32, -33, 4.6, 'liquidambar'],
+    [34, -6, 5.2, 'papyrifera'], [33.5, 22, 4.6, 'saccharum'], [32.5, 47, 5.4, 'biloba'], [-16, 61, 4.4, 'rubrum'], [17, 61.5, 5.0, 'lime']];
   {
     const BK = TX.bark_brown_02;
     const barkMat = P.std({ map: BK.diff, normalMap: BK.nor, aoMap: BK.arm, roughnessMap: BK.arm, roughness: 1, normalScale: new THREE.Vector2(1.3, 1.3) }, { sway: 0.02, swayH: 9, key: 'bark' });
-    const leafM = P.std(cut({ map: TX.card_lime, normalMap: TX.card_lime_n, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.62, envMapIntensity: 0.45 }), { sway: 0.1, swayH: 6, translucent: true, key: 'lime', grow: true, part: 'leaf', puff: true });
-    const leafD = P.depth(TX.card_lime, { sway: 0.1, swayH: 6, key: 'lime', grow: true, part: 'leaf' });
+    // every species' twig is a cell of one atlas; each leaf on it is coloured, and dropped, by the pigment model (senescence.js, leaves.js)
+    U.uLeafAux = { value: TX.trees_atlas_m };
+    const leafM = P.std(cut({ map: TX.trees_atlas, normalMap: TX.trees_atlas_n, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.62, envMapIntensity: 0.45 }),
+      { sway: 0.1, swayH: 6, translucent: true, key: 'treeleaf', grow: true, part: 'leaf', puff: true, atlas: true, extra: sh => patchCanopy(sh, U, false) });
+    const leafD = P.depth(TX.trees_atlas, { sway: 0.1, swayH: 6, key: 'treeleaf', grow: true, part: 'leaf', atlas: true, extra: sh => patchCanopy(sh, U, true) });
+    const spOf = T => SP_INDEX[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')];
+    const addTree = (T, pid, inside) => { TREES.push({ x: T.x, z: T.z, A: T.A, B: T.B, cy: T.cy, sp: spOf(T), pid, inside }); treeSp[pid] = spOf(T); };
     const pos = [], uvs = [], idx = [], cards = [];
     const limb = (pts, r0, r1, flare = 0, sides = 10) => {   // pts: V3[]; a smooth tube along a Catmull-Rom curve
       const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'), len = curve.getLength(), n = Math.max(3, Math.ceil(len / (r0 > 0.08 ? 0.3 : 0.22))), base = pos.length / 3;
@@ -1081,7 +1095,8 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       const tpid = registerPlant('tree', T.x, 0, T.z, T.x, T.cy, T.z);
       const trunk = limb([new V3(T.x, -0.2, T.z), new V3(T.x + R(-0.06, 0.06), T.h * 0.35, T.z + R(-0.06, 0.06)), new V3(T.x + R(-0.12, 0.12), T.h * 0.7, T.z + R(-0.12, 0.12)), top], r0, r0 * 0.6, 1.5, 14);
       block(T.x, T.z, r0 + 0.32); aoBlob(T.x, T.z, 1.1, 0.6); aoBlob(T.x, T.z, T.A * 1.25, 0.26);
-      const leafAt = (p, dir, s, c = R(0.82, 1.14)) => cards.push({ p: p.clone(), dir: dir.clone(), s, pid: tpid, c });
+      addTree(T, tpid, layout.inWalls(T.x, T.z));
+      const leafAt = (p, dir, s, c = R(0.82, 1.14)) => cards.push({ p: p.clone(), dir: dir.clone(), s, pid: tpid, c, sp: spOf(T), e: Math.min(1, Math.max(0, (c - 0.4) / 0.7)) });
       const nP = 6 + Math.floor(tr() * 3);
       for (let k = 0; k < nP; k++) {
         const th = k / nP * TAU + R(-0.35, 0.35), el = T.kind === 'weep' ? R(0.2, 0.7) : R(-0.1, 0.75), t0 = k === 0 ? 1 : R(0.55, 0.98);
@@ -1111,7 +1126,8 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       }
     };
     // --- trees from Blender: three variants, each a fused trunk-and-limb mesh plus a few thousand boughs with baked sky shading
-    const TV = {}, VAR = ['tree_round_a', 'tree_round_b', 'tree_weep'];
+    const TV = {}, VAR = ['tree_round_a', 'tree_round_b', 'tree_weep', 'tree_birch', 'tree_oak', 'tree_cone'];
+    const NOM = { tree_round_a: [3.25, 7.0], tree_round_b: [3.25, 7.0], tree_weep: [3.25, 7.0], tree_birch: [2.1, 8.1], tree_oak: [4.0, 6.8], tree_cone: [2.5, 8.2] };   // each form's crown radius and top (build_trees.py)
     if (assets.models.trees) assets.models.trees.traverse(o => { if (!o.isMesh) return; const m = /^(tree_.+)_(wood|leaves)$/.exec(o.name); if (m) (TV[m[1]] = TV[m[1]] || {})[m[2]] = o.geometry; });
     const blender = VAR.every(k => TV[k] && TV[k].wood && TV[k].leaves && TV[k].leaves.index && TV[k].leaves.attributes.uv), vCards = {}, woodM = {};
     const cardsOf = g => {   // each bough is a quad in the file; recover its frame (base, across, along) so it can be instanced
@@ -1122,35 +1138,39 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
         const base = bl.clone().add(br).multiplyScalar(0.5), x = br.clone().sub(bl), y = tl.clone().add(tr).multiplyScalar(0.5).sub(base), z = new V3().crossVectors(x, y).normalize().multiplyScalar(x.length());
         out.push({ m: new THREE.Matrix4().makeBasis(x, y, z).setPosition(base), c: Ca ? Ca.getX(ids[0]) : 1 }); }
       return out; };
-    if (blender) for (const k of VAR) { vCards[k] = cardsOf(TV[k].leaves); woodM[k] = []; }
+    const woodC = {};
+    if (blender) for (const k of VAR) { vCards[k] = cardsOf(TV[k].leaves); woodM[k] = []; woodC[k] = []; }
     const plantTree = (T, thin) => {
       const tpid = registerPlant('tree', T.x, 0, T.z, T.x, T.cy, T.z), r0 = 0.15 * T.s + 0.07;
       block(T.x, T.z, r0 + 0.32); aoBlob(T.x, T.z, 1.1, 0.6); aoBlob(T.x, T.z, T.A * 1.25, 0.26);
-      const k = T.kind === 'weep' ? VAR[2] : VAR[ihash(Math.floor(T.x * 7), Math.floor(T.z * 7), 3) < 0.5 ? 0 : 1];
-      const sxz = T.A / 3.25, M = new THREE.Matrix4().compose(new V3(T.x, 0, T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / 7.0, sxz));
-      woodM[k].push(M);
-      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: M.clone().multiply(c.m), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: thin > 1 ? 1.3 : 1 }); });
+      const k = T.kind === 'weep' ? VAR[2] : T.kind === 'birch' ? VAR[3] : T.kind === 'oak' ? VAR[4] : T.kind === 'cone' ? VAR[5] : VAR[ihash(Math.floor(T.x * 7), Math.floor(T.z * 7), 3) < 0.5 ? 0 : 1];
+      const sxz = T.A / NOM[k][0], M = new THREE.Matrix4().compose(new V3(T.x, 0, T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / NOM[k][1], sxz));
+      woodM[k].push(M); woodC[k].push(HABIT[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')].bark); addTree(T, tpid, layout.inWalls(T.x, T.z));
+      // how much sky a bough sees (baked in Blender) is how sunlit its leaves are: the outside of the crown turns first and reddest
+      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: M.clone().multiply(c.m), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: thin > 1 ? 1.3 : 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
     };
     if (blender) {
       const thin = lite ? 2 : 1;
       for (const T of treeSpecs) plantTree(T, thin);
-      for (const [x, z, A] of [[-33, 44, 4.6], [-34, 18, 5.2], [-33.5, -9, 4.4], [-31, -36, 5.4], [-8, -38, 4.8], [14, -37.5, 5.6], [32, -33, 4.6], [34, -6, 5.2], [33.5, 22, 4.6], [32.5, 47, 5.4], [-16, 61, 4.4], [17, 61.5, 5.0]]) {
-        const h = rr(3.4, 4.6); plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round' }, thin * 2); }
+      // the borrowed landscape beyond the wall: bigger trees of the grove's species, so the skyline turns over six weeks
+      for (const [x, z, A, sp] of BELT) { const kind = HABIT[sp].kind, h = rr(3.4, 4.6), tall = kind === 'cone' || kind === 'birch' ? 1.5 : kind === 'oak' ? 0.8 : 1, wide = kind === 'cone' || kind === 'birch' ? 0.7 : kind === 'oak' ? 1.12 : 1;
+        plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, thin * 2); }
       const barkT = P.std({ map: BK.diff, normalMap: BK.nor, roughness: 1, vertexColors: true, color: new THREE.Color(1.25, 1.2, 1.15) }, { tri: { arm: BK.arm, scale: 0.9, moss: 0.4 }, sway: 0.02, swayH: 9, key: 'barkT' });
-      for (const k of VAR) { if (!woodM[k].length) continue; const im = new THREE.InstancedMesh(TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => im.setMatrixAt(i, M)); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
+      const bc = new THREE.Color();
+      for (const k of VAR) { if (!woodM[k].length) continue; const im = new THREE.InstancedMesh(TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => { im.setMatrixAt(i, M); im.setColorAt(i, bc.setRGB(...woodC[k][i])); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
     } else
     for (const T of treeSpecs) growTree(T, lite ? 0.55 : 1);
     // a belt of trees beyond the wall
-    const outer = [[-33, 44, 4.6], [-34, 18, 5.2], [-33.5, -9, 4.4], [-31, -36, 5.4], [-8, -38, 4.8], [14, -37.5, 5.6], [32, -33, 4.6], [34, -6, 5.2], [33.5, 22, 4.6], [32.5, 47, 5.4], [-16, 61, 4.4], [17, 61.5, 5.0]];
-    if (!blender) for (const [x, z, A] of outer) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round' }, lite ? 0.3 : 0.5); }
+    if (!blender) for (const [x, z, A, sp] of BELT) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round', sp }, lite ? 0.3 : 0.5); }
     const wood = new THREE.BufferGeometry(); wood.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); wood.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); wood.setIndex(idx); wood.computeVertexNormals();
     if (idx.length) { const wm = new THREE.Mesh(wood, barkMat); wm.castShadow = wm.receiveShadow = true; wm.frustumCulled = false; scene.add(wm); }
     const g = cardGeo.clone(); g.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(cards.map(c => c.pid)), 1));
+    g.setAttribute('aRect', new THREE.InstancedBufferAttribute(Float32Array.from(cards.flatMap(c => twigRect(c.sp))), 4)); g.setAttribute('aLeaf', new THREE.InstancedBufferAttribute(Float32Array.from(cards.flatMap(c => [c.e, rng()])), 2));
     const im = new THREE.InstancedMesh(g, leafM, cards.length), m = new THREE.Matrix4(), q = new Q(), s = new V3(), yv = new V3(), zv = new V3(), xv = new V3(), bm = new THREE.Matrix4(), col = new THREE.Color();
     cards.forEach((c, i) => {
-      if (c.M) { im.setMatrixAt(i, c.s === 1 ? c.M : m.copy(c.M).scale(s.setScalar(c.s))); im.setColorAt(i, col.setRGB(c.c * rr(0.92, 1.05), c.c, c.c * rr(0.84, 1.0))); return; }
+      if (c.M) { im.setMatrixAt(i, c.s === 1 ? c.M : m.copy(c.M).scale(s.setScalar(c.s))); im.setColorAt(i, col.setRGB(c.c, c.c, c.c)); return; }
       yv.copy(c.dir); zv.set(rr(-0.5, 0.5), 1, rr(-0.5, 0.5)); zv.addScaledVector(yv, -zv.dot(yv)); if (zv.lengthSq() < 1e-4) zv.set(1, 0, 0); zv.normalize(); xv.crossVectors(yv, zv);
-      bm.makeBasis(xv, yv, zv); q.setFromRotationMatrix(bm); s.setScalar(c.s); m.compose(c.p, q, s); im.setMatrixAt(i, m); im.setColorAt(i, col.setRGB(c.c * rr(0.9, 1.05), c.c, c.c * rr(0.82, 1.0)));
+      bm.makeBasis(xv, yv, zv); q.setFromRotationMatrix(bm); s.setScalar(c.s); m.compose(c.p, q, s); im.setMatrixAt(i, m); im.setColorAt(i, col.setRGB(c.c, c.c, c.c));
     });
     im.customDepthMaterial = leafD; im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im);
     console.log(`[garden] trees: ${blender ? 'Blender variants' : 'procedural'}, ${cards.length} boughs`);
@@ -1316,10 +1336,19 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   const st = [0, 0, 0, 0], DOY0 = 165;   // the garden opens on 14 June
   function writeStates() {
     for (let i = 0; i < NP; i++) { const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, age = baseAge + (PT.tau[i] - PT.planted[i]) / 365;
-      plantState(PT.k[i], d, age, st); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3]; }
+      plantState(PT.k[i], d, age, st); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3];
+      if (treeSp[i] !== undefined) { ps[i * 4 + 1] = d; ps[i * 4 + 3] = treeSp[i]; } }   // a tree's leaves read its own day and species (leaves.js)
     texS.needsUpdate = true;
+    leafFall.update(T => ((DOY0 + PT.tau[T.pid]) % 365 + 365) % 365);
   }
-  writeStates();
+  // the year's leaf model: a table of every leaf class's pigments by day, and each species' fall
+  const leafTab = new THREE.DataTexture(new Uint8Array((ND + 1) * SPECIES.length * NC * 4), ND + 1, SPECIES.length * NC, THREE.RGBAFormat, THREE.UnsignedByteType);
+  leafTab.magFilter = leafTab.minFilter = THREE.NearestFilter; leafTab.generateMipmaps = false; leafTab.needsUpdate = true; U.uLeafTab = { value: leafTab };
+  const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite }); scene.add(leafFall.group);
+  let autumn = null;
+  function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }
+  console.log(`[garden] leaves: ${TREES.length} trees, ${leafFall.count.litter} litter, ${leafFall.count.falling} falling`);
+  setAutumn({});
   const seasons = {
     count: NP, DOY0,
     advance(dDays, dil) { if (dDays !== 0) for (let i = 0; i < NP; i++) PT.tau[i] += dDays * dil(PT.x[i], PT.y[i] + 0.4, PT.z[i]); writeStates(); },
@@ -1362,5 +1391,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; } };
+  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
 }
