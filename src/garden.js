@@ -440,6 +440,7 @@ float wS = smoothstep(0.36, 0.6, gm.g + nz * 0.2) * (1.0 - wG) * (1.0 - wP);
 float wL = max(0.0, 1.0 - wG - wS - wP);
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
+if (length(gq - vec2(0.0, 12.0)) > 106.2) discard;   // the field stops at the bubble's skin
 float fld = fieldF(gq);               // beyond the wall line the lawn runs out into field
 float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;

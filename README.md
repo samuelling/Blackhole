@@ -6,6 +6,7 @@ Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger vo
 
 **Play:** open `index.html` (or the GitHub Pages site).
 
+- **Space view (Z, or the button):** the camera leaves your eyes, passes out through the bubble's skin and takes up an orbit outside it. From there the bubble is a soap-film sphere with the garden and its wood inside, the earth it rests on filling the lower part, and dust streaming past from the nebula it is heading for. Drag circles it, the wheel or a pinch comes nearer; left alone the view drifts round. Z again brings you back.
 - Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound. The **pull** slider sets how hard the voids tug on you (0–150%). **F** shows the frame rate and render resolution.
 - Time of day: the pill at bottom right toggles **night** (default) ↔ **live** (the real sky right now: your clock and today's date; also **T**), and its slider scrubs to any hour on the garden's own calendar date. The sun is placed by a solar-position calculation (≈42°N, longitude from your time zone), with day sky, clouds, twilight and stars. In daylight the voids carve pockets of night out of the day.
 - Touch: drag the left half to walk, the right half to look, double-tap (or the button) to open a void.

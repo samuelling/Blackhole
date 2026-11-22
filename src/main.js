@@ -10,7 +10,7 @@ import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
-import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble } from './field.js';
+import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView } from './field.js';
 import { createWalling } from './walling.js';
 import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
@@ -24,7 +24,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · B build the wall · S season speed · R replant · T night / live · M sound · F frame rate';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate';
 
 let renderer;
 try {
@@ -96,6 +96,7 @@ const U = {
   uCloud: { value: 0.35 }, uLimit: { value: 5.5 }, uMoonDir: { value: new THREE.Vector3(0, 0.5, -0.8) }, uGalN: { value: new THREE.Vector3(0, 1, 0) }, uGalC: { value: new THREE.Vector3(0, 0, 1) }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
   uSnowCover: { value: 0 }, uRainWet: { value: 0 }, uOver: { value: 0 },
+  uOut: { value: 0 },   // 0 inside the bubble, 1 in the space view
   uHead: { value: new THREE.Vector3(-0.42, 0.52, -0.74).normalize() },   // where the bubble is travelling: the nebula lies that way   // weather: snow lying, wet from rain, overcast
 };
 
@@ -466,14 +467,14 @@ const CLOUD_GLSL = `
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
       float broken = smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22);
       return max(broken, uOver * (0.86 + 0.14*fbm(p*0.6))) * smoothstep(0.012, 0.14, d.y); }   // uOver: a solid deck, for rain, snow and fog`;
-let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
+let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null, spaceView = null, skyObj = null;
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead, uOut: U.uOut },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
-    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF; uniform float uTime; uniform vec3 uMoonDir, uGalN, uGalC; uniform float uLimit;
+    uniform vec3 uSunDir; uniform float uDay; uniform float uTwi; uniform float uNoSun; uniform float uPlayerF; uniform float uTime; uniform vec3 uMoonDir, uGalN, uGalC; uniform float uLimit; uniform float uOut;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
@@ -489,17 +490,18 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
       c += spaceAt(d, uTime);                                   // beyond the bubble: the nebula we are making for, and dust going by
       float band = exp(-pow(dot(d, uGalN), 2.0)*22.0) * (0.55 + 0.9*pow(max(dot(d, uGalC), 0.0), 3.0)) * smoothstep(3.0, 6.0, uLimit);   // the Milky Way, along the true galactic plane, brightest toward Sagittarius
       float n = vn(d.xy*9.0)*0.6 + vn(d.zy*23.0)*0.4;
-      c += vec3(0.018,0.02,0.03) * band * n * smoothstep(-0.05, 0.2, d.y);
+      c += vec3(0.018,0.02,0.03) * band * n * mix(smoothstep(-0.05, 0.2, d.y), 1.0, uOut);
       // the bubble holds only a little air: by day it glows blue near the rim and thins to deep indigo overhead, where space still shows
       vec3 dayc = mix(vec3(0.30,0.43,0.68), vec3(0.012,0.035,0.14), smoothstep(0.0, 0.42, d.y));
       dayc *= smoothstep(-0.16, 0.0, d.y);                     // below the rim there is no air: you look straight out into space
-      c = c * mix(1.0, 2.3, uDay * smoothstep(0.08, 0.5, d.y)) + dayc * uDay;
+      float inAir = 1.0 - uOut;                                 // out in space there is no air: no blue, no dusk glow, no cloud
+      c = c * mix(1.0, 2.3, uDay * smoothstep(0.08, 0.5, d.y) * inAir) * (1.0 + 0.8 * uOut) + dayc * uDay * inAir;
       float sd = max(dot(d, uSunDir), 0.0), low = 1.0 - smoothstep(-0.05, 0.45, d.y);
-      c += (vec3(1.0,0.42,0.16)*pow(sd, 4.0) + vec3(0.32,0.16,0.30)*0.5) * low * uTwi;
+      c += (vec3(1.0,0.42,0.16)*pow(sd, 4.0) + vec3(0.32,0.16,0.30)*0.5) * low * uTwi * inAir;
       float up = smoothstep(-0.03, 0.02, uSunDir.y);
-      c += vec3(1.0,0.9,0.75) * (pow(sd, 1400.0)*40.0*(1.0 - uNoSun) + pow(sd, 14.0)*0.35*uDay + pow(sd, 3.0)*0.08*uDay) * up;
+      c += vec3(1.0,0.9,0.75) * (pow(sd, 1400.0)*40.0*(1.0 - uNoSun) + (pow(sd, 14.0)*0.35 + pow(sd, 3.0)*0.08)*uDay*mix(1.0, 0.25, uOut)) * up;
       { // broken cloud: lit and self-shadowed from the sun (or faintly by the moon), warm underneath at dusk
-        float cl = cloudAt(d, uTime);
+        float cl = cloudAt(d, uTime) * inAir;
         if (cl > 0.0) { vec3 Ld = uSunDir.y > -0.05 ? uSunDir : uMoonDir;
           float sh = cloudAt(normalize(d + Ld*0.07), uTime), lit = 1.0 - 0.6*sh;
           vec3 cd = mix(vec3(0.5, 0.55, 0.63), vec3(1.0, 0.98, 0.95), lit) * (0.75 + 0.5*pow(sd, 3.0));
@@ -512,9 +514,10 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
     }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
-  sky.renderOrder = -2; scene.add(sky);
+  sky.renderOrder = -2; scene.add(sky); skyObj = sky;
   scene.add(createBubble(U));   // the skin of the bubble the field travels in (field.js)
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead };
+  spaceView = createSpaceView(U); scene.add(spaceView.group);
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead, uOut: U.uOut };
 
   // the real night sky: 5,000 catalogue stars to magnitude 6, plus the five naked-eye planets (the last five entries),
   // laid out on the celestial sphere and turned each frame to the time and place (see updateSky)
@@ -532,8 +535,8 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
   g.setAttribute('aMag', new THREE.BufferAttribute(mag, 1)); g.setAttribute('aSeed', new THREE.BufferAttribute(sd, 1)); g.setAttribute('aTw', new THREE.BufferAttribute(tw, 1));
   starsGeo = g;
   const stars = new THREE.Points(g, new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud, uOver: U.uOver, uLimit: U.uLimit }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; uniform float uLimit; attribute vec3 aColor; attribute float aMag; attribute float aSeed; attribute float aTw; varying vec3 vC;
+    uniforms: { uTime: U.uTime, uPR: starPR, uStarGain: U.uStarGain, uCloud: U.uCloud, uOver: U.uOver, uLimit: U.uLimit, uOut: U.uOut }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `uniform float uTime; uniform float uPR; uniform float uStarGain; uniform float uLimit; uniform float uOut; attribute vec3 aColor; attribute float aMag; attribute float aSeed; attribute float aTw; varying vec3 vC;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
     float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }` + CLOUD_GLSL + `
@@ -543,7 +546,7 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
         float m = aMag + 0.22 * (X - 1.0);                                     // ...and is dimmed by it (extinction)
         float flux = pow(10.0, -0.4 * (m - 1.0));                              // brightness relative to a first-magnitude star
         float tw = 1.0 + aTw * (0.18 + 0.25 * min(X, 6.0) / 6.0) * sin(uTime * (7.0 + aSeed * 9.0) + aSeed * 90.0);   // twinkling, worst low down
-        vC = aColor * min(pow(flux, 0.6), 4.0) * 2.6 * tw *   /* the eye's response is closer to flux^0.6 than to flux */ smoothstep(uLimit + 0.4, uLimit - 0.6, m) * smoothstep(-0.02, 0.04, w.y) * uStarGain * (1.0 - 0.94*cloudAt(w, uTime));
+        vC = aColor * min(pow(flux, 0.6), 4.0) * 2.6 * tw *   /* the eye's response is closer to flux^0.6 than to flux */ smoothstep(uLimit + 0.4, uLimit - 0.6, m) * mix(smoothstep(-0.02, 0.04, w.y) * uStarGain * (1.0 - 0.94*cloudAt(w, uTime)), 1.0, uOut);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = (1.6 + 2.2 * clamp((3.5 - m) / 5.0, 0.0, 1.3)) * uPR;
       }`,
@@ -940,6 +943,7 @@ function setSound(on) {
 // ------------------------------------------------------------------ controls
 const player = new THREE.Vector3(layout.start.x, 1.65, layout.start.z);
 let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
+let spaceOn = false, spaceT = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 290, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
 const keys = new Set();
 const grav = new THREE.Vector3();
 addEventListener('keydown', e => {
@@ -960,7 +964,8 @@ const wallKey = (e, down) => {
   e.preventDefault(); e.stopImmediatePropagation();
 };
 addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyup', e => wallKey(e, false), true);
-addEventListener('wheel', e => { if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
+addEventListener('wheel', e => { if (started && spaceOn && !(drawer && drawer.isOpen)) { orbit.dist = Math.max(150, Math.min(620, orbit.dist * Math.exp(e.deltaY * 0.0012))); orbit.idle = 0; e.preventDefault(); return; }
+  if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
 function beginStint() {
   if (walling.busy) { setHint('you have a stint open already · P puts it away, Enter twice finishes it', 5000); return; }
   const st = walling.nearest(player.x, player.z);
@@ -969,11 +974,12 @@ function beginStint() {
   walling.start(st);
 }
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (walling.busy && walling.onDown(e.button)) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (walling.busy && walling.onDown(e.button)) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
+  if (spaceOn) { if (document.pointerLockElement === canvas || mouseDown) orbitBy(e.movementX, e.movementY); return; }
   if (document.pointerLockElement === canvas || mouseDown) {
     yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022; pitch = Math.max(-1.45, Math.min(1.35, pitch));
   }
@@ -988,6 +994,10 @@ canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
     const o = touches.get(t.identifier); if (!o) continue;
+    if (spaceOn) {   // out in space: one finger turns the view round the bubble, two pinch nearer or farther
+      if (touches.size >= 2) { const [a, b] = [...touches.values()], d0 = Math.hypot(a.x - b.x, a.y - b.y); o.x = t.clientX; o.y = t.clientY; const d1 = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d0 > 8 && d1 > 8) orbit.dist = Math.max(150, Math.min(620, orbit.dist * d0 / d1)); orbit.idle = 0; continue; }
+      orbitBy((t.clientX - o.x) * 2.2, (t.clientY - o.y) * 2.2); o.x = t.clientX; o.y = t.clientY; continue; }
     if (o.type === 'look') { yaw -= (t.clientX - o.x) * 0.0055; pitch -= (t.clientY - o.y) * 0.0055; pitch = Math.max(-1.45, Math.min(1.35, pitch)); }
     o.x = t.clientX; o.y = t.clientY;
   }
@@ -997,9 +1007,9 @@ const endTouch = e => {
     const o = touches.get(t.identifier);
     if (o) {
       const quick = performance.now() - o.t0 < 260 && Math.hypot(o.x - o.x0, o.y - o.y0) < 14, now = performance.now();
-      const hit = quick ? pickVoid(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1)) : null;
+      const hit = quick && !spaceOn ? pickVoid(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1)) : null;
       if (hit) { collapseVoid(hit); lastTap = 0; }
-      else if (quick) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
+      else if (quick && !spaceOn) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
     }
     touches.delete(t.identifier);
   }
@@ -1325,6 +1335,8 @@ const SETTINGS = [
   { id: 'wallPause', tab: 'wall', label: 'Put this stint away', kind: 'action', set: () => walling.pause() },
   { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
   { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
+  { id: 'spaceView', tab: 'garden', group: 'You', label: 'Space view', kind: 'toggle', hands: true, get: () => spaceOn, set: v => { if (v) drawer.close(); setSpaceView(v); },
+    note: 'step outside the bubble and watch it go (Z). Drag circles it, the wheel or a pinch comes nearer' },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
@@ -1455,7 +1467,7 @@ function update(dt, t) {
   // movement
   const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)), r = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
   let mx = 0, mz = 0;
-  if (started) {
+  if (started && !spaceOn) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) mz += 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
@@ -1525,10 +1537,13 @@ function update(dt, t) {
   const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
   player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
-  camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
+  camera.fov = 70 + 7 * near;
+  stepSpaceView(dt, groundY + 1.65 + bob);
+  camera.updateProjectionMatrix();
   if (body) body.setInk(0.0027 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));   // ink lines a constant width on screen
   camera.updateMatrixWorld();
   stepWalling(dt, t);
+  if (skyObj) skyObj.position.copy(camera.position);   // the sky is at infinity: it goes where the eye goes, out into space included
   if (SKY) {   // the celestial sphere and the moon travel with you, so they sit at infinity
     starsObj.matrix.copy(_skyM).setPosition(camera.position); starsObj.matrixWorldNeedsUpdate = true; U.uLimit.value = S.limit;
     const r = 420 * Math.tan(SKY.moonRadius) * S.moonSize;
@@ -1602,14 +1617,15 @@ function frame() {
   applyTimeOfDay();
   if (!started) { yaw = Math.sin(t * 0.07) * 0.12; pitch = 0.04 + Math.sin(t * 0.05) * 0.02; }
   update(dt, t);
-  garden.update(dt, t, camera);
+  { const e = U.uOut.value; if (e > 0) { U.uFogDensity.value *= 1 - 0.95 * e; scene.fog.density = U.uFogDensity.value; } }   // no mist between you and the bubble
+  garden.update(dt, t, U.uOut.value > 0 ? spaceAnchor : camera);   // seen from outside, the grass and the planting's detail stay centred on you
   precip.group.visible = false;      // rain and snow are drawn for the eye only, not for the water's mirror or the lens probe
   if (body) body.pass('mirror');   // a view from outside sees your helmet; you, inside it, don't
   garden.preRender(camera, bufW, bufH);
-  if (body) body.pass('eye');
+  if (body) body.pass(U.uOut.value > 0.03 ? 'mirror' : 'eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = G.env && cubeReady && need ? 1 : 0; }
-  renderer.shadowMap.needsUpdate = true; precip.group.visible = true;
+  renderer.shadowMap.needsUpdate = true; precip.group.visible = U.uOut.value < 0.05;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
   renderAO();
   renderer.setRenderTarget(null);
@@ -1629,6 +1645,36 @@ function frame() {
 }
 requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden';
+// ------------------------------------------------------------------ the space view: step outside the bubble and watch it go
+// The camera leaves your eyes, passes out through the skin and takes up an orbit round the bubble. You stay where you were (your body is
+// there to see). Drag turns the view, the wheel or a pinch moves it nearer and farther, and left alone it drifts slowly round.
+function orbitBy(dx, dy) { orbit.yaw -= dx * 0.0035; orbit.pitch = Math.max(-0.75, Math.min(1.4, orbit.pitch + dy * 0.0035)); orbit.idle = 0; }
+function setSpaceView(on) {
+  on = !!on; if (on === spaceOn || !started) return; spaceOn = on;
+  $('aim').style.visibility = on ? 'hidden' : ''; if (bSpace) bSpace.textContent = on ? 'back inside' : 'space view';
+  setHint(on ? (isTouch ? 'drag to circle the bubble · pinch to come nearer · “back inside” returns' : 'drag to circle the bubble · wheel comes nearer · Z returns') : 'back in your own eyes', 7000);
+  drawer && drawer.sync('spaceView'); hands && hands.recenter && hands.recenter('spaceView');
+}
+const _spEye = new THREE.Vector3(), _spPos = new THREE.Vector3(), _spC = new THREE.Vector3(), _spQ0 = new THREE.Quaternion(), _spQ1 = new THREE.Quaternion(), _spM = new THREE.Matrix4(), _spUp = new THREE.Vector3(0, 1, 0);
+function stepSpaceView(dt, eyeY) {
+  spaceT = Math.max(0, Math.min(1, spaceT + (spaceOn ? dt / 3.4 : -dt / 2.6)));
+  const e = spaceT * spaceT * spaceT * (spaceT * (spaceT * 6 - 15) + 10); U.uOut.value = e; spaceView && spaceView.update(e);
+  spaceAnchor.position.set(player.x, eyeY, player.z);
+  const nearWant = e > 0 ? 0.07 + e * orbit.dist * 0.2 : 0.07;
+  if (camera.near !== nearWant) { camera.near = nearWant; aoMat.uniforms.uNear.value = nearWant; lensMat.uniforms.uNear.value = nearWant; }   // far off, a near plane this close would leave the depth buffer too coarse
+  if (e <= 0) return;
+  orbit.idle += dt; if (spaceOn && orbit.idle > 4) orbit.yaw += dt * 0.022 * Math.min(1, (orbit.idle - 4) / 3);
+  _spC.set(CENTRE.x, 18, CENTRE.z); const cp = Math.cos(orbit.pitch);
+  _spPos.set(Math.sin(orbit.yaw) * cp, Math.sin(orbit.pitch), Math.cos(orbit.yaw) * cp).multiplyScalar(orbit.dist).add(_spC);
+  _spEye.copy(camera.position); _spQ0.copy(camera.quaternion); _spQ1.setFromRotationMatrix(_spM.lookAt(_spPos, _spC, _spUp));
+  camera.position.lerpVectors(_spEye, _spPos, e);
+  const er = Math.min(1, spaceT / 0.7), es = er * er * (3 - 2 * er); camera.quaternion.slerpQuaternions(_spQ0, _spQ1, es);   // the view turns to the bubble early in the flight out
+  camera.fov += (48 - camera.fov) * e;
+}
+addEventListener('keydown', e => { if (started && e.code === 'KeyZ' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) setSpaceView(!spaceOn); });
+const bSpace = document.createElement('button'); bSpace.id = 'bSpace'; bSpace.textContent = 'space view'; bSpace.title = 'see the bubble from outside (Z)';
+bSpace.addEventListener('click', e => { e.stopPropagation(); if (started) setSpaceView(!spaceOn); }); $('bVoid').after(bSpace);
+
 // ------------------------------------------------------------------ at the wall: the suit's reach, the pose, and the forearm console
 const _aimW = new THREE.Vector3(), _aimT = new THREE.Vector3(); let wallPromptAt = 0, wallPrompt = -1, consoleAt = 0;
 function stepWalling(dt, t) {
@@ -1680,7 +1726,7 @@ function wallSummary() {
 }
 
 window.__umbra = { // debug handle
-  walling, beginStint,
+  walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
     const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }
