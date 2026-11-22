@@ -30,9 +30,9 @@ const CSS = `
 #gdDrawer header { display:flex; align-items:center; justify-content:space-between; padding:16px 18px 6px; }
 #gdDrawer header b { font-weight:400; letter-spacing:.4em; font-size:10px; color:var(--dim, #b8b2a6); }
 #gdDrawer .x { background:none; border:none; color:var(--dim, #b8b2a6); font:inherit; font-size:16px; cursor:pointer; padding:2px 6px; }
-#gdDrawer nav { display:flex; gap:4px; padding:6px 14px 10px; border-bottom:1px solid rgba(233,228,218,.1); }
-#gdDrawer nav button { flex:1; background:none; border:1px solid transparent; border-radius:999px; color:var(--dim, #b8b2a6); font:inherit; font-size:10px; letter-spacing:.16em;
-  text-transform:uppercase; padding:7px 4px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:5px; }
+#gdDrawer nav { display:flex; flex-wrap:wrap; gap:5px 6px; padding:6px 14px 10px; border-bottom:1px solid rgba(233,228,218,.1); }
+#gdDrawer nav button { flex:1 0 auto; white-space:nowrap; background:none; border:1px solid transparent; border-radius:999px; color:var(--dim, #b8b2a6); font:inherit; font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; padding:7px 12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:5px; }
 #gdDrawer nav button.on { color:var(--ink, #e9e4da); border-color:rgba(233,228,218,.25); background:rgba(233,228,218,.06); }
 #gdDrawer .pane { display:none; overflow-y:auto; padding:6px 18px 28px; flex:1; }
 #gdDrawer .pane.on { display:block; }

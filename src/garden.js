@@ -10,7 +10,7 @@ import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 import { plantState, flagsFor, lawnTint } from './seasons.js';
 import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
 import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
-import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall } from './field.js';
+import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall, edgeR } from './field.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -370,7 +370,8 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   const farTrunks = new Map();   // beyond the grid (the field's trees): trunks by 8 m cell
   const blockFar = (x, z, r) => { const key = Math.floor(x / 8) + ',' + Math.floor(z / 8); let L = farTrunks.get(key); if (!L) farTrunks.set(key, L = []); L.push(x, z, r); };
   const blocked = (x, z) => { const i = Math.floor((x - MAP.x0) * CG), j = Math.floor((z - MAP.z0) * CG);
-    if (i >= 0 && j >= 0 && i < CW && j < CW) return colliders[j * CW + i] !== 0;
+    if (i >= 0 && j >= 0 && i < CW && j < CW && colliders[j * CW + i] !== 0) return true;
+    const rr = Math.hypot(x, z - 12); if (rr > 88 && rr > edgeR(x, z) - 0.9) return true;   // the brink: as far as the land goes
     const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
     for (let a = cx - 1; a <= cx + 1; a++) for (let b = cz - 1; b <= cz + 1; b++) { const L = farTrunks.get(a + ',' + b); if (!L) continue; for (let k = 0; k < L.length; k += 3) if ((x - L[k]) ** 2 + (z - L[k + 1]) ** 2 < L[k + 2] * L[k + 2]) return true; }
     return false; };
@@ -440,7 +441,7 @@ float wS = smoothstep(0.36, 0.6, gm.g + nz * 0.2) * (1.0 - wG) * (1.0 - wP);
 float wL = max(0.0, 1.0 - wG - wS - wP);
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
-if (length(gq - vec2(0.0, 12.0)) > 106.2) discard;   // the field stops at the bubble's skin
+if (length(gq - vec2(0.0, 12.0)) > landEdge(gq) - 0.55 * vnoise(gq * 1.3)) discard;   // the turf is torn off where the land ends
 float fld = fieldF(gq);               // beyond the wall line the lawn runs out into field
 float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;
@@ -507,7 +508,7 @@ float gd = length(gq - gc);
 float fade = aTier < 0.5 ? 1.0 - smoothstep(tile * 0.5 - 2.2, tile * 0.5 - 0.4, gd) : smoothstep(3.2, 5.6, gd) * (1.0 - smoothstep(tile * 0.5 - 6.0, tile * 0.5 - 1.0, gd));
 float r1 = aOff.z, r2 = aOff.w, r3 = fract(aOff.z * 91.7 + aOff.w * 37.3);
 float clump = gnoise(gq * 1.6);
-float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), 105.0) * (1.0 - 0.45 * gwork);
+float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), landEdge(gq) - 0.6) * (1.0 - 0.45 * gwork);
 float gang = r2 * 6.2831;
 vec2 gside = vec2(cos(gang), sin(gang)), gface = vec2(-gside.y, gside.x);
 float stripe = sign(sin(gq.x * 3.14159 / 1.5));
@@ -1429,5 +1430,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, block: blockWall, clearWall, patchFrag: P.fragOnly, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
+  return { update, preRender, blocked, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
 }

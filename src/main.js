@@ -10,7 +10,7 @@ import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
-import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView } from './field.js';
+import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand } from './field.js';
 import { createWalling } from './walling.js';
 import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
@@ -490,7 +490,7 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null, spaceView = nul
       c += spaceAt(d, uTime);                                   // beyond the bubble: the nebula we are making for, and dust going by
       float band = exp(-pow(dot(d, uGalN), 2.0)*22.0) * (0.55 + 0.9*pow(max(dot(d, uGalC), 0.0), 3.0)) * smoothstep(3.0, 6.0, uLimit);   // the Milky Way, along the true galactic plane, brightest toward Sagittarius
       float n = vn(d.xy*9.0)*0.6 + vn(d.zy*23.0)*0.4;
-      c += vec3(0.018,0.02,0.03) * band * n * mix(smoothstep(-0.05, 0.2, d.y), 1.0, uOut);
+      c += vec3(0.018,0.02,0.03) * band * n;   // all the way round: over the land's edge you look down into it
       // the bubble holds only a little air: by day it glows blue near the rim and thins to deep indigo overhead, where space still shows
       vec3 dayc = mix(vec3(0.30,0.43,0.68), vec3(0.012,0.035,0.14), smoothstep(0.0, 0.42, d.y));
       dayc *= smoothstep(-0.16, 0.0, d.y);                     // below the rim there is no air: you look straight out into space
@@ -517,6 +517,7 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null, spaceView = nul
   sky.renderOrder = -2; scene.add(sky); skyObj = sky;
   scene.add(createBubble(U));   // the skin of the bubble the field travels in (field.js)
   spaceView = createSpaceView(U); scene.add(spaceView.group);
+  scene.add(createLand(U));     // the torn-off ground the field is the top of
   envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead, uOut: U.uOut };
 
   // the real night sky: 5,000 catalogue stars to magnitude 6, plus the five naked-eye planets (the last five entries),
@@ -542,11 +543,11 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null, spaceView = nul
       return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }` + CLOUD_GLSL + `
       void main(){
         vec3 w = normalize((modelMatrix * vec4(position, 0.0)).xyz);           // direction in the sky
-        float h = max(w.y, 0.0), X = 1.0 / (h + 0.025 * exp(-11.0 * h));      // airmass: light crosses more air near the horizon
+        float h = abs(w.y), X = 1.0 / (h + 0.025 * exp(-11.0 * h));      // airmass: light crosses more air near the horizon
         float m = aMag + 0.22 * (X - 1.0);                                     // ...and is dimmed by it (extinction)
         float flux = pow(10.0, -0.4 * (m - 1.0));                              // brightness relative to a first-magnitude star
         float tw = 1.0 + aTw * (0.18 + 0.25 * min(X, 6.0) / 6.0) * sin(uTime * (7.0 + aSeed * 9.0) + aSeed * 90.0);   // twinkling, worst low down
-        vC = aColor * min(pow(flux, 0.6), 4.0) * 2.6 * tw *   /* the eye's response is closer to flux^0.6 than to flux */ smoothstep(uLimit + 0.4, uLimit - 0.6, m) * mix(smoothstep(-0.02, 0.04, w.y) * uStarGain * (1.0 - 0.94*cloudAt(w, uTime)), 1.0, uOut);
+        vC = aColor * min(pow(flux, 0.6), 4.0) * 2.6 * tw *   /* the eye's response is closer to flux^0.6 than to flux */ smoothstep(uLimit + 0.4, uLimit - 0.6, m) * mix(uStarGain * (1.0 - 0.94*cloudAt(w, uTime)), 1.0, uOut);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = (1.6 + 2.2 * clamp((3.5 - m) / 5.0, 0.0, 1.3)) * uPR;
       }`,
@@ -840,7 +841,8 @@ const lensMat = new THREE.ShaderMaterial({
     col = (col*shade + ringc)*(1.0 - disk.a) + disk.rgb;
     float vig = smoothstep(0.3, 1.1, length((vUv - 0.5)*vec2(uAspect, 1.0))*1.25);
     col *= 1.0 - vig*(0.3 + 0.6*uDark);
-    gl_FragColor = vec4(col, 1.0);
+    if (!(col.r == col.r && col.g == col.g && col.b == col.b)) col = vec3(0.0);   // one not-a-number pixel would be spread by the bloom into a black block
+    gl_FragColor = vec4(clamp(col, 0.0, 500.0), 1.0);
   }`,
 });
 const composer = new EffectComposer(renderer);
@@ -1664,7 +1666,7 @@ function stepSpaceView(dt, eyeY) {
   if (camera.near !== nearWant) { camera.near = nearWant; aoMat.uniforms.uNear.value = nearWant; lensMat.uniforms.uNear.value = nearWant; }   // far off, a near plane this close would leave the depth buffer too coarse
   if (e <= 0) return;
   orbit.idle += dt; if (spaceOn && orbit.idle > 4) orbit.yaw += dt * 0.022 * Math.min(1, (orbit.idle - 4) / 3);
-  _spC.set(CENTRE.x, 18, CENTRE.z); const cp = Math.cos(orbit.pitch);
+  _spC.set(CENTRE.x, 0, CENTRE.z); const cp = Math.cos(orbit.pitch);
   _spPos.set(Math.sin(orbit.yaw) * cp, Math.sin(orbit.pitch), Math.cos(orbit.yaw) * cp).multiplyScalar(orbit.dist).add(_spC);
   _spEye.copy(camera.position); _spQ0.copy(camera.quaternion); _spQ1.setFromRotationMatrix(_spM.lookAt(_spPos, _spC, _spUp));
   camera.position.lerpVectors(_spEye, _spPos, e);

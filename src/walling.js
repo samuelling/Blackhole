@@ -12,6 +12,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { STONE_TYPES, SIZE_CLASSES, generateStone, makeStoneMaterial, hooks, perf } from './drystack/stones.js';
 import { WallSpec, Guides } from './drystack/wall.js';
 import { analyseWall } from './drystack/analysis.js';
+import { heightAt } from './field.js';
 
 export const LINE = { x: 27.25, z0: -31.25, z1: 55.25, gate: 2.4 };          // the wall's centre line, and half the gap left for the gate
 const BASE = 0.72, TOP = 0.42, HEIGHT = 1.1;
@@ -57,7 +58,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
     let f = sh.fragmentShader;
     f = f.replace('uniform float uTime;', '').replace(/\bvnoise\b/g, 'dsVnoise').replace('varying vec3 vWPos; varying vec3 vWNormal;', 'varying vec3 vWNormal;');
     // a stone the suit has hold of, or that you are pointing at, is rimmed with the beam's light
-    f = f.replace('totalEmissiveRadiance += vec3(1.0, 0.8, 0.4) * uHighlight * 0.04;', 'totalEmissiveRadiance += vec3(0.2, 0.85, 1.0) * uHighlight * (0.03 + 0.4 * pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.0));');
+    f = f.replace('totalEmissiveRadiance += vec3(1.0, 0.8, 0.4) * uHighlight * 0.04;', 'totalEmissiveRadiance += vec3(0.2, 0.85, 1.0) * uHighlight * (0.03 + 0.4 * pow(clamp(1.0 - abs(dot(normalize(vViewPosition), normal)), 0.0, 1.0), 2.0));');
     sh.fragmentShader = f; patchFrag(sh);
     if (mat.userData.merged) sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 aObj;').replace('vObjPos = position;', 'vObjPos = aObj;');
   };
@@ -102,6 +103,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
   // vertices per stone are 10 (d + 1)^2 + 2. Far: a whole built wall is about 0.7 million vertices. Near: the dozen stints around you.
   const DETAIL = { far: { foundation: 2, builder: 1, through: 2, cope: 1, hearting: 0, pinning: 0 }, near: lite ? { foundation: 4, builder: 3, through: 3, cope: 3, hearting: 0, pinning: 0 } : { foundation: 6, builder: 5, through: 5, cope: 5, hearting: 1, pinning: 1 } };
   const NEAR = lite ? 12 : 18;
+  DETAIL.heap = lite ? { foundation: 2, builder: 1, through: 2, cope: 1, hearting: 0, pinning: 0 } : { foundation: 3, builder: 2, through: 3, cope: 2, hearting: 1, pinning: 0 };
   function frameOf(s) { const g = new THREE.Group(); g.position.set(s.x, 0, s.z); g.rotation.y = s.yaw; g.updateMatrixWorld(true); return g; }
   function queueBuilt(s, rec, level, type, list) {
     const parts = [], q = new THREE.Quaternion(), m = new THREE.Matrix4(), one = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3(); let i = 0;
@@ -128,6 +130,29 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
     for (let d = -s.L / 2; d <= s.L / 2 + 0.01; d += 0.25) garden.block(s.x + Math.cos(s.yaw) * d, s.z - Math.sin(s.yaw) * d, 0.42);   // a wall you built is a wall you walk round
   }
   for (const s of stints) { const d = store.done[s.id] || store.paused[s.id]; if (d) showBuilt(s, d.type, d.stones); }
+
+  // ---------------------------------------------------------------- the stone heaps: fieldstone tipped at the four corners, for the suit to draw on
+  // Each is a mound of several hundred stones lying as they fell, over a dark core. They are scenery with a footprint: the stone for a
+  // stint is brought from the nearest one.
+  const HEAPS = [[35.4, 63.4, 4.7, 2.6], [-35.6, 62.8, 5.3, 2.9], [35.8, -39.4, 4.3, 2.3], [-35.0, -39.0, 5.0, 2.7]], heaps = [];
+  { const coreMat = new THREE.MeshStandardMaterial({ color: 0x4b4741, roughness: 1, side: THREE.DoubleSide }), _hq = new THREE.Quaternion(), _hn = new THREE.Vector3(), _hy = new THREE.Quaternion();
+    HEAPS.forEach(([hx, hz, R, H], hi) => {
+      const rng = mulberry(9100 + hi * 131), g0 = heightAt(hx, hz), list = [], lump = a => 0.82 + 0.2 * Math.sin(3 * a + hi) + 0.12 * Math.sin(7 * a + 2 * hi);
+      const hs = (r, a) => H * lump(a) * Math.max(0, 1 - Math.pow(r / (R * lump(a + 1.3)), 1.7));                    // the mound's surface
+      const n = Math.round((lite ? 30 : 44) * R * R);
+      for (let i = 0; i < n; i++) {
+        const spill = rng() < 0.08, r = spill ? R * (0.95 + 0.45 * rng()) : R * Math.sqrt(rng()), a = rng() * Math.PI * 2, x = hx + Math.cos(a) * r, z = hz + Math.sin(a) * r;
+        const h = hs(r, a), e = 0.25, slope = (hs(r + e, a) - hs(Math.max(0, r - e), a)) / (2 * e), ci = rng() < 0.58 ? 0 : rng() < 0.92 ? 1 : 2;
+        _hn.set(-Math.cos(a) * slope, 1, -Math.sin(a) * slope).normalize();                                      // lie on the slope, turned any way, a little askew
+        _hq.setFromUnitVectors(UP, _hn).multiply(_hy.setFromEuler(new THREE.Euler((rng() - 0.5) * 0.7, rng() * Math.PI * 2, (rng() - 0.5) * 0.7, 'YXZ')));
+        list.push([ci, 70000 + hi * 5000 + i, x, heightAt(x, z) + h + (ci === 0 ? 0.1 : 0.06) - (rng() < 0.35 ? 0.2 : 0.05) * rng(), z, _hq.x, _hq.y, _hq.z, _hq.w]);
+      }
+      const rec = { group: new THREE.Group(), type: 'newengland', list }; root.add(rec.group); heaps.push(rec);
+      // the stones out of sight inside: one mound the same shape, a little smaller
+      const core = new THREE.Mesh(new THREE.LatheGeometry(Array.from({ length: 12 }, (_, k) => { const r = R * 0.88 * (1 - k / 11); return new THREE.Vector2(r, H * 0.8 * (1 - Math.pow(r / (R * 0.88), 1.7))); }).reverse(), 30), coreMat); core.position.set(hx, g0 - 0.1, hz); core.castShadow = core.receiveShadow = true; rec.group.add(core);
+      queueBuilt(null, rec, 'heap', 'newengland', list); garden.blockRound(hx, hz, R * 0.82);
+    });
+  }
 
   // ---------------------------------------------------------------- the stint in hand
   let RAPIER = null, Physics = null, physFail = '';
@@ -185,7 +210,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
     else { const pl = planPile(s, type); A.queue = pl.plan; A.seedNext = pl.seedNext; A.heaps = pl.heaps; }
     U.uWork.value.set(s.x, s.z, Math.cos(s.yaw), Math.sin(s.yaw));
     A.total = A.queue.length; s.state = 'active'; drawMarkers(); onChange();
-    hint(`stint ${s.id + 1} of ${stints.length} · ${STONE_TYPES[type].name} · your suit is bringing the stone`, 6000);
+    hint(`stint ${s.id + 1} of ${stints.length} · ${STONE_TYPES[type].name} · your suit is bringing stone from the heaps`, 6000);
     return true;
   }
   function snapshot(all) {
@@ -311,6 +336,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
     // built stints: a few milliseconds of geometry each frame; nearer ones get their finer mesh
     if (jobs.length) { if (jobs[0].step()) jobs.shift(); }
     U.uWorkOn.value += ((A ? 1 : 0) - U.uWorkOn.value) * Math.min(1, dt * 1.5);
+    for (const h of heaps) if (h.heap && !h.heap.visible) h.heap.visible = true;
     for (const [id, rec] of built) {
       const s = stints[id], d = Math.hypot(s.x - px, s.z - pz), near = d < NEAR;
       if (near && !rec.near && !rec.wantNear) { rec.wantNear = true; queueBuilt(s, rec, 'near', rec.type, rec.list); }
