@@ -1,10 +1,17 @@
 // Rapier physics wrapper.
-import RAPIER from '../../vendor/rapier/rapier.es.js';
-
+// Garden of Delight: Rapier (2 MB, with its WebAssembly inside) is fetched only when the first stint is begun. The copy in vendor/ is
+// @dimforge/rapier3d-compat 0.14.0's rapier.es.js, byte for byte; where that file is not served, the same release comes from jsDelivr.
+let RAPIER = null;
 export { RAPIER };
 
 export class Physics {
-  static async init() { await RAPIER.init(); }
+  static async init() {
+    if (!RAPIER) {
+      let m; try { m = await import('../../vendor/rapier/rapier.es.js'); } catch (e) { m = await import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js'); }
+      RAPIER = m.default;
+    }
+    await RAPIER.init();
+  }
 
   constructor({ gravity = -9.81, damping = 0.02, angDamping = 0.05 } = {}) {
     this.world = new RAPIER.World({ x: 0, y: gravity, z: 0 });

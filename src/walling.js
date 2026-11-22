@@ -56,6 +56,8 @@ export function createWalling({ scene, camera, U, patchFrag, garden, lite = fals
   hooks.post = (sh, mat) => {
     let f = sh.fragmentShader;
     f = f.replace('uniform float uTime;', '').replace(/\bvnoise\b/g, 'dsVnoise').replace('varying vec3 vWPos; varying vec3 vWNormal;', 'varying vec3 vWNormal;');
+    // a stone the suit has hold of, or that you are pointing at, is rimmed with the beam's light
+    f = f.replace('totalEmissiveRadiance += vec3(1.0, 0.8, 0.4) * uHighlight * 0.04;', 'totalEmissiveRadiance += vec3(0.2, 0.85, 1.0) * uHighlight * (0.03 + 0.4 * pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.0));');
     sh.fragmentShader = f; patchFrag(sh);
     if (mat.userData.merged) sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 aObj;').replace('vObjPos = position;', 'vObjPos = aObj;');
   };
