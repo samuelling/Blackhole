@@ -4,7 +4,7 @@ A compact English cottage garden (about 54 × 86 m, in a field inside a space bu
 
 Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger voids notice you from farther away — ~10 m for a pinhole, ~28 m for the giant): it grows, lenses the scene behind it, twists and pulls nearby lights toward its horizon, drains the light from the ground, trees and globes around it, and draws streams of stolen light spiralling in. It also tugs on you. Walk away and the light seeps back over the next half-minute.
 
-**Play:** open `index.html` (or the GitHub Pages site).
+**Play:** open `index.html` (or the GitHub Pages site). The page opens outside the bubble, watching it go by, with the title beside it while it loads. Enter, and the view holds a moment longer, then flies down through the skin and the trees into your own eyes.
 
 - **Space view (Z, or the button):** the camera leaves your eyes, passes out through the bubble's skin and takes up an orbit outside it. From there the bubble is a soap-film sphere with the land hanging in it (garden and wood on top, the torn rock beneath), and dust streaming past from the nebula it is heading for. Drag circles it, the wheel or a pinch comes nearer; left alone the view drifts round. Z again brings you back.
 - Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift hurries, **E** opens a new void of random size ahead of you, **M** toggles sound. The **pull** slider sets how hard the voids tug on you (0–150%). **F** shows the frame rate and render resolution.

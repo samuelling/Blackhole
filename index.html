@@ -11,11 +11,15 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   html,body { height:100%; background:#000; overflow:hidden; color:var(--ink);
     font-family:'Cormorant Garamond',Georgia,serif; -webkit-user-select:none; user-select:none; }
-  canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; }
-  #intro { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:10;
-    background:radial-gradient(ellipse at 50% 60%, rgba(0,0,0,.35) 0%, rgba(0,0,0,.88) 70%); transition:opacity 1.6s ease; }
+  canvas { display:block; width:100vw; height:100vh; touch-action:none; cursor:crosshair; opacity:0; transition:opacity 2.6s ease; }
+  body.ready canvas { opacity:1; }
+  /* the title screen: the lettering stands to the left, the bubble (drawn live behind) to the right; on a tall screen, above and below */
+  #intro { position:fixed; inset:0; display:flex; align-items:center; justify-content:flex-start; z-index:10; padding-left:min(7vw, 110px);
+    background:linear-gradient(90deg, rgba(0,0,0,.88) 0%, rgba(0,0,0,.66) 36%, rgba(0,0,0,0) 62%); transition:opacity 1.6s ease; }
+  @media (max-aspect-ratio: 1/1) { #intro { align-items:flex-start; justify-content:center; padding:5vh 0 0; background:linear-gradient(180deg, rgba(0,0,0,.8) 0%, rgba(0,0,0,.5) 40%, rgba(0,0,0,0) 62%); }
+    #intro .card { text-align:center; padding:24px 26px; } #intro .sub { font-size:16px; margin-bottom:20px; } }
   #intro.gone { opacity:0; pointer-events:none; }
-  .card { max-width:560px; padding:44px 40px; text-align:center; }
+  .card { max-width:470px; padding:44px 0; text-align:left; }
   .kicker { font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.32em; text-transform:uppercase; color:var(--dim); }
   h1 { font-weight:400; font-size:clamp(46px,9vw,78px); letter-spacing:.02em; margin:10px 0 18px; line-height:1; }
   h1 em { font-style:italic; }
@@ -52,11 +56,11 @@
 </style>
 </head>
 <body>
-<div id="intro">
+<div id="intro" class="loading">
   <div class="card">
-    <div class="kicker">a night garden</div>
+    <div class="kicker">a night garden, adrift</div>
     <h1>Garden of <em>Delight</em></h1>
-    <p class="sub">A walled English garden — deep borders, clipped yew, a tiered fountain, a long canal — lit for a night exhibition. Dark things hang in it, from pinholes in the trees to the great one above the fountain. Come close and they wake, pulling the light out of everything around them, the garden included. Walk away and it seeps back.</p>
+    <p class="sub">An English garden — deep borders, clipped yew, a tiered fountain, a long canal — lit for a night exhibition, on a piece of ground torn loose and carried through space in a bubble. Dark things hang in it. Come close and they wake, pulling the light out of everything around them. Walk away and it seeps back. There is a wood, an edge to look over, and a wall to build.</p>
     <button id="enter" disabled>loading…</button>
     <div class="keys" id="keys"></div>
   </div>

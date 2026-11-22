@@ -945,7 +945,8 @@ function setSound(on) {
 // ------------------------------------------------------------------ controls
 const player = new THREE.Vector3(layout.start.x, 1.65, layout.start.z);
 let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
-let spaceOn = false, spaceT = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 290, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
+// The page opens out in space, watching the bubble go by: that is the title screen. Entering holds the view a moment, then flies in to your eyes.
+let spaceOn = true, spaceT = 1, titleK = 1, flyIn = 2.6, introTimer = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 340, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
 const keys = new Set();
 const grav = new THREE.Vector3();
 addEventListener('keydown', e => {
@@ -1108,7 +1109,9 @@ function setHint(t, ms = 9000) { hint.textContent = t; hint.style.opacity = 1; c
 $('enter').addEventListener('click', () => {
   started = true; $('intro').classList.add('gone'); $('hud').classList.add('on');
   initAudio(); setSound(true); tryLock();
-  setHint(isTouch ? 'walk through the arches · something is waiting past them' : 'walk through the arches · something is waiting past them · Esc frees the mouse');
+  // a moment more out here, with the title gone, then down through the skin and the trees to where you stand
+  const arrive = () => setHint(isTouch ? 'walk through the arches · something is waiting past them' : 'walk through the arches · something is waiting past them · Esc frees the mouse');
+  if (spaceOn) { flyIn = 4.4; introTimer = setTimeout(() => { introTimer = 0; setSpaceView(false, true); setTimeout(arrive, 4200); }, 2600); } else arrive();
 });
 
 // ------------------------------------------------------------------ time of day
@@ -1646,35 +1649,46 @@ function frame() {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-$('enter').disabled = false; $('enter').textContent = 'enter the garden';
+$('enter').disabled = false; $('enter').textContent = 'enter the garden'; $('intro').classList.remove('loading');
+setTimeout(() => document.body.classList.add('ready'), 250);   // the first frames are drawn: let the bubble come up out of the dark behind the title
 // ------------------------------------------------------------------ the space view: step outside the bubble and watch it go
 // The camera leaves your eyes, passes out through the skin and takes up an orbit round the bubble. You stay where you were (your body is
 // there to see). Drag turns the view, the wheel or a pinch moves it nearer and farther, and left alone it drifts slowly round.
 function orbitBy(dx, dy) { orbit.yaw -= dx * 0.0035; orbit.pitch = Math.max(-0.75, Math.min(1.4, orbit.pitch + dy * 0.0035)); orbit.idle = 0; }
-function setSpaceView(on) {
+function setSpaceView(on, quiet) {
   on = !!on; if (on === spaceOn || !started) return; spaceOn = on;
+  if (introTimer) { clearTimeout(introTimer); introTimer = 0; } if (!quiet) flyIn = 2.6;
   $('aim').style.visibility = on ? 'hidden' : ''; if (bSpace) bSpace.textContent = on ? 'back inside' : 'space view';
-  setHint(on ? (isTouch ? 'drag to circle the bubble · pinch to come nearer · “back inside” returns' : 'drag to circle the bubble · wheel comes nearer · Z returns') : 'back in your own eyes', 7000);
+  if (!quiet) setHint(on ? (isTouch ? 'drag to circle the bubble · pinch to come nearer · “back inside” returns' : 'drag to circle the bubble · wheel comes nearer · Z returns') : 'back in your own eyes', 7000);
   drawer && drawer.sync('spaceView'); hands && hands.recenter && hands.recenter('spaceView');
 }
+const _spR = new THREE.Vector3(), _spF = new THREE.Vector3(), _spT = new THREE.Vector3();
 const _spEye = new THREE.Vector3(), _spPos = new THREE.Vector3(), _spC = new THREE.Vector3(), _spQ0 = new THREE.Quaternion(), _spQ1 = new THREE.Quaternion(), _spM = new THREE.Matrix4(), _spUp = new THREE.Vector3(0, 1, 0);
 function stepSpaceView(dt, eyeY) {
-  spaceT = Math.max(0, Math.min(1, spaceT + (spaceOn ? dt / 3.4 : -dt / 2.6)));
+  spaceT = Math.max(0, Math.min(1, spaceT + (spaceOn ? dt / 3.4 : -dt / flyIn)));
   const e = spaceT * spaceT * spaceT * (spaceT * (spaceT * 6 - 15) + 10); U.uOut.value = e; spaceView && spaceView.update(e);
   spaceAnchor.position.set(player.x, eyeY, player.z);
   const nearWant = e > 0 ? 0.07 + e * orbit.dist * 0.2 : 0.07;
   if (camera.near !== nearWant) { camera.near = nearWant; aoMat.uniforms.uNear.value = nearWant; lensMat.uniforms.uNear.value = nearWant; }   // far off, a near plane this close would leave the depth buffer too coarse
   if (e <= 0) return;
   orbit.idle += dt; if (spaceOn && orbit.idle > 4) orbit.yaw += dt * 0.022 * Math.min(1, (orbit.idle - 4) / 3);
+  // the title: the bubble stands to one side of the lettering (below it on a tall screen), far enough off to fit; once you enter it comes to the middle
+  const th = Math.tan(THREE.MathUtils.degToRad(48) / 2), wide = camera.aspect >= 1;
+  if (!started) { const lim = wide ? Math.min(0.8 * th, 0.47 * th * camera.aspect) : Math.min(0.85 * th * camera.aspect, 0.45 * th); orbit.dist = Math.min(800, 113 / Math.sin(Math.atan(lim))); }
+  else if (titleK > 0) titleK = Math.max(0, titleK - dt / 1.8);
+  const tk = titleK * titleK * (3 - 2 * titleK);
   _spC.set(CENTRE.x, 0, CENTRE.z); const cp = Math.cos(orbit.pitch);
   _spPos.set(Math.sin(orbit.yaw) * cp, Math.sin(orbit.pitch), Math.cos(orbit.yaw) * cp).multiplyScalar(orbit.dist).add(_spC);
-  _spEye.copy(camera.position); _spQ0.copy(camera.quaternion); _spQ1.setFromRotationMatrix(_spM.lookAt(_spPos, _spC, _spUp));
+  _spT.copy(_spC);
+  if (tk > 0) { _spF.subVectors(_spC, _spPos).normalize(); _spR.crossVectors(_spF, _spUp).normalize();
+    if (wide) _spT.addScaledVector(_spR, -0.5 * orbit.dist * th * camera.aspect * tk); else _spT.addScaledVector(_spUp, 0.48 * orbit.dist * th * tk); }
+  _spEye.copy(camera.position); _spQ0.copy(camera.quaternion); _spQ1.setFromRotationMatrix(_spM.lookAt(_spPos, _spT, _spUp));
   camera.position.lerpVectors(_spEye, _spPos, e);
   const er = Math.min(1, spaceT / 0.7), es = er * er * (3 - 2 * er); camera.quaternion.slerpQuaternions(_spQ0, _spQ1, es);   // the view turns to the bubble early in the flight out
   camera.fov += (48 - camera.fov) * e;
 }
 addEventListener('keydown', e => { if (started && e.code === 'KeyZ' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) setSpaceView(!spaceOn); });
-const bSpace = document.createElement('button'); bSpace.id = 'bSpace'; bSpace.textContent = 'space view'; bSpace.title = 'see the bubble from outside (Z)';
+const bSpace = document.createElement('button'); bSpace.id = 'bSpace'; bSpace.textContent = spaceOn ? 'back inside' : 'space view'; $('aim').style.visibility = spaceOn ? 'hidden' : ''; bSpace.title = 'see the bubble from outside (Z)';
 bSpace.addEventListener('click', e => { e.stopPropagation(); if (started) setSpaceView(!spaceOn); }); $('bVoid').after(bSpace);
 
 // ------------------------------------------------------------------ at the wall: the suit's reach, the pose, and the forearm console
@@ -1738,4 +1752,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
