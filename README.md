@@ -1,6 +1,6 @@
 # Garden of Delight
 
-A compact walled English cottage garden (about 54 × 86 m inside its brick wall) lit for a night exhibition — fairy-lit trees, fields of glowing stalks, frosted globes, a tunnel of light arches — with ten black holes of different sizes hanging in it: pinholes nesting in tree canopies that drain a single bush, larger ones over the walks, and a giant hanging about 16 m above the great fountain that you can walk beneath.
+A compact English cottage garden (about 54 × 86 m, in a field inside a space bubble, waiting for you to wall it) lit for a night exhibition — fairy-lit trees, fields of glowing stalks, frosted globes, a tunnel of light arches — with ten black holes of different sizes hanging in it: pinholes nesting in tree canopies that drain a single bush, larger ones over the walks, and a giant hanging about 16 m above the great fountain that you can walk beneath.
 
 Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger voids notice you from farther away — ~10 m for a pinhole, ~28 m for the giant): it grows, lenses the scene behind it, twists and pulls nearby lights toward its horizon, drains the light from the ground, trees and globes around it, and draws streams of stolen light spiralling in. It also tugs on you. Walk away and the light seeps back over the next half-minute.
 
@@ -10,6 +10,21 @@ Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger vo
 - Time of day: the pill at bottom right toggles **night** (default) ↔ **live** (the real sky right now: your clock and today's date; also **T**), and its slider scrubs to any hour on the garden's own calendar date. The sun is placed by a solar-position calculation (≈42°N, longitude from your time zone), with day sky, clouds, twilight and stars. In daylight the voids carve pockets of night out of the day.
 - Touch: drag the left half to walk, the right half to look, double-tap (or the button) to open a void.
 - **Look down** and you are there: a future astronaut in a hard-shell suit, cel-shaded with ink outlines. It walks and runs with you, reaches out when you click a void, and casts your shadow, helmet and pack included.
+
+## The field, the bubble and the wall
+
+The garden stands in the middle of a field about two football pitches across (212 m), and the field is inside a bubble of air travelling through space. The ground rolls a little beyond the garden's level plateau and rises to the bubble's skin, which is as far as you can walk. Most of the field is a wood: about 180 trees of the grove's eight species, in stands, thrown down with eight to ten metres between trunks. Left open are a band about 13 m wide round the garden (for the wall and its stone), a ride running south from the gate to the rim, and four glades for the sky. The first rank of the wood is grown in full; the trees behind carry half the boughs, a tenth larger, on plainer limbs. Overhead, by night and thinly by day, is what the bubble is passing through: a golden nebula dead ahead, wisps elsewhere, and dust streaming back from the point you are heading for. The skin itself is a soap film: banded with colour low down where it has drained thick, almost nothing overhead, bright where it turns away from you and where it meets the ground.
+
+The brick wall is gone, and building its replacement is the long task: a **dry stone wall** on the same line, 277 m of it in 92 lengths ("stints") of about three metres, pegged out with strings. The gate piers are left standing as the two ends. The stones, their physics and the reading of the wall are [Dry Stack](https://github.com/samuelling/dry-stack)'s (`src/drystack/`, with Rapier in `vendor/rapier/`).
+
+- Walk up to a pegged length and press **B**. Your suit brings the stone to the field side of the line (about 330 pieces: foundations, builders, throughs, copes, hearting, pins), sets up batter frames and string lines, and treads the grass down so you can see what you have.
+- You do not hold the stones. The suit lifts what your right hand points at: point at a stone and **click** to lift it, look where it should go, click again to set it down. A lifted stone is still a real body. It lags when it is heavy, it shoves and is shoved, and it settles where it is put. The lift is limited (520 N), so a 50 kg foundation moves slowly and the console's lift bar fills.
+- **Wheel** or **Q / E** turn the stone, **R** tips it forward, **V** rolls it, **T** lays its length into the wall, **C** stands it on edge for a cope (Shift for finer steps). **Space** presses it down, **G** lets it pass through others while held, **H** pours a few pieces of hearting where you point, **N** brings more stone, **Backspace** takes back the last move.
+- Your left forearm comes up with a console of light over the wrist display: the stone in hand and its weight, the lift, and how the stint stands (footings, height against the 1.1 m target, hearting, throughs, running joints, copes).
+- **P** puts the stint away as it lies, to take up again later; walking 40 m off does the same. **Enter** twice finishes it: what stands in the wall is fixed in place and you can no longer walk through that length; the rest of the pile goes back. Finished and half-built stints are kept in this browser (`localStorage`), with every stone where you left it.
+- Settings → **Wall**: the stone (six kinds, for the next stint you begin), progress, and pulling the whole wall down.
+
+Not in this version: touch controls for walling, the hammer and the fit light from Dry Stack, and any collision between you and loose stones (you walk through the pile).
 
 ## The great void
 
@@ -69,6 +84,8 @@ The trees turn and drop their leaves by the pigment model from [Turning Grove](h
 - Parameters are illustrative (tuned to typical timing), not fitted to data. Chlorophyll's green absorbance is higher than Turning Grove's, so summer leaves reflect about 15% in the green as real ones do.
 
 Leaf cards are drawn by `tools/build_leafcards.py` from botanical outlines (Turning Grove's six shapes plus lime and willow); `tools/blender/build_trees.py` now grows six forms (two limes, willow, birch, oak, and a spire for ginkgo and sweetgum).
+
+**Leaf size goes with the tree.** Each tree is one of six Blender forms scaled to its own crown, and its leaves take one scale from that: the cube root of the tree's volume against the form it was grown from, the same in every direction (so a tall, narrow tree's leaves are not stretched). A garden tree is close to 1, where a lime leaf is about 8 cm and a red oak's 16 cm; a tree in the wood one and a half times the size carries leaves one and a half times the size. Leaves in the air and on the ground use the same number, so what lies under a tree matches what hangs on it.
 
 ## Graphics
 

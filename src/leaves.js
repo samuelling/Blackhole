@@ -59,11 +59,11 @@ export function patchCanopy(sh, U, depth) {
 
 // ---------------------------------------------------------------- per-tree numbers the falling leaves and the litter read
 // a float texture, one column per tree: row 0 = x, z, crown radius, crown top; row 1 = litter amount, fall rate, species, crown bottom;
-// row 2 = colour of the litter; row 3 = colour of what is falling now
-export function createLeafFall({ U, COMMON, P, trees, tex, blocked, pools, canal, WATER_Y, inWalls, lite }) {
-  const NT = trees.length, info = new Float32Array(NT * 4 * 4);
-  const tInfo = new THREE.DataTexture(info, NT, 4, THREE.RGBAFormat, THREE.FloatType); tInfo.magFilter = tInfo.minFilter = THREE.NearestFilter; tInfo.generateMipmaps = false;
-  trees.forEach((T, i) => { info.set([T.x, T.z, T.A, T.cy + T.B], i * 4); info.set([0, 0, T.sp, Math.max(1.2, T.cy - T.B)], (NT + i) * 4); });
+// row 2 = colour of the litter; row 3 = colour of what is falling now; row 4 = ground height at the tree
+export function createLeafFall({ U, COMMON, P, trees, tex, blocked, pools, canal, WATER_Y, lite, heightAt = () => 0 }) {
+  const NT = trees.length, info = new Float32Array(NT * 5 * 4);
+  const tInfo = new THREE.DataTexture(info, NT, 5, THREE.RGBAFormat, THREE.FloatType); tInfo.magFilter = tInfo.minFilter = THREE.NearestFilter; tInfo.generateMipmaps = false;
+  trees.forEach((T, i) => { const gy = T.gy || 0; info.set([T.x, T.z, T.A, gy + T.cy + T.B], i * 4); info.set([0, 0, T.sp, gy + Math.max(1.2, T.cy - T.B)], (NT + i) * 4); info.set([gy, T.k || 1, 0, 0], (4 * NT + i) * 4); });
   tInfo.needsUpdate = true;
   const uInfo = { value: tInfo };
   let stats = null;
@@ -89,13 +89,13 @@ export function createLeafFall({ U, COMMON, P, trees, tex, blocked, pools, canal
   // ---- litter: single leaves lying where they landed. Each has a threshold: it is there once that much of the crown is down.
   const litter = [];
   trees.forEach((T, ti) => {
-    const n = Math.round((lite ? 2600 : 8000) * weights[ti] / wsum);
+    const n = Math.round((lite ? 4200 : 15000) * weights[ti] / wsum);
     for (let i = 0; i < n; i++) {
       const u = rnd(), r = T.A * (0.1 + 1.5 * Math.pow(u, 0.75)), a = rnd() * Math.PI * 2, x = T.x + Math.cos(a) * r + 0.3 * T.A * 0.8, z = T.z + Math.sin(a) * r + 0.3 * T.A * 0.6;   // drifted a little downwind
       const inPool = pools.some(p => Math.hypot(x - p.x, z - p.z) < p.r - 0.12), inCanal = Math.abs(x) < canal.hw - 0.1 && z > canal.z0 + 0.1 && z < canal.z1 - 0.1, wet = inPool || inCanal;
       if (!wet && blocked(x, z)) continue;
       if (!wet && Math.hypot(x - T.x, z - T.z) < 0.5) continue;
-      litter.push({ x, z, y: wet ? WATER_Y + 0.006 : 0.015 + rnd() * 0.05, wet, ti, thr: 0.03 + 0.94 * Math.pow(rnd(), 1.15) * (0.55 + 0.45 * Math.min(1, r / (T.A * 1.3))), s: 0.8 + rnd() * 0.45 });
+      litter.push({ x, z, y: wet ? WATER_Y + 0.006 : heightAt(x, z) + 0.015 + rnd() * 0.05, wet, ti, thr: 0.03 + 0.94 * Math.pow(rnd(), 1.15) * (0.55 + 0.45 * Math.min(1, r / (T.A * 1.3))), s: 0.8 + rnd() * 0.45 });
     }
   });
   if (litter.length) {
@@ -113,7 +113,7 @@ export function createLeafFall({ U, COMMON, P, trees, tex, blocked, pools, canal
     } });
     const im = new THREE.InstancedMesh(g, mat, n), m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3();
     litter.forEach((l, i) => {
-      const T = trees[l.ti], size = SIZE[T.sp] * l.s; rect.set(leafRect(T.sp), i * 4); lit.set([l.ti, l.thr, rnd()], i * 3);
+      const T = trees[l.ti], size = SIZE[T.sp] * l.s * (T.k || 1); rect.set(leafRect(T.sp), i * 4); lit.set([l.ti, l.thr, rnd()], i * 3);
       e.set(-Math.PI / 2 + (l.wet ? 0 : (rnd() - 0.5) * 0.7), rnd() * Math.PI * 2, (l.wet ? 0 : (rnd() - 0.5) * 0.7), 'YXZ'); q.setFromEuler(e); if (rnd() < 0.5) q.multiply(FLIP);
       im.setMatrixAt(i, m.compose(p.set(l.x, l.y, l.z), q, s.setScalar(size)));
     });
@@ -122,7 +122,7 @@ export function createLeafFall({ U, COMMON, P, trees, tex, blocked, pools, canal
   }
 
   // ---- leaves in the air: each slot belongs to a tree and falls again and again; how many are showing follows how fast the tree is shedding
-  const NF = lite ? 900 : 2600;
+  const NF = lite ? 1200 : 4000;
   {
     const g = new THREE.InstancedBufferGeometry(); g.index = quad.index; g.setAttribute('position', quad.attributes.position); g.setAttribute('uv', quad.attributes.uv);
     const seed = new Float32Array(NF * 4), tr = new Float32Array(NF * 2); let acc = 0, ti = 0;
@@ -142,7 +142,7 @@ void main(){
   float show = step(h1(n + 0.5), clamp(r1.y * 7.0 * blow, 0.0, 0.92));
   float a = h1(n + 1.3) * 6.2832, rr = sqrt(h1(n + 2.1)) * 0.95, hh = mix(r1.w, r0.w, pow(h1(n + 3.7), 0.7));
   vec3 p0 = vec3(r0.x + cos(a) * rr * r0.z, hh, r0.y + sin(a) * rr * r0.z);
-  float t = u * per, fallen = u * (p0.y - 0.04);
+  float t = u * per, fallen = u * (p0.y - 0.04 - texelFetch(uTreeInfo, ivec2(ti, 4), 0).x);
   vec2 drift = uWindDir * uWind * 1.6 * t * (0.6 + 0.8 * h1(n + 4.4));
   float zig = 0.32 * (0.4 + h1(n + 5.9));                                                    // the side-to-side swing of a falling leaf
   vec3 p = p0 + vec3(drift.x, -fallen, drift.y) + vec3(cos(a + 1.7), 0.0, sin(a + 1.7)) * zig * sin(t * 2.3 + aSeed.z * 6.3) * smoothstep(0.0, 0.8, t);
@@ -152,7 +152,7 @@ void main(){
   // tumble: the leaf rocks about its long axis and turns slowly as it comes
   float ra = sin(t * 2.3 + aSeed.z * 6.3) * 1.1 + t * (h1(n + 6.6) - 0.5) * 3.0, rb = t * (0.6 + h1(n + 7.2)) + aSeed.x * 6.3;
   vec3 ax = vec3(cos(rb), 0.0, sin(rb)), up = vec3(-sin(rb) * sin(ra), cos(ra), cos(rb) * sin(ra));
-  float size = uSizes[sp] * (0.8 + 0.45 * aSeed.y) * show * smoothstep(0.0, 0.04, u) * (1.0 - smoothstep(0.985, 1.0, u));
+  float size = uSizes[sp] * texelFetch(uTreeInfo, ivec2(ti, 4), 0).y * (0.8 + 0.45 * aSeed.y) * show * smoothstep(0.0, 0.04, u) * (1.0 - smoothstep(0.985, 1.0, u));
   vec3 wp = p + (ax * position.x + up * position.y) * size;
   vCol = texelFetch(uTreeInfo, ivec2(ti, 3), 0).rgb * (0.75 + 0.5 * aSeed.z)
     * (uAmb * 1.5 + uSun * 0.55 + groundLight(wp.xz) * uExhibit * uLightGain * clamp(1.25 - wp.y * 0.12, 0.3, 1.25)) * drainAt(wp);
@@ -167,5 +167,7 @@ void main(){ vec4 tx = texture2D(uAtlas, vUv); if (tx.a < 0.4) discard; gl_FragC
   return { group, update, setStats(s) { stats = s; }, info, count: { litter: litter.length, falling: NF } };
 }
 // leaf lengths in metres, stalk included, in species order
-const SIZE = [0.1, 0.13, 0.13, 0.16, 0.16, 0.085, 0.2, 0.1];
+// a fallen leaf's size (m) on a tree at its nominal size: the same leaf as on the bough (a 0.58 m bough card times the species' leaf
+// fraction in tools/build_leafcards.py), times the tree's scale k, so what lies under a tree matches what hangs on it
+const SIZE = [0.082, 0.118, 0.118, 0.138, 0.13, 0.075, 0.158, 0.084];
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);

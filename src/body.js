@@ -109,7 +109,17 @@ export function createBody({ model, U, COMMON }) {
   const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
   const H = v3(), A = v3(), K = v3(), dir = v3(), pole = v3(), kd = v3(), bx = v3(), by = v3(), bz = v3(), tmp = v3(), aim = v3(), sh = v3();
   const q = new THREE.Quaternion(), qP = new THREE.Quaternion(), qT = new THREE.Quaternion(), qS = new THREE.Quaternion(), qI = new THREE.Quaternion(), M = new THREE.Matrix4(), eul = new THREE.Euler();
-  const tune = { crane: 0.2, reach: null };
+  const tune = { crane: 0.2, reach: null, work: null, paneX: 0.2 };
+  // working at the wall: the left forearm comes up with its console, the right hand points at the stone the suit is lifting
+  let workOn = 0, work = 0; const workAim = v3(), wAim = v3(); let hasAim = false;
+  const armLen = { u: joint.armL_L.distanceTo(joint.armU_L), l: joint.hand_L.distanceTo(joint.armL_L) };
+  const qTW = new THREE.Quaternion(), S = v3(), T = v3(), E = v3(), nd = v3(), md = v3(), fw = v3(), upv = v3();
+  const PHI = 0.733, CP = Math.cos(PHI), SP = Math.sin(PHI);                       // the wrist display faces 42 degrees round the forearm from its front
+  // the console: a pane of light the wrist display throws up over the forearm, lettered along the arm
+  const cv = document.createElement('canvas'); cv.width = 640; cv.height = 400; const cg = cv.getContext('2d');
+  const ctex = new THREE.CanvasTexture(cv); ctex.colorSpace = THREE.SRGBColorSpace; ctex.anisotropy = 4;
+  const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.1625), new THREE.MeshBasicMaterial({ map: ctex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, fog: false }));
+  pane.visible = false; pane.renderOrder = 8; root.add(pane);                   // it hangs in the air over the display, square to your eye
   const DOWN = v3(0, -1, 0), UP = v3(0, 1, 0), XA = v3(1, 0, 0);
 
   function leg(sd, u, duty, travel, lift, pelvisPos) {
@@ -153,7 +163,7 @@ export function createBody({ model, U, COMMON }) {
     if (!enabled) return bob;
 
     const down = sstep(0.05, 1.25, -s.pitch), back = EYE.z + tune.crane * down;   // looking down, the head cranes forward over the chest
-    root.position.set(s.x - fx * back, 0, s.z - fz * back); root.rotation.y = s.yaw + Math.PI;
+    root.position.set(s.x - fx * back, s.gy || 0, s.z - fz * back); root.rotation.y = s.yaw + Math.PI;
     own.uBodyFwd.value.set(fx, 0, fz);
     own.uLampDir.value.set(0.5, 0.62, 0.6).normalize().applyAxisAngle(UP, s.yaw + Math.PI);
 
@@ -178,6 +188,40 @@ export function createBody({ model, U, COMMON }) {
         lo.rotation.x = lerp(lo.rotation.x, -0.22, g); lo.rotation.z = lerp(lo.rotation.z, 0, g); hd.rotation.x = lerp(hd.rotation.x, -0.25, g);
       }
     }
+    work += ((tune.work != null ? tune.work : workOn) - work) * Math.min(1, dt * 5); pane.visible = work > 0.02; pane.material.opacity = Math.min(1, work * 1.2) * 0.95;
+    if (work > 0.002) {
+      const w = work * work * (3 - 2 * work), pe = Math.max(-1.0, Math.min(0.3, s.pitch));
+      qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+      E.set(0, EYE.y + bob, back); fw.set(0, Math.sin(pe), Math.cos(pe)); upv.set(0, Math.cos(pe), -Math.sin(pe));
+      { // left arm: two bones to a wrist held up in the lower left of your view, the display turned to your eye
+        const up = B.armU_L, lo = B.armL_L, hd = B.hand_L;
+        S.copy(up.position).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(qP).add(pel.position);
+        T.copy(E).addScaledVector(fw, 0.36).addScaledVector(upv, -0.2); T.x += 0.2;
+        dir.subVectors(T, S); let D = dir.length(); const Dm = armLen.u + armLen.l - 0.004; if (D > Dm) { dir.multiplyScalar(Dm / D); T.addVectors(S, dir); D = Dm; } dir.divideScalar(D);
+        pole.set(1, -0.75, -0.15); kd.copy(pole).addScaledVector(dir, -pole.dot(dir)).normalize();
+        const ca = (armLen.u * armLen.u + D * D - armLen.l * armLen.l) / (2 * armLen.u * D), sa = Math.sqrt(Math.max(0, 1 - ca * ca));
+        K.copy(S).addScaledVector(dir, armLen.u * ca).addScaledVector(kd, armLen.u * sa);
+        by.subVectors(S, K).normalize(); bx.crossVectors(by, kd).normalize(); bz.crossVectors(bx, by); qT.setFromRotationMatrix(M.makeBasis(bx, by, bz));
+        q.copy(qI).multiply(qT); up.quaternion.slerp(q, w);
+        by.subVectors(K, T).normalize(); nd.subVectors(E, T).addScaledVector(by, 0.1); nd.addScaledVector(by, -nd.dot(by)).normalize(); md.crossVectors(by, nd);
+        bz.copy(nd).multiplyScalar(CP).addScaledVector(md, -SP); bx.copy(nd).multiplyScalar(SP).addScaledVector(md, CP); qS.setFromRotationMatrix(M.makeBasis(bx, by, bz));
+        // the forearm's parent is the upper arm as posed this frame
+        q.copy(qTW).multiply(up.quaternion).invert().multiply(qS); lo.quaternion.slerp(q, w); hd.rotation.set(lerp(hd.rotation.x, -0.12, w), 0, lerp(hd.rotation.z, 0, w));
+        // the pane: over the display (taken from where the solved forearm puts it), lifted toward the top of your view, lettered level
+        // (held at a fixed place in the lower left of your view, so it can always be read; the wrist comes up beneath it)
+        pane.position.copy(E).addScaledVector(fw, 0.42).addScaledVector(upv, -0.088); pane.position.x += tune.paneX;
+        bx.set(-1, 0, 0); bz.copy(fw).multiplyScalar(-1); pane.quaternion.setFromRotationMatrix(M.makeBasis(bx, upv, bz));
+      }
+      { // right arm: out toward the stone, elbow a little soft, palm turned to it
+        const up = B.armU_R, lo = B.armL_R, hd = B.hand_R;
+        S.copy(up.position).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(qP).add(pel.position);
+        if (hasAim) { root.updateMatrixWorld(); aim.copy(wAim); root.worldToLocal(aim); } else aim.copy(E).addScaledVector(fw, 3);
+        workAim.lerp(aim, Math.min(1, dt * 9)); tmp.subVectors(workAim, S); if (tmp.lengthSq() < 0.04) tmp.copy(fw); tmp.normalize();
+        tmp.y = Math.max(tmp.y, -0.92); tmp.x -= 0.05; tmp.normalize();
+        q.setFromUnitVectors(DOWN, tmp); q.premultiply(qI); up.quaternion.slerp(q, w * (0.75 + 0.25 * (hasAim ? 1 : 0)));
+        lo.rotation.x = lerp(lo.rotation.x, -0.28, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.55, w * (hasAim ? 1 : 0.4));
+      }
+    }
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
     B.head.rotation.set(-s.pitch * 0.55 - tor.rotation.x * 0.5, 0, 0);
     return bob;
@@ -191,6 +235,12 @@ export function createBody({ model, U, COMMON }) {
     pass(p) { ghost.value = p === 'eye' ? 1 : 0; },
     setInk(k) { own.uInk.value = k; },
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
+    /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
+    setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
+    /** The right palm, in world space: where the suit's lifting beam starts. */
+    palm(out) { return B.hand_R.localToWorld(out.set(0, -0.09, 0.02)); },
+    /** The console's canvas: draw on g (640 x 400), then call done(). */
+    console: { g: cg, w: 640, h: 400, done() { ctex.needsUpdate = true; } },
     get enabled() { return enabled; },
     uniforms: own, bones: B, tune,
   };

@@ -10,6 +10,8 @@ import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
+import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble } from './field.js';
+import { createWalling } from './walling.js';
 import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
@@ -22,7 +24,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · S season speed · R replant · T night / live · M sound · F frame rate';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · B build the wall · S season speed · R replant · T night / live · M sound · F frame rate';
 
 let renderer;
 try {
@@ -93,7 +95,8 @@ const U = {
   uExhibit: { value: 2.6 }, uSunCol: { value: new THREE.Vector3() }, uCam: { value: new THREE.Vector3() },
   uCloud: { value: 0.35 }, uLimit: { value: 5.5 }, uMoonDir: { value: new THREE.Vector3(0, 0.5, -0.8) }, uGalN: { value: new THREE.Vector3(0, 1, 0) }, uGalC: { value: new THREE.Vector3(0, 0, 1) }, uFlashPos: { value: new THREE.Vector3(0, -100, 0) }, uFlashCol: { value: new THREE.Vector3() },
   uGT: { value: 2.6 }, uPlayerF: { value: 1 }, uSeasonTint: { value: new THREE.Vector3(1, 1, 1) },
-  uSnowCover: { value: 0 }, uRainWet: { value: 0 }, uOver: { value: 0 },   // weather: snow lying, wet from rain, overcast
+  uSnowCover: { value: 0 }, uRainWet: { value: 0 }, uOver: { value: 0 },
+  uHead: { value: new THREE.Vector3(-0.42, 0.52, -0.74).normalize() },   // where the bubble is travelling: the nebula lies that way   // weather: snow lying, wet from rain, overcast
 };
 
 const COMMON = /* glsl */`
@@ -466,7 +469,7 @@ const CLOUD_GLSL = `
 let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 {
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit },
+    side: THREE.BackSide, depthWrite: false, uniforms: { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 0 }, uPlayerF: U.uPlayerF, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead },
     vertexShader: `varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
     varying vec3 vD;
@@ -479,14 +482,18 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
     float cloudAt(vec3 d, float t){ if(d.y < 0.012) return 0.0; vec2 p = d.xz/(d.y + 0.14)*1.05 + t*vec2(0.0045, 0.0017);
       float broken = smoothstep(0.72 - 0.5*uCloud, 0.99 - 0.5*uCloud, fbm(p*1.25)*0.78 + fbm(p*3.3 + 9.0)*0.22);
       return max(broken, uOver * (0.86 + 0.14*fbm(p*0.6))) * smoothstep(0.012, 0.14, d.y); }   // uOver: a solid deck, for rain, snow and fog
+    ${SPACE_GLSL}
     void main(){
       vec3 d = normalize(vD);
       vec3 c = mix(vec3(0.014,0.018,0.032), vec3(0.0015,0.002,0.006), smoothstep(-0.02, 0.55, d.y));
+      c += spaceAt(d, uTime);                                   // beyond the bubble: the nebula we are making for, and dust going by
       float band = exp(-pow(dot(d, uGalN), 2.0)*22.0) * (0.55 + 0.9*pow(max(dot(d, uGalC), 0.0), 3.0)) * smoothstep(3.0, 6.0, uLimit);   // the Milky Way, along the true galactic plane, brightest toward Sagittarius
       float n = vn(d.xy*9.0)*0.6 + vn(d.zy*23.0)*0.4;
-      c += vec3(0.018,0.02,0.03) * band * n * smoothstep(-0.05, 0.2, d.y) * (1.0 - uDay);
-      vec3 dayc = mix(vec3(0.56,0.68,0.84), vec3(0.10,0.25,0.62), smoothstep(0.0, 0.6, d.y));
-      c = mix(c, dayc, uDay);
+      c += vec3(0.018,0.02,0.03) * band * n * smoothstep(-0.05, 0.2, d.y);
+      // the bubble holds only a little air: by day it glows blue near the rim and thins to deep indigo overhead, where space still shows
+      vec3 dayc = mix(vec3(0.30,0.43,0.68), vec3(0.012,0.035,0.14), smoothstep(0.0, 0.42, d.y));
+      dayc *= smoothstep(-0.16, 0.0, d.y);                     // below the rim there is no air: you look straight out into space
+      c = c * mix(1.0, 2.3, uDay * smoothstep(0.08, 0.5, d.y)) + dayc * uDay;
       float sd = max(dot(d, uSunDir), 0.0), low = 1.0 - smoothstep(-0.05, 0.45, d.y);
       c += (vec3(1.0,0.42,0.16)*pow(sd, 4.0) + vec3(0.32,0.16,0.30)*0.5) * low * uTwi;
       float up = smoothstep(-0.03, 0.02, uSunDir.y);
@@ -506,7 +513,8 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(470, 32, 16), skyMat);
   sky.renderOrder = -2; scene.add(sky);
-  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit };
+  scene.add(createBubble(U));   // the skin of the bubble the field travels in (field.js)
+  envSkyMat = skyMat.clone(); envSkyMat.uniforms = { uSunDir: U.uSunDir, uDay: U.uDay, uTwi: U.uTwi, uNoSun: { value: 1 }, uPlayerF: { value: 1 }, uTime: U.uTime, uCloud: U.uCloud, uOver: U.uOver, uMoonDir: U.uMoonDir, uGalN: U.uGalN, uGalC: U.uGalC, uLimit: U.uLimit, uHead: U.uHead };
 
   // the real night sky: 5,000 catalogue stars to magnitude 6, plus the five naked-eye planets (the last five entries),
   // laid out on the celestial sphere and turned each frame to the time and place (see updateSky)
@@ -573,6 +581,9 @@ const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSp
 // your own body: a cel-shaded hard suit you see when you look down, and that casts your shadow
 const body = assets.models.astronaut ? createBody({ model: assets.models.astronaut, U, COMMON }) : null;
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
+// the long task: a dry stone wall round the garden, a stint at a time (walling.js)
+let wallDirty = true;
+const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; } });
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true; sunLight.shadow.mapSize.set(G.shadow, G.shadow);
 Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
@@ -939,8 +950,26 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
+// at the wall: while a stint is open these keys belong to the stone in hand, and not to voids, seasons or replanting
+const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN']);
+const wallKey = (e, down) => {
+  if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
+  if (down && e.code === 'KeyB' && !e.repeat) { e.stopImmediatePropagation(); beginStint(); return; }
+  if (!walling.busy || !WALL_KEYS.has(e.code)) return;
+  if (!(down && e.repeat && !/Key[QE]/.test(e.code))) walling.onKey(e.code, down, e.shiftKey);
+  e.preventDefault(); e.stopImmediatePropagation();
+};
+addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyup', e => wallKey(e, false), true);
+addEventListener('wheel', e => { if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
+function beginStint() {
+  if (walling.busy) { setHint('you have a stint open already · P puts it away, Enter twice finishes it', 5000); return; }
+  const st = walling.nearest(player.x, player.z);
+  if (!st) { setHint(walling.stints.every(q => q.state === 'done') ? 'the wall is finished, all the way round' : 'walk up to a pegged-out length of the wall line, then B', 6000); return; }
+  if (isTouch) { setHint('walling needs a mouse and keys for now', 6000); return; }
+  walling.start(st);
+}
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', () => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (walling.busy && walling.onDown(e.button)) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
@@ -1207,7 +1236,7 @@ function applyTimeOfDay() {
   U.uFogColor.value.copy(FOG_NIGHT).lerp(FOG_DAY, day).lerp(FOG_TWI, twi * 0.5 * (1 - day * 0.6));
   U.uFogColor.value.lerp(_fogGrey.setRGB(0.34, 0.36, 0.39).multiplyScalar(0.03 + 0.97 * day), WX.over * 0.85);
   U.uLightGain.value = (1 - 0.45 * sstep(0.12, 0.5, sy)) * S.exhibit;   // the exhibit's lights stay up until the sun is well clear of the wall
-  U.uStarGain.value = (1 - day) ** 3 * (1 - WX.over);
+  U.uStarGain.value = Math.max((1 - day) ** 3, 0.3) * (1 - WX.over);   // the brighter stars stay out by day, through the thin air overhead
   MOON_DIR.copy(SKY.moon); U.uMoonDir.value.copy(SKY.moon);
   moon.visible = SKY.moon.y > -0.02 && WX.over < 0.7; moonHalo.visible = moon.visible && day < 0.6;
   scene.fog.color.copy(U.uFogColor.value);
@@ -1289,6 +1318,13 @@ const SETTINGS = [
   { id: 'autumnRain', tab: 'garden', label: 'Rainfall', kind: 'range', min: 0.6, max: 1.8, step: 0.05, fmt: fmtPct, get: () => S.autumnRain, set: v => { S.autumnRain = v; save(); applyAutumn(); },
     note: 'a dry spell sharpens the reds; drought browns leaves and drops them early' },
   { id: 'autumnFrost', tab: 'garden', label: 'Early hard frost', kind: 'toggle', get: () => S.autumnFrost, set: v => { S.autumnFrost = v; save(); applyAutumn(); }, note: 'the first week of October: leaves are killed green and brown where they hang' },
+  { id: 'wallInfo', tab: 'wall', group: 'The wall', label: '', kind: 'info', get: wallSummary },
+  { id: 'wallStone', tab: 'wall', label: 'Stone', kind: 'choice', options: walling.types, get: () => walling.stone, set: v => { walling.stone = v; },
+    note: 'for the next stint you begin; one already begun keeps its stone' },
+  { id: 'wallBegin', tab: 'wall', label: 'Begin the nearest stint', kind: 'action', set: () => { drawer.close(); beginStint(); } },
+  { id: 'wallPause', tab: 'wall', label: 'Put this stint away', kind: 'action', set: () => walling.pause() },
+  { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
+  { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
@@ -1392,7 +1428,8 @@ try {
 for (const c of SETTINGS) if (c.hands && hands) c.onHand = () => hands.recenter(c.id);
 const handsIcon = size => { try { return IH.icon({ size }); } catch (e) { return null; } };
 drawer = createDrawer({
-  tabs: [{ id: 'garden', label: 'Garden' }, { id: 'voids', label: 'Voids' }, { id: 'light', label: 'Light' }, { id: 'gfx', label: 'Graphics' },
+  tabs: [{ id: 'garden', label: 'Garden' }, { id: 'wall', label: 'Wall', intro: 'A dry stone wall goes round the garden where the pegs and strings are: 92 lengths of about three metres. Walk up to one from the field side and press B. Your suit brings the stone and lifts what you point at; you choose each stone, turn it, and set it. Foundations first, long way into the wall; two faces leaning in to the strings; every joint crossed by the stone above; hearting packed in the middle; through stones across at half height; copes on edge along the top. Finished stints are kept in this browser.' },
+    { id: 'voids', label: 'Voids' }, { id: 'light', label: 'Light' }, { id: 'gfx', label: 'Graphics' },
     { id: 'hands', label: 'Hands', icon: handsIcon(12), intro: 'Invisible Hands lets another app, or the console on a phone, move this garden’s controls over the internet, and read its light and clocks back. Controls with the mark can be moved. Start a room, then open the console with the same room.' }],
   controls: SETTINGS, tag: hands ? id => hands.tag(id) : null,
   onOpenChange: open => { if (open && document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1477,17 +1514,19 @@ function update(dt, t) {
     tmpV.set(player.x - v.pos.x, 0, player.z - v.pos.z); const dh = tmpV.length(), minD = v.R + 1.0;
     if (dh < minD) { tmpV.setLength(minD); player.x = v.pos.x + tmpV.x; player.z = v.pos.z + tmpV.z; }
   }
-  player.x = Math.max(layout.B.x0 + 0.4, Math.min(layout.B.x1 - 0.4, player.x)); player.z = Math.max(layout.B.z0 + 0.4, Math.min(layout.B.z1 - 0.4, player.z));
+  { const rx = player.x - CENTRE.x, rz = player.z - CENTRE.z, r = Math.hypot(rx, rz), lim = RIM - 2.2; if (r > lim) { player.x = CENTRE.x + rx * lim / r; player.z = CENTRE.z + rz * lim / r; } }   // the bubble's skin is as far as you can go
+  const groundY = heightAt(player.x, player.z);
 
   const moving = Math.min(1, Math.hypot(mx, mz));
   bobPhase += dt * moving * speed * 2.2;
   // with a body, the eye bobs with its footfalls; without one, the old slow sway
-  const bob = body ? body.update(dt, { x: player.x, z: player.z, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
-  camera.position.set(player.x, 1.65 + bob, player.z);
+  const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
+  player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = 70 + 7 * near; camera.updateProjectionMatrix();
   if (body) body.setInk(0.0027 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));   // ink lines a constant width on screen
   camera.updateMatrixWorld();
+  stepWalling(dt, t);
   if (SKY) {   // the celestial sphere and the moon travel with you, so they sit at infinity
     starsObj.matrix.copy(_skyM).setPosition(camera.position); starsObj.matrixWorldNeedsUpdate = true; U.uLimit.value = S.limit;
     const r = 420 * Math.tan(SKY.moonRadius) * S.moonSize;
@@ -1588,7 +1627,58 @@ function frame() {
 }
 requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden';
+// ------------------------------------------------------------------ at the wall: the suit's reach, the pose, and the forearm console
+const _aimW = new THREE.Vector3(), _aimT = new THREE.Vector3(); let wallPromptAt = 0, wallPrompt = -1, consoleAt = 0;
+function stepWalling(dt, t) {
+  if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand);
+    body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.145)); }   // keep the console inside a narrow window
+  else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
+  walling.update(dt, t, player.x, player.z);
+  if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
+    const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
+    if (id !== wallPrompt) { wallPrompt = id; if (st && !isTouch) setHint(st.state === 'paused' ? `B · take up stint ${id + 1} again` : `B · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } }
+  wallKeysEl.style.opacity = walling.busy && !(drawer && drawer.isOpen) ? 0.85 : 0;
+  if (body && (wallDirty || (walling.busy && t - consoleAt > 0.2))) { wallDirty = false; consoleAt = t; drawConsole(); drawer && drawer.sync && drawer.sync('wallInfo'); }
+}
+const CLS_NAME = { foundation: 'FOUNDATION', builder: 'BUILDER', through: 'THROUGH', cope: 'COPE', hearting: 'HEARTING', pinning: 'PIN' };
+function drawConsole() {
+  const { g, w, h, done } = body.console, st = walling.status(), a = st.active; g.clearRect(0, 0, w, h);
+  g.fillStyle = 'rgba(20, 90, 110, 0.22)'; g.fillRect(0, 0, w, h); g.strokeStyle = 'rgba(120, 240, 255, 0.9)'; g.lineWidth = 4; g.strokeRect(5, 5, w - 10, h - 10);
+  const cy = '#9ff4ff', dim = 'rgba(159, 244, 255, 0.6)', warn = '#ffc46b', good = '#9dffb0', F = px => `600 ${px}px ui-monospace, Menlo, Consolas, monospace`;
+  g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = cy; g.font = F(40); g.fillText(a ? `STINT ${a.id + 1}/${st.stints}` : 'THE WALL', 24, 56);
+  g.textAlign = 'right'; g.fillStyle = dim; g.font = F(30); g.fillText(`${st.done} BUILT`, w - 24, 54); g.textAlign = 'left';
+  g.fillStyle = 'rgba(120, 240, 255, 0.5)'; g.fillRect(24, 72, w - 48, 3);
+  if (!a) { g.fillStyle = dim; g.font = F(34); g.fillText('B  BEGIN A STINT', 24, 140); done(); return; }
+  if (a.delivering < 1) { g.fillStyle = cy; g.font = F(40); g.fillText('BRINGING STONE', 24, 142); g.strokeRect(24, 170, w - 48, 30); g.fillRect(24, 170, (w - 48) * a.delivering, 30); done(); return; }
+  const o = a.held || a.hover;
+  if (o) { g.fillStyle = a.held ? '#ffffff' : cy; g.font = F(54); g.fillText(CLS_NAME[o.cls] || o.cls, 24, 138);
+    g.textAlign = 'right'; g.font = F(44); g.fillText(`${o.kg < 10 ? o.kg.toFixed(1) : o.kg.toFixed(0)} kg`, w - 24, 136); g.textAlign = 'left'; }
+  else { g.fillStyle = dim; g.font = F(36); g.fillText('POINT · CLICK LIFTS', 24, 132); }
+  // lift: how much of the suit's strength the stone is taking
+  g.strokeStyle = 'rgba(120, 240, 255, 0.8)'; g.lineWidth = 3; g.strokeRect(24, 158, w - 48, 24);
+  if (a.held) { const e = a.held.effort; g.fillStyle = e > 0.85 ? warn : cy; g.fillRect(24, 158, (w - 48) * e, 24); }
+  const n = a.notes;
+  if (n) {
+    const rows = [['FOOTING', `${Math.round(n.footings * 100)}%`, n.footings > 0.85], ['HEIGHT', `${n.height.toFixed(2)} m`, n.height > n.target * 0.9],
+      ['HEARTING', `${Math.round(n.hearting * 100)}%`, n.hearting > 0.7], ['THROUGHS', `${n.throughs}`, n.throughs >= 2],
+      ['RUN JOINTS', `${n.running}`, n.running === 0], ['COPES', `${Math.round(n.copes * 100)}%`, n.copes > 0.85]];
+    g.font = F(30);
+    rows.forEach((r, i) => { const x = 24 + (i % 2) * 304, y = 240 + Math.floor(i / 2) * 50; g.fillStyle = dim; g.fillText(r[0], x, y); g.textAlign = 'right'; g.fillStyle = r[2] ? good : warn; g.fillText(r[1], x + 286, y); g.textAlign = 'left'; });
+  }
+  done();
+}
+// the keys, along the bottom while a stint is open
+const wallKeysEl = document.createElement('div');
+wallKeysEl.style.cssText = 'position:fixed;left:50%;top:40px;transform:translateX(-50%);font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;color:#bff6ff;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center;white-space:nowrap;z-index:5';
+wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish';
+document.body.append(wallKeysEl);
+function wallSummary() {
+  const st = walling.status(), left = walling.stints.filter(q => q.state === 'paused').length;
+  return `${st.done} of ${st.stints} stints standing · ${st.metres.toFixed(0)} m of ${walling.stints.reduce((a, q) => a + q.L, 0).toFixed(0)} m` + (left ? ` · ${left} left half-built` : '') + (st.active ? ` · stint ${st.active.id + 1} open` : '') + (st.physFail ? ` · physics unavailable here (${st.physFail})` : '');
+}
+
 window.__umbra = { // debug handle
+  walling, beginStint,
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
     const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }

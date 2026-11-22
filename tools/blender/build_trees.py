@@ -193,6 +193,20 @@ def colour(ob, values):
     c = np.ones((len(me.vertices), 4), np.float32); c[:, 0] = c[:, 1] = c[:, 2] = values; col.data.foreach_set('color', c.ravel()); me.update()
 
 # ----------------------------------------------------------------------------------------------- build
+def build_wood_lo(name, trunk, prim, sec):
+    """The same tree for the wood out in the field, seen from a distance or among many: trunk and limbs as plain tubes, no twigs, no fused collar."""
+    thin = lambda L, k: (np.concatenate([L['p'][:-1:k], L['p'][-1:]]), np.concatenate([L['r'][:-1:k], L['r'][-1:]]))
+    bm = bmesh.new(); p, r = thin(trunk, 2); tube(bm, p, r, 8, True)
+    for L in prim:
+        p, r = thin(L, 2)
+        if len(p) >= 2: tube(bm, p, r * 1.08, 5)
+    for L in sec:
+        p, r = thin(L, 3)
+        if len(p) >= 2: tube(bm, p, np.maximum(r, 0.012), 3)
+    ob = to_object(bm, name + '_woodlo'); ob.data.validate()
+    for poly in ob.data.polygons: poly.use_smooth = True
+    return ob
+
 bpy.ops.wm.read_factory_settings(use_empty=True); scene = bpy.context.scene
 made = []; DL, DW = sky_dirs(28), sky_dirs(14, 5)
 for vi, (name, kind, seed) in enumerate((('tree_round_a', 'round', 11), ('tree_round_b', 'round', 29), ('tree_weep', 'weep', 47), ('tree_birch', 'birch', 61), ('tree_oak', 'oak', 83), ('tree_cone', 'cone', 97))):
@@ -209,8 +223,14 @@ for vi, (name, kind, seed) in enumerate((('tree_round_a', 'round', 11), ('tree_r
         for d in DW: w = max(0.12, v.normal.dot(d)); tot += w * sky_seen(v.co + v.normal * 0.02, d, bw, bl); wt += w
         wv.append(tot / wt)
     colour(wood, 0.36 + 0.64 * np.array(wv) ** 0.8)
-    print(f'{name}: wood {len(wood.data.vertices)} vertices, {len(cards)} boughs, mean sky {np.mean(seen):.2f}', flush=True)
-    made += [wood, leaves]
+    lo = build_wood_lo(name, trunk, prim, sec); lv = []
+    for v in lo.data.vertices:
+        tot = wt = 0.0
+        for d in DW: w = max(0.12, v.normal.dot(d)); tot += w * sky_seen(v.co + v.normal * 0.03, d, bw, bl); wt += w
+        lv.append(tot / wt)
+    colour(lo, 0.36 + 0.64 * np.array(lv) ** 0.8)
+    print(f'{name}: wood {len(wood.data.vertices)} vertices (far {len(lo.data.vertices)}), {len(cards)} boughs, mean sky {np.mean(seen):.2f}', flush=True)
+    made += [wood, leaves, lo]
 
 # ----------------------------------------------------------------------------------------------- export
 bark = bpy.data.materials.new('bark'); bark.diffuse_color = (0.3, 0.24, 0.18, 1); leafm = bpy.data.materials.new('lime leaves'); leafm.diffuse_color = (0.25, 0.42, 0.1, 1)

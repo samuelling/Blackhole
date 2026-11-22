@@ -10,6 +10,7 @@ import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 import { plantState, flagsFor, lawnTint } from './seasons.js';
 import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
 import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
+import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall } from './field.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -305,7 +306,11 @@ float a2cA = clamp(mix((diffuseColor.a - alphaTest) / max(fwidth(diffuseColor.a)
   }
   const std = (params, o = {}) => patch(new THREE.MeshStandardMaterial(Object.assign({ roughness: 0.85, metalness: 0 }, params)), o);
   const depth = (map, o = {}) => patch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: map || null, alphaTest: map ? 0.4 : 0 }), Object.assign({}, o, { depth: true }));
-  return { patch, std, depth };
+  // another library's standard material (Dry Stack's stone): its own vertex stage is kept, the garden's light, weather and voids go into the fragment
+  const fragOnly = sh => { Object.assign(sh.uniforms, U);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + FHEAD).replace('#include <opaque_fragment>', FDRAIN + '\n#include <opaque_fragment>')
+      .replace('#include <lights_physical_fragment>', FWEATHER + '\n#include <lights_physical_fragment>'); };
+  return { patch, std, depth, fragOnly };
 }
 
 // ======================================================================= small texture helpers
@@ -353,11 +358,22 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   // ---------------------------------------------------------------- collisions (25 cm grid)
   const CG = 4, CW = MAP.s * CG, colliders = new Uint8Array(CW * CW);
   const block = (x, z, r) => {
+    if (x < MAP.x0 || z < MAP.z0 || x > MAP.x0 + MAP.s || z > MAP.z0 + MAP.s) { blockFar(x, z, r); return; }
     const i0 = Math.floor((x - r - MAP.x0) * CG), i1 = Math.ceil((x + r - MAP.x0) * CG), j0 = Math.floor((z - r - MAP.z0) * CG), j1 = Math.ceil((z + r - MAP.z0) * CG);
     for (let j = Math.max(0, j0); j <= Math.min(CW - 1, j1); j++) for (let i = Math.max(0, i0); i <= Math.min(CW - 1, i1); i++) {
       const cx = i / CG + MAP.x0 + 0.125, cz = j / CG + MAP.z0 + 0.125; if ((cx - x) ** 2 + (cz - z) ** 2 <= r * r) colliders[j * CW + i] = 1; }
   };
-  const blocked = (x, z) => { const i = Math.floor((x - MAP.x0) * CG), j = Math.floor((z - MAP.z0) * CG); return i < 0 || j < 0 || i >= CW || j >= CW ? false : colliders[j * CW + i] === 1; };
+  // the dry stone wall, as it is built (walling.js): marked 2, so it can be cleared again without touching the garden's own
+  const blockWall = (x, z, r) => { const i0 = Math.floor((x - r - MAP.x0) * CG), i1 = Math.ceil((x + r - MAP.x0) * CG), j0 = Math.floor((z - r - MAP.z0) * CG), j1 = Math.ceil((z + r - MAP.z0) * CG);
+    for (let j = Math.max(0, j0); j <= Math.min(CW - 1, j1); j++) for (let i = Math.max(0, i0); i <= Math.min(CW - 1, i1); i++) if (!colliders[j * CW + i]) colliders[j * CW + i] = 2; };
+  const clearWall = () => { for (let i = 0; i < colliders.length; i++) if (colliders[i] === 2) colliders[i] = 0; };
+  const farTrunks = new Map();   // beyond the grid (the field's trees): trunks by 8 m cell
+  const blockFar = (x, z, r) => { const key = Math.floor(x / 8) + ',' + Math.floor(z / 8); let L = farTrunks.get(key); if (!L) farTrunks.set(key, L = []); L.push(x, z, r); };
+  const blocked = (x, z) => { const i = Math.floor((x - MAP.x0) * CG), j = Math.floor((z - MAP.z0) * CG);
+    if (i >= 0 && j >= 0 && i < CW && j < CW) return colliders[j * CW + i] !== 0;
+    const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
+    for (let a = cx - 1; a <= cx + 1; a++) for (let b = cz - 1; b <= cz + 1; b++) { const L = farTrunks.get(a + ',' + b); if (!L) continue; for (let k = 0; k < L.length; k += 3) if ((x - L[k]) ** 2 + (z - L[k + 1]) ** 2 < L[k + 2] * L[k + 2]) return true; }
+    return false; };
 
   // ---------------------------------------------------------------- ground masks
   // mask 1: R lawn, G bed soil, B gravel (black = setts paving).  mask 2: R setts edging, G contact shadow, B wetness.
@@ -408,7 +424,8 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
       Object.assign(sh.uniforms, { tLD: { value: G.lawn.diff }, tSD: { value: G.soil.diff }, tSN: { value: G.soil.nor },
         tGD: { value: G.grav.diff }, tGN: { value: G.grav.nor }, tGA: { value: G.grav.arm }, tPD: { value: G.sett.diff }, tPN: { value: G.sett.nor }, tPA: { value: G.sett.arm } });
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-uniform sampler2D uGroundMask, uGroundMask2, tLD, tSD, tSN, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;`)
+uniform sampler2D uGroundMask, uGroundMask2, tLD, tSD, tSN, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
+${FIELD_GLSL}`)
         .replace('#include <map_fragment>', `
 vec2 gq = vWPos.xz; ${MASKUV}
 vec4 gm = texture2D(uGroundMask, muv), g2 = texture2D(uGroundMask2, muv);
@@ -423,11 +440,15 @@ float wS = smoothstep(0.36, 0.6, gm.g + nz * 0.2) * (1.0 - wG) * (1.0 - wP);
 float wL = max(0.0, 1.0 - wG - wS - wP);
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
+float fld = fieldF(gq);               // beyond the wall line the lawn runs out into field
 float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;
 float gmix = smoothstep(0.35, 0.65, vnoise(gq * 0.45));
-float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 1.0) * (1.0 - mead);
-vec3 cL = texture2D(tLD, uvL).rgb * vec3(0.74, 1.0, 0.46) * 1.08 * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * uSeasonTint;
+float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 1.0) * (1.0 - mead) * (1.0 - fld);
+vec3 cL = texture2D(tLD, uvL).rgb * vec3(0.74, 1.0, 0.46) * 1.08 * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * mix(vec3(1.0), vec3(0.62, 0.86, 0.5) * (0.8 + 0.3 * vnoise(gq * 0.09)), fld) * uSeasonTint;
+{ vec3 tl = texture2D(tLD, uvL).rgb;   // the field: the same turf seen through long grass, so it takes the blades' green and no soil shows between them
+  cL = mix(cL, dot(tl, vec3(0.333)) * vec3(0.30, 0.62, 0.14) * (0.8 + 0.35 * vnoise(gq * 0.09)) * gmacro * uSeasonTint, fld); }
+cL *= mix(vec3(1.0), vec3(1.12, 1.02, 0.8), workF(gq));
 vec3 cS = texture2D(tSD, uvS).rgb * (0.85 + 0.3 * vnoise(gq * 0.6)) * 0.85;
 vec3 cG = pow(mix(texture2D(tGD, uvG).rgb, texture2D(tGD, uvG2).rgb, gmix), vec3(1.4)) * vec3(0.9, 0.82, 0.7) * (0.8 + 0.3 * vnoise(gq * 0.35));
 float gmac = vnoise(gq * 0.9) * 0.6 + vnoise(gq * 3.1) * 0.4;
@@ -441,11 +462,11 @@ float gWet = g2.b * (wG + wP + wS * 0.5);
 vec3 gAlb = (cL * wL + cS * wS + cG * wG + cP * wP) * mix(1.0, gArm.r, 0.8) * mix(1.0, g2.g, 0.9) * mix(1.0, 0.55, gWet);
 diffuseColor.rgb *= gAlb;`)
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(max(gArm.g, 0.8), 0.16, gWet * 0.85), 0.05, 1.0);')
-        .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(normalize(vec3(gN.x, gN.z + 0.35, gN.y)), 0.0)).xyz);');
+        .replace('#include <normal_fragment_maps>', '{ vec3 fn = fieldN(gq); normal = normalize((viewMatrix * vec4(normalize(vec3(gN.x, gN.z + 0.35, gN.y) + vec3(fn.x, 0.0, fn.z) * 1.35), 0.0)).xyz); }');
     },
   });
   groundMat.envMapIntensity = 0.35;   // gravel in shade should not mirror the sky
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(420, 420).rotateX(-Math.PI / 2), groundMat);
+  const ground = new THREE.Mesh(groundGeometry(), groundMat);   // out to the bubble's rim, rolling beyond the plateau (field.js)
   ground.receiveShadow = true; scene.add(ground);
 
   // ---------------------------------------------------------------- lawn: two tiers of GPU grass blades that follow the walker
@@ -468,6 +489,7 @@ diffuseColor.rgb *= gAlb;`)
       key: 'grass', translucent: true, extra: sh => {
         sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
 attribute vec4 aOff; attribute float aTier; uniform vec3 uCam; uniform sampler2D uGroundMask; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
+${FIELD_GLSL}
 float ghash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float gnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(ghash(i), ghash(i + vec2(1, 0)), f.x), mix(ghash(i + vec2(0, 1)), ghash(i + vec2(1, 1)), f.x), f.y); }`)
           .replace('#include <beginnormal_vertex>', `
@@ -478,11 +500,13 @@ ${MASKUV}
 float lawn = mout ? 1.0 : texture2D(uGroundMask, muv).r;
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
+mead = max(mead, fieldF(gq) * (0.3 + 0.35 * gnoise(gq * 0.11)));   // field grass: longer, in drifts
+float gwork = workF(gq); mead *= 1.0 - 0.95 * gwork;
 float gd = length(gq - gc);
 float fade = aTier < 0.5 ? 1.0 - smoothstep(tile * 0.5 - 2.2, tile * 0.5 - 0.4, gd) : smoothstep(3.2, 5.6, gd) * (1.0 - smoothstep(tile * 0.5 - 6.0, tile * 0.5 - 1.0, gd));
 float r1 = aOff.z, r2 = aOff.w, r3 = fract(aOff.z * 91.7 + aOff.w * 37.3);
 float clump = gnoise(gq * 1.6);
-float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade;
+float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), 105.0) * (1.0 - 0.45 * gwork);
 float gang = r2 * 6.2831;
 vec2 gside = vec2(cos(gang), sin(gang)), gface = vec2(-gside.y, gside.x);
 float stripe = sign(sin(gq.x * 3.14159 / 1.5));
@@ -492,7 +516,7 @@ vec3 objectNormal = normalize(vec3(gface.x, 0.0, gface.y) + vec3(gside.x, 0.0, g
           .replace('#include <begin_vertex>', `
 float gw = mix(0.0052, 0.0085, r3) * (1.0 + mead * 0.6) * (aTier < 0.5 ? 1.0 : 1.0 + gd * 0.12) * step(0.004, gh) * (1.0 - pow(gy, 1.6) * 0.9);
 float gbend = (0.22 + 0.4 * r3) * (1.0 + mead * 0.8);
-vec3 transformed = vec3(gq.x, gy * gh * (1.0 - 0.22 * gbend * gy), gq.y);
+vec3 transformed = vec3(gq.x, fieldH(gq) + gy * gh * (1.0 - 0.22 * gbend * gy), gq.y);
 transformed.xz += gside * position.x * gw * 2.0 + glean * gy * gy * gh * gbend;
 float gph = dot(gq, uWindDir) * 0.8 - uTime * 2.2;
 float gwave = 0.55 + 0.3 * sin(gph) + 0.15 * sin(gph * 2.7 + 1.3);
@@ -971,14 +995,16 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       block(x, z, s * 0.7); aoBlob(x, z, 1.2, 0.5);
     };
     const o = T / 2, gw = layout.gate.hw + 0.41;
-    wall(B.x0 - o, B.z0 - o, B.x1 + o, B.z0 - o); wall(B.x0 - o, B.z0 - o, B.x0 - o, B.z1 + o); wall(B.x1 + o, B.z0 - o, B.x1 + o, B.z1 + o);
-    wall(B.x0 - o, B.z1 + o, -gw, B.z1 + o); wall(gw, B.z1 + o, B.x1 + o, B.z1 + o);
-    pier(-gw, B.z1 + o); pier(gw, B.z1 + o);
-    for (const [x, z] of [[B.x0 - o, B.z0 - o], [B.x1 + o, B.z0 - o], [B.x0 - o, B.z1 + o], [B.x1 + o, B.z1 + o]]) pier(x, z, 0.7, H + 0.25);
+    // The brick wall is gone: the garden now stands open in its field, and the wall round it is yours to build in dry stone (walling.js).
+    // Only the gate and its two piers remain, to show where the wall will meet them.
+    if (layout.brickWall) { wall(B.x0 - o, B.z0 - o, B.x1 + o, B.z0 - o); wall(B.x0 - o, B.z0 - o, B.x0 - o, B.z1 + o); wall(B.x1 + o, B.z0 - o, B.x1 + o, B.z1 + o);
+      wall(B.x0 - o, B.z1 + o, -gw, B.z1 + o); wall(gw, B.z1 + o, B.x1 + o, B.z1 + o);
+      for (const [x, z] of [[B.x0 - o, B.z0 - o], [B.x1 + o, B.z0 - o], [B.x0 - o, B.z1 + o], [B.x1 + o, B.z1 + o]]) pier(x, z, 0.7, H + 0.25); }
+    pier(-gw, B.z1 + o, 0.82, 2.1); pier(gw, B.z1 + o, 0.82, 2.1);
     if (copingW.length) instanced(propParts.coping_wall, stoneMat, copingW, tones(copingW.length));
   }
-  // ivy, in patches, on the inside faces of the wall
-  {
+  // ivy, in patches, on the inside faces of the wall (only if the brick wall stands)
+  if (layout.brickWall) {
     const ivyMat = P.std(cut({ map: TX.card_ivy, normalMap: TX.card_ivy_n, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.4 }), { sway: 0.03, swayH: 2, translucent: true, key: 'ivy' }), ivyDepth = P.depth(TX.card_ivy, {});
     const faces = [[B.x0, B.z0, B.x1, B.z0, 0, 1], [B.x0, B.z0, B.x0, B.z1, 1, 0], [B.x1, B.z0, B.x1, B.z1, -1, 0], [B.x0, B.z1, -2.2, B.z1, 0, -1], [2.2, B.z1, B.x1, B.z1, 0, -1]];
     for (const [x0, z0, x1, z1, nx, nz] of faces) {
@@ -1062,8 +1088,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
 
   // ---------------------------------------------------------------- trees: limbs fused in Blender with scanned bark; canopies of leafy twigs, a species each
   const TREES = [], treeSp = {};
-  const BELT = [[-33, 44, 4.6, 'saccharum'], [-34, 18, 5.2, 'rubra'], [-33.5, -9, 4.4, 'lime'], [-31, -36, 5.4, 'rubrum'], [-8, -38, 4.8, 'saccharum'], [14, -37.5, 5.6, 'rubra'], [32, -33, 4.6, 'liquidambar'],
-    [34, -6, 5.2, 'papyrifera'], [33.5, 22, 4.6, 'saccharum'], [32.5, 47, 5.4, 'biloba'], [-16, 61, 4.4, 'rubrum'], [17, 61.5, 5.0, 'lime']];
+  const BELT = [];   // the trees that stood just outside the brick wall have gone with it: the wood (field.js) begins beyond the walling yards
   {
     const BK = TX.bark_brown_02;
     const barkMat = P.std({ map: BK.diff, normalMap: BK.nor, aoMap: BK.arm, roughnessMap: BK.arm, roughness: 1, normalScale: new THREE.Vector2(1.3, 1.3) }, { sway: 0.02, swayH: 9, key: 'bark' });
@@ -1073,7 +1098,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       { sway: 0.1, swayH: 6, translucent: true, key: 'treeleaf', grow: true, part: 'leaf', puff: true, atlas: true, extra: sh => patchCanopy(sh, U, false) });
     const leafD = P.depth(TX.trees_atlas, { sway: 0.1, swayH: 6, key: 'treeleaf', grow: true, part: 'leaf', atlas: true, extra: sh => patchCanopy(sh, U, true) });
     const spOf = T => SP_INDEX[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')];
-    const addTree = (T, pid, inside) => { TREES.push({ x: T.x, z: T.z, A: T.A, B: T.B, cy: T.cy, sp: spOf(T), pid, inside }); treeSp[pid] = spOf(T); };
+    const addTree = (T, pid, inside) => { TREES.push({ x: T.x, z: T.z, gy: heightAt(T.x, T.z), A: T.A, B: T.B, cy: T.cy, sp: spOf(T), pid, inside, k: T.k || 1 }); treeSp[pid] = spOf(T); };
     const pos = [], uvs = [], idx = [], cards = [];
     const limb = (pts, r0, r1, flare = 0, sides = 10) => {   // pts: V3[]; a smooth tube along a Catmull-Rom curve
       const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'), len = curve.getLength(), n = Math.max(3, Math.ceil(len / (r0 > 0.08 ? 0.3 : 0.22))), base = pos.length / 3;
@@ -1128,7 +1153,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     // --- trees from Blender: three variants, each a fused trunk-and-limb mesh plus a few thousand boughs with baked sky shading
     const TV = {}, VAR = ['tree_round_a', 'tree_round_b', 'tree_weep', 'tree_birch', 'tree_oak', 'tree_cone'];
     const NOM = { tree_round_a: [3.25, 7.0], tree_round_b: [3.25, 7.0], tree_weep: [3.25, 7.0], tree_birch: [2.1, 8.1], tree_oak: [4.0, 6.8], tree_cone: [2.5, 8.2] };   // each form's crown radius and top (build_trees.py)
-    if (assets.models.trees) assets.models.trees.traverse(o => { if (!o.isMesh) return; const m = /^(tree_.+)_(wood|leaves)$/.exec(o.name); if (m) (TV[m[1]] = TV[m[1]] || {})[m[2]] = o.geometry; });
+    if (assets.models.trees) assets.models.trees.traverse(o => { if (!o.isMesh) return; const m = /^(tree_.+)_(woodlo|wood|leaves)$/.exec(o.name); if (m) (TV[m[1]] = TV[m[1]] || {})[m[2]] = o.geometry; });
     const blender = VAR.every(k => TV[k] && TV[k].wood && TV[k].leaves && TV[k].leaves.index && TV[k].leaves.attributes.uv), vCards = {}, woodM = {};
     const cardsOf = g => {   // each bough is a quad in the file; recover its frame (base, across, along) so it can be instanced
       const Pa = g.attributes.position, UVa = g.attributes.uv, Ca = g.attributes.color, I = g.index.array, out = [];
@@ -1139,29 +1164,40 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
         out.push({ m: new THREE.Matrix4().makeBasis(x, y, z).setPosition(base), c: Ca ? Ca.getX(ids[0]) : 1 }); }
       return out; };
     const woodC = {};
-    if (blender) for (const k of VAR) { vCards[k] = cardsOf(TV[k].leaves); woodM[k] = []; woodC[k] = []; }
-    const plantTree = (T, thin) => {
+    if (blender) for (const k of VAR) { vCards[k] = cardsOf(TV[k].leaves); woodM[k] = []; woodC[k] = []; woodM[k + '~'] = []; woodC[k + '~'] = []; }
+    // a bough in its tree: it stays where the tree's shape puts it and keeps its heading, but its size is its own times kL in every direction
+    const _bx = new V3(), _by = new V3(), _bz = new V3(), _bp = new V3();
+    const boughM = (M, cm, kL) => { const W = M.clone().multiply(cm); _bx.setFromMatrixColumn(cm, 0); const s0 = _bx.length() * kL;
+      _bx.setFromMatrixColumn(W, 0); _by.setFromMatrixColumn(W, 1).normalize(); _bp.setFromMatrixPosition(W);
+      _bx.addScaledVector(_by, -_bx.dot(_by)).normalize(); _bz.crossVectors(_bx, _by);
+      return W.makeBasis(_bx.multiplyScalar(s0), _by.multiplyScalar(s0), _bz.multiplyScalar(s0)).setPosition(_bp); };
+    const plantTree = (T, thin, far) => {
       const tpid = registerPlant('tree', T.x, 0, T.z, T.x, T.cy, T.z), r0 = 0.15 * T.s + 0.07;
       block(T.x, T.z, r0 + 0.32); aoBlob(T.x, T.z, 1.1, 0.6); aoBlob(T.x, T.z, T.A * 1.25, 0.26);
       const k = T.kind === 'weep' ? VAR[2] : T.kind === 'birch' ? VAR[3] : T.kind === 'oak' ? VAR[4] : T.kind === 'cone' ? VAR[5] : VAR[ihash(Math.floor(T.x * 7), Math.floor(T.z * 7), 3) < 0.5 ? 0 : 1];
-      const sxz = T.A / NOM[k][0], M = new THREE.Matrix4().compose(new V3(T.x, 0, T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / NOM[k][1], sxz));
-      woodM[k].push(M); woodC[k].push(HABIT[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')].bark); addTree(T, tpid, layout.inWalls(T.x, T.z));
+      const sxz = T.A / NOM[k][0], M = new THREE.Matrix4().compose(new V3(T.x, heightAt(T.x, T.z), T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / NOM[k][1], sxz));
+      // leaves keep proportion with their tree: one scale per tree (its linear size against the form it was grown from), the same along
+      // every axis, so a tall narrow tree's leaves are not stretched and a tree twice the size carries leaves twice the size
+      const sy = (T.cy + T.B) / NOM[k][1], kL = Math.cbrt(sxz * sxz * sy); T.k = kL;
+      { const wk = far && TV[k].woodlo ? k + '~' : k; woodM[wk].push(M); woodC[wk].push(HABIT[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')].bark); } addTree(T, tpid, layout.inWalls(T.x, T.z));
       // how much sky a bough sees (baked in Blender) is how sunlit its leaves are: the outside of the crown turns first and reddest
-      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: M.clone().multiply(c.m), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: thin > 1 ? 1.3 : 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
+      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: boughM(M, c.m, kL * (far ? 1.1 : 1) * (lite ? 1.3 : 1)), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
     };
     if (blender) {
       const thin = lite ? 2 : 1;
       for (const T of treeSpecs) plantTree(T, thin);
       // the borrowed landscape beyond the wall: bigger trees of the grove's species, so the skyline turns over six weeks
-      for (const [x, z, A, sp] of BELT) { const kind = HABIT[sp].kind, h = rr(3.4, 4.6), tall = kind === 'cone' || kind === 'birch' ? 1.5 : kind === 'oak' ? 0.8 : 1, wide = kind === 'cone' || kind === 'birch' ? 0.7 : kind === 'oak' ? 1.12 : 1;
-        plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, thin * 2); }
+      for (const [x, z, A, sp] of [...BELT, ...FIELD_TREES]) { const kind = HABIT[sp].kind, h = rr(3.4, 4.6), tall = kind === 'cone' || kind === 'birch' ? 1.5 : kind === 'oak' ? 0.8 : 1, wide = kind === 'cone' || kind === 'birch' ? 0.7 : kind === 'oak' ? 1.12 : 1;
+        // the first rank of the wood, which you work beside, is grown in full; the rest carry half the boughs (a tenth larger) on plainer limbs
+        const far = beyondWall(x, z) > 20;
+        plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, far ? thin * 2 : thin, far); }
       const barkT = P.std({ map: BK.diff, normalMap: BK.nor, roughness: 1, vertexColors: true, color: new THREE.Color(1.25, 1.2, 1.15) }, { tri: { arm: BK.arm, scale: 0.9, moss: 0.4 }, sway: 0.02, swayH: 9, key: 'barkT' });
       const bc = new THREE.Color();
-      for (const k of VAR) { if (!woodM[k].length) continue; const im = new THREE.InstancedMesh(TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => { im.setMatrixAt(i, M); im.setColorAt(i, bc.setRGB(...woodC[k][i])); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
+      for (const k of [...VAR, ...VAR.map(v => v + '~')]) { if (!woodM[k].length) continue; const lo = k.endsWith('~'), im = new THREE.InstancedMesh(lo ? TV[k.slice(0, -1)].woodlo : TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => { im.setMatrixAt(i, M); im.setColorAt(i, bc.setRGB(...woodC[k][i])); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
     } else
     for (const T of treeSpecs) growTree(T, lite ? 0.55 : 1);
     // a belt of trees beyond the wall
-    if (!blender) for (const [x, z, A, sp] of BELT) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round', sp }, lite ? 0.3 : 0.5); }
+    if (!blender) for (const [x, z, A, sp] of [...BELT, ...FIELD_TREES]) { const h = rr(3.4, 4.6); growTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6), A, B: A * rr(0.75, 0.95), kind: 'round', sp }, lite ? 0.3 : 0.5); }
     const wood = new THREE.BufferGeometry(); wood.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); wood.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); wood.setIndex(idx); wood.computeVertexNormals();
     if (idx.length) { const wm = new THREE.Mesh(wood, barkMat); wm.castShadow = wm.receiveShadow = true; wm.frustumCulled = false; scene.add(wm); }
     const g = cardGeo.clone(); g.setAttribute('aPlant', new THREE.InstancedBufferAttribute(Float32Array.from(cards.map(c => c.pid)), 1));
@@ -1344,7 +1380,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   // the year's leaf model: a table of every leaf class's pigments by day, and each species' fall
   const leafTab = new THREE.DataTexture(new Uint8Array((ND + 1) * SPECIES.length * NC * 4), ND + 1, SPECIES.length * NC, THREE.RGBAFormat, THREE.UnsignedByteType);
   leafTab.magFilter = leafTab.minFilter = THREE.NearestFilter; leafTab.generateMipmaps = false; leafTab.needsUpdate = true; U.uLeafTab = { value: leafTab };
-  const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite }); scene.add(leafFall.group);
+  const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite, heightAt }); scene.add(leafFall.group);
   let autumn = null;
   function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }
   console.log(`[garden] leaves: ${TREES.length} trees, ${leafFall.count.litter} litter, ${leafFall.count.falling} falling`);
@@ -1391,5 +1427,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
+  return { update, preRender, blocked, block: blockWall, clearWall, patchFrag: P.fragOnly, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
 }
