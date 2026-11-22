@@ -344,7 +344,7 @@ function worldUV(geo, k = 1) { const p = geo.attributes.position, n = geo.attrib
   return geo; }
 
 // ======================================================================= the garden
-export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], lanterns = [], low = false, grassScale = 1, reflScale: reflScale0 = 0.5 }) {
+export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs, bulbs = [], lanterns = [], low = false, grassScale = 1, reflScale: reflScale0 = 0.5, woodFull = true }) {
   const P = makePatcher(U, COMMON), TX = assets.tex;
   console.log('[garden] GPU texture units per shader: ' + renderer.capabilities.maxTextures);
   const rng = PlantArt.rngOf(1969);
@@ -1181,16 +1181,17 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       const sy = (T.cy + T.B) / NOM[k][1], kL = Math.cbrt(sxz * sxz * sy); T.k = kL;
       { const wk = far && TV[k].woodlo ? k + '~' : k; woodM[wk].push(M); woodC[wk].push(HABIT[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')].bark); } addTree(T, tpid, layout.inWalls(T.x, T.z));
       // how much sky a bough sees (baked in Blender) is how sunlit its leaves are: the outside of the crown turns first and reddest
-      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: boughM(M, c.m, kL * (far ? 1.1 : 1) * (lite ? 1.3 : 1)), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
+      vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: boughM(M, c.m, kL), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
     };
     if (blender) {
       const thin = lite ? 2 : 1;
       for (const T of treeSpecs) plantTree(T, thin);
       // the borrowed landscape beyond the wall: bigger trees of the grove's species, so the skyline turns over six weeks
       for (const [x, z, A, sp] of [...BELT, ...FIELD_TREES]) { const kind = HABIT[sp].kind, h = rr(3.4, 4.6), tall = kind === 'cone' || kind === 'birch' ? 1.5 : kind === 'oak' ? 0.8 : 1, wide = kind === 'cone' || kind === 'birch' ? 0.7 : kind === 'oak' ? 1.12 : 1;
-        // the first rank of the wood, which you work beside, is grown in full; the rest carry half the boughs (a tenth larger) on plainer limbs
+        // the first rank of the wood, which you work beside, is grown in full; the rest stand on plainer limbs, and carry every bough too
+        // unless the graphics setting says half. A bough is never enlarged to fill a crown: where more cover is wanted, it gets more leaves.
         const far = beyondWall(x, z) > 20;
-        plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, far ? thin * 2 : thin, far); }
+        plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, far && !woodFull ? thin * 2 : thin, far); }
       const barkT = P.std({ map: BK.diff, normalMap: BK.nor, roughness: 1, vertexColors: true, color: new THREE.Color(1.25, 1.2, 1.15) }, { tri: { arm: BK.arm, scale: 0.9, moss: 0.4 }, sway: 0.02, swayH: 9, key: 'barkT' });
       const bc = new THREE.Color();
       for (const k of [...VAR, ...VAR.map(v => v + '~')]) { if (!woodM[k].length) continue; const lo = k.endsWith('~'), im = new THREE.InstancedMesh(lo ? TV[k.slice(0, -1)].woodlo : TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => { im.setMatrixAt(i, M); im.setColorAt(i, bc.setRGB(...woodC[k][i])); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }

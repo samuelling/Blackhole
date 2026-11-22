@@ -577,7 +577,7 @@ let moon, moonHalo, envSkyMat, starsObj = null, starsGeo = null;
 
 // ------------------------------------------------------------------ the garden itself
 scene.fog = new THREE.FogExp2(0x000000, U.uFogDensity.value);
-const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, low: LITE, grassScale: G.grass, reflScale: G.refl });
+const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSpecs, metalSegs: METAL, bulbs: BULBS, lanterns: LANTERNS, low: LITE, grassScale: G.grass, reflScale: G.refl, woodFull: G.wood !== 'half' });
 // your own body: a cel-shaded hard suit you see when you look down, and that casts your shadow
 const body = assets.models.astronaut ? createBody({ model: assets.models.astronaut, U, COMMON }) : null;
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
@@ -1349,7 +1349,9 @@ const SETTINGS = [
   { id: 'gfxDetail', tab: 'gfx', group: 'Garden (on reload)', label: 'Planting detail', kind: 'choice', options: [{ label: 'lite', value: 'lite' }, { label: 'full', value: 'full' }], get: () => G.detail, set: v => gset('detail', v),
     note: 'leaves, sprigs, ivy, ground cover and fountain spray' },
   { id: 'gfxGrass', tab: 'gfx', label: 'Grass', kind: 'range', min: 0.3, max: 1.5, step: 0.05, fmt: fmtPct, get: () => G.grass, set: v => gset('grass', v), note: 'blades on the lawns' },
-  { id: 'gfxPending', tab: 'gfx', label: '', kind: 'info', get: () => gfxPending(G).length ? `${gfxPending(G).map(k => k === 'detail' ? 'planting detail' : k).join(' and ')} will change when the page reloads` : 'the garden is built at these settings' },
+  { id: 'gfxWood', tab: 'gfx', label: 'Wood', kind: 'choice', options: [{ label: 'half', value: 'half' }, { label: 'full', value: 'full' }], get: () => G.wood, set: v => gset('wood', v),
+    note: 'boughs on the trees deep in the wood: all of them, or every other one. Leaf size stays in proportion to the tree either way' },
+  { id: 'gfxPending', tab: 'gfx', label: '', kind: 'info', get: () => gfxPending(G).length ? `${gfxPending(G).map(k => k === 'detail' ? 'planting detail' : k === 'wood' ? 'the wood' : k).join(' and ')} will change when the page reloads` : 'the garden is built at these settings' },
   { id: 'gfxReload', tab: 'gfx', label: 'Reload now', kind: 'action', set: () => location.reload() },
 ];
 function setPlace(lat, lon, name = '') { S.lat = Math.max(-90, Math.min(90, lat)); S.lon = ((lon + 540) % 360) - 180; S.place = name; save(); for (const id of ['lat', 'lon', 'skyInfo', 'hour']) drawer && drawer.sync(id); refreshTimeUI(); pullWeather(); }
