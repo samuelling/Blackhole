@@ -16,6 +16,7 @@
   /* the title screen: the lettering stands to the left, the bubble (drawn live behind) to the right; on a tall screen, above and below */
   #intro { position:fixed; inset:0; display:flex; align-items:center; justify-content:flex-start; z-index:10; padding-left:min(7vw, 110px);
     background:linear-gradient(90deg, rgba(0,0,0,.88) 0%, rgba(0,0,0,.66) 36%, rgba(0,0,0,0) 62%); transition:opacity 1.6s ease; }
+  #intro h1 { margin-bottom:34px; }
   @media (max-aspect-ratio: 1/1) { #intro { align-items:flex-start; justify-content:center; padding:5vh 0 0; background:linear-gradient(180deg, rgba(0,0,0,.8) 0%, rgba(0,0,0,.5) 40%, rgba(0,0,0,0) 62%); }
     #intro .card { text-align:center; padding:24px 26px; } #intro .sub { font-size:16px; margin-bottom:20px; } }
   #intro.gone { opacity:0; pointer-events:none; }
@@ -58,11 +59,9 @@
 <body>
 <div id="intro" class="loading">
   <div class="card">
-    <div class="kicker">a night garden, adrift</div>
     <h1>Garden of <em>Delight</em></h1>
-    <p class="sub">An English garden — deep borders, clipped yew, a tiered fountain, a long canal — lit for a night exhibition, on a piece of ground torn loose and carried through space in a bubble. Dark things hang in it. Come close and they wake, pulling the light out of everything around them. Walk away and it seeps back. There is a wood, an edge to look over, and a wall to build.</p>
     <button id="enter" disabled>loading…</button>
-    <div class="keys" id="keys"></div>
+    <div class="keys" id="keys" hidden></div>
   </div>
 </div>
 <div id="hud">

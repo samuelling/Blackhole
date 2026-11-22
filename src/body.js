@@ -116,10 +116,39 @@ export function createBody({ model, U, COMMON }) {
   const qTW = new THREE.Quaternion(), S = v3(), T = v3(), E = v3(), nd = v3(), md = v3(), fw = v3(), upv = v3();
   const PHI = 0.733, CP = Math.cos(PHI), SP = Math.sin(PHI);                       // the wrist display faces 42 degrees round the forearm from its front
   // the console: a pane of light the wrist display throws up over the forearm, lettered along the arm
-  const cv = document.createElement('canvas'); cv.width = 640; cv.height = 400; const cg = cv.getContext('2d');
+  // It is a hologram and not a screen: no backing, only the lettering, drawn in scanlines with a little colour fringing and a sweep running up it,
+  // and a faint fan of light from the wrist display to its lower edge. It idles dim and brightens for a moment when what it says changes.
+  const PW = 0.2, PH = 0.1;
+  const cv = document.createElement('canvas'); cv.width = 640; cv.height = 320; const cg = cv.getContext('2d');
   const ctex = new THREE.CanvasTexture(cv); ctex.colorSpace = THREE.SRGBColorSpace; ctex.anisotropy = 4;
-  const pane = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.1625), new THREE.MeshBasicMaterial({ map: ctex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, fog: false }));
-  pane.visible = false; pane.renderOrder = 8; root.add(pane);                   // it hangs in the air over the display, square to your eye
+  const holo = { map: { value: ctex }, uOp: { value: 0 }, uTime: { value: 0 } };
+  const pane = new THREE.Mesh(new THREE.PlaneGeometry(PW, PH), new THREE.ShaderMaterial({ uniforms: holo, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, fog: false,
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `uniform sampler2D map; uniform float uOp, uTime; varying vec2 vUv;
+      void main() {
+        vec2 uv = vUv;
+        float tick = floor(uTime * 12.0), glitch = step(0.975, fract(sin(tick * 91.7) * 4375.5));                 // now and then a line tears sideways
+        uv.x += glitch * 0.01 * step(0.5, fract(sin((floor(uv.y * 16.0) + tick) * 12.9898) * 43758.5));
+        float fr = 0.0022 + 0.004 * glitch;
+        vec3 c = vec3(texture2D(map, uv + vec2(fr, 0.0)).r, texture2D(map, uv).g, texture2D(map, uv - vec2(fr, 0.0)).b);
+        float scan = 0.74 + 0.26 * sin(uv.y * 377.0 - uTime * 2.2);                                              // 60 lines, creeping
+        float sweep = 1.0 + 0.55 * smoothstep(0.07, 0.0, abs(fract(uTime * 0.11) * 1.3 - 0.15 - uv.y));          // a bright band running up
+        float edge = smoothstep(0.0, 0.035, uv.x) * smoothstep(1.0, 0.965, uv.x) * smoothstep(0.0, 0.05, uv.y) * smoothstep(1.0, 0.95, uv.y);
+        float flick = 0.94 + 0.06 * sin(uTime * 31.0) * sin(uTime * 7.3);
+        vec2 gq = fract(uv * vec2(32.0, 16.0)) - 0.5;
+        float dots = smoothstep(0.16, 0.05, length(gq)) * 0.03;                                                  // the faintest grid of points, so the pane has a plane
+        gl_FragColor = vec4((c * scan * sweep + vec3(0.25, 0.9, 1.0) * dots) * edge * flick * uOp, 1.0);
+      }` }));
+  pane.visible = false; pane.renderOrder = 8; root.add(pane);                   // it hangs in the air over the display, turned to your eye
+  const fanG = new THREE.BufferGeometry(); fanG.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3)); fanG.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0.5, 0, 0, 1, 1, 1]), 2));
+  const fan = new THREE.Mesh(fanG, new THREE.ShaderMaterial({ uniforms: holo, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false, fog: false,
+    vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `uniform float uOp, uTime; varying vec2 vUv;
+      void main() { float v = vUv.y, a = (vUv.x - 0.5) / max(v, 0.001) + 0.5;                                   // a: across the fan; v: wrist to pane
+        float rays = 0.55 + 0.45 * sin(a * 70.0 + sin(uTime * 0.7) * 2.0) * sin(a * 23.0 - uTime * 1.3);
+        gl_FragColor = vec4(vec3(0.2, 0.85, 1.0) * 0.11 * rays * pow(1.0 - v, 1.4) * smoothstep(0.0, 0.08, v) * uOp, 1.0); }` }));
+  fan.visible = false; fan.frustumCulled = false; fan.renderOrder = 7; root.add(fan);
+  let wakeAt = -9, nowT = 0; const pc = v3();
   const DOWN = v3(0, -1, 0), UP = v3(0, 1, 0), XA = v3(1, 0, 0);
 
   function leg(sd, u, duty, travel, lift, pelvisPos) {
@@ -188,7 +217,8 @@ export function createBody({ model, U, COMMON }) {
         lo.rotation.x = lerp(lo.rotation.x, -0.22, g); lo.rotation.z = lerp(lo.rotation.z, 0, g); hd.rotation.x = lerp(hd.rotation.x, -0.25, g);
       }
     }
-    work += ((tune.work != null ? tune.work : workOn) - work) * Math.min(1, dt * 5); pane.visible = work > 0.02; pane.material.opacity = Math.min(1, work * 1.2) * 0.95;
+    work += ((tune.work != null ? tune.work : workOn) - work) * Math.min(1, dt * 5); pane.visible = fan.visible = work > 0.02; nowT = s.t != null ? s.t : nowT + dt; holo.uTime.value = nowT;
+    holo.uOp.value = Math.min(1, work * 1.2) * (0.5 + 0.5 * Math.exp(-Math.max(0, nowT - wakeAt - 1.6) * 1.1));
     if (work > 0.002) {
       const w = work * work * (3 - 2 * work), pe = Math.max(-1.0, Math.min(0.3, s.pitch));
       qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
@@ -209,8 +239,13 @@ export function createBody({ model, U, COMMON }) {
         q.copy(qTW).multiply(up.quaternion).invert().multiply(qS); lo.quaternion.slerp(q, w); hd.rotation.set(lerp(hd.rotation.x, -0.12, w), 0, lerp(hd.rotation.z, 0, w));
         // the pane: over the display (taken from where the solved forearm puts it), lifted toward the top of your view, lettered level
         // (held at a fixed place in the lower left of your view, so it can always be read; the wrist comes up beneath it)
-        pane.position.copy(E).addScaledVector(fw, 0.42).addScaledVector(upv, -0.088); pane.position.x += tune.paneX;
-        bx.set(-1, 0, 0); bz.copy(fw).multiplyScalar(-1); pane.quaternion.setFromRotationMatrix(M.makeBasis(bx, upv, bz));
+        pane.position.copy(E).addScaledVector(fw, 0.42).addScaledVector(upv, -0.128); pane.position.x += tune.paneX;
+        // turned to face your eye and a little past it, so the far edge runs away in perspective, and leaning back a touch
+        bz.copy(fw).multiplyScalar(-1).addScaledVector(XA, -Math.tan(Math.atan(tune.paneX / 0.42) + 0.16)).addScaledVector(upv, 0.1).normalize();
+        bx.crossVectors(upv, bz).normalize(); md.crossVectors(bz, bx); pane.quaternion.setFromRotationMatrix(M.makeBasis(bx, md, bz));
+        { const P = fanG.attributes.position; tmp.copy(T).addScaledVector(by, 0.075).addScaledVector(nd, 0.04); P.setXYZ(0, tmp.x, tmp.y, tmp.z);      // from the wrist display
+          pc.set(-PW / 2, -PH / 2, 0).applyQuaternion(pane.quaternion).add(pane.position); P.setXYZ(1, pc.x, pc.y, pc.z);
+          pc.set(PW / 2, -PH / 2, 0).applyQuaternion(pane.quaternion).add(pane.position); P.setXYZ(2, pc.x, pc.y, pc.z); P.needsUpdate = true; }
       }
       { // right arm: out toward the stone, elbow a little soft, palm turned to it
         const up = B.armU_R, lo = B.armL_R, hd = B.hand_R;
@@ -239,8 +274,8 @@ export function createBody({ model, U, COMMON }) {
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
     /** The right palm, in world space: where the suit's lifting beam starts. */
     palm(out) { return B.hand_R.localToWorld(out.set(0, -0.09, 0.02)); },
-    /** The console's canvas: draw on g (640 x 400), then call done(). */
-    console: { g: cg, w: 640, h: 400, done() { ctex.needsUpdate = true; } },
+    /** The console's canvas: draw on g (640 x 320), then call done(). wake() brightens it for a moment: call it when what it says has changed. */
+    console: { g: cg, w: 640, h: 320, done() { ctex.needsUpdate = true; }, wake() { wakeAt = nowT; } },
     get enabled() { return enabled; },
     uniforms: own, bones: B, tune,
   };

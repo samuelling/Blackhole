@@ -10,8 +10,10 @@ import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
-import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand } from './field.js';
+import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
 import { createWalling } from './walling.js';
+import { createMeadow } from './meadow.js';
+import { createPlanter } from './planter.js';
 import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
@@ -22,9 +24,9 @@ const MAXV = 12;
 const QS = new URLSearchParams(location.search), LOW = QS.get('q') === 'low', TEST = QS.has('test');
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const $ = id => document.getElementById(id);
-$('keys').innerHTML = isTouch
+const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate';
 
 let renderer;
 try {
@@ -42,8 +44,8 @@ let slowT = 1 / 60, prAt = 0, fpsS = 60, fpsAt = 0, showFps = QS.has('fps');
 const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
-  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0, autumnTemp: 0, autumnSun: 0.55, autumnRain: 1, autumnFrost: false };
-const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost'];
+  exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0, autumnTemp: 0, autumnSun: 0.55, autumnRain: 1, autumnFrost: false, chimes: true, meadow: true, restless: true };
+const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost', 'chimes', 'meadow', 'restless'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -221,6 +223,7 @@ for (const m of meadows) {
     const x = m.x + Math.cos(a) * r, z = m.z + Math.sin(a) * r;
     if (distToPath(x, z) < 1.9 || Math.hypot(x - m.x, z - m.z) < 0.7) continue;
     const h = rr(0.45, 1.2), c = jit(pick(m.pal), .08), lx = rr(-0.05, 0.05) * h, lz = rr(-0.05, 0.05) * h;
+    if (nearBrook(x, z, 0.1)) continue;                                  // none standing in the brook (every random number has been drawn by now, so the rest are where they were)
     metal([x, 0, z], [x + lx, h, z + lz], 0.0035); light(x + lx, h + 0.02, z + lz, c, 0.28, 1.35); splat(x, z, 1.1, c, 0.055);
   }
 }
@@ -271,7 +274,9 @@ function tree(x, z, kind, c1, c2, big = 1, sp = null) {
 
 // ------------------------------------------------------------------ globe lawn, and globes tucked into the borders
 const globes = [];
-function addGlobe(x, z, r, c) { globes.push({ x, y: r * 0.92, z, r, c }); splat(x, z, r * 3.0, c, 0.3); }
+function addGlobe(x, z, r, c) {
+  for (let i = 0; i < 40 && nearBrook(x, z, r + 0.15); i++) z += z > 37.3 ? 0.15 : -0.15;   // a globe that would sit in the brook is rolled up the nearer bank
+  globes.push({ x, y: r * 0.92, z, r, c }); splat(x, z, r * 3.0, c, 0.3); }
 function globeOk(x, z, r) { for (const g of globes) if (Math.hypot(x - g.x, z - g.z) < r + g.r + 0.3) return false; return true; }
 {
   const pal = [P.cyan, P.violet, P.magenta, P.ice, P.rose];
@@ -588,6 +593,9 @@ if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); 
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; } });
+// planting (planter.js): the plant menu, the ring on the ground, the trowel
+const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
+  isTouch, blockedNow: () => !started || spaceOn || walling.busy });
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true; sunLight.shadow.mapSize.set(G.shadow, G.shadow);
 Object.assign(sunLight.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 320 });
@@ -619,7 +627,7 @@ function avgColorNear(p, rad = 16) {
 let spawnCounter = 0;
 function makeVoid(x, y, z, slot, k = 1, spawned = false) {
   const v = { home: new THREE.Vector3(x, y, z), pos: new THREE.Vector3(x, y, z), wake: 0, scar: 0, drain: 0, R: 0.18 * k, reach: 2.5, k,
-    seed: rng() * 10, spawned, born: spawnCounter++, col: avgColorNear(new THREE.Vector3(x, 0.8, z), 10 + 8 * k), wasAwake: false };
+    seed: rng() * 10, spawned, born: spawnCounter++, col: avgColorNear(new THREE.Vector3(x, 0.8, z), 10 + 8 * k), wasAwake: false, origin: new THREE.Vector3(x, y, z), k0: k, dieAt: null };
   voidSlots[slot] = v; return v;
 }
 // size k: ~0.35 is a pinhole that drains one bush; 2.6 is a giant that eats a meadow
@@ -874,6 +882,7 @@ function onResize() {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
   bloom.resolution.set(innerWidth / 2, innerHeight / 2);
+  garden.brook.setSize(innerHeight);
   makeRT(); lensMat.uniforms.tScene.value = rt.texture; lensMat.uniforms.tDepth.value = rt.depthTexture; lensMat.uniforms.tAO.value = aoRT2.texture; holeMat.uniforms.tDepth.value = rt.depthTexture;
 }
 addEventListener('resize', onResize);
@@ -892,7 +901,8 @@ function initAudio() {
     dl.connect(dlf); dlf.connect(fb); fb.connect(dl); dlf.connect(wet); wet.connect(master); A.send = dl;
     // garden pad: brightness follows the light around you
     const pf = ac.createBiquadFilter(); pf.type = 'lowpass'; pf.frequency.value = 1600; pf.Q.value = 0.6;
-    const pg = ac.createGain(); pg.gain.value = 0.16; pf.connect(pg); pg.connect(master); pg.connect(dl);
+    const tone = ac.createGain(); tone.gain.value = S.chimes ? 1 : 0; tone.connect(master); tone.connect(dl); A.tone = tone;   // the made sounds: pad and chimes. Off leaves only the weather, the birds and the voids
+    const pg = ac.createGain(); pg.gain.value = 0.16; pf.connect(pg); pg.connect(tone);
     A.padF = pf; A.padG = pg;
     [146.83, 220.0, 293.66, 329.63, 369.99, 440.0, 554.37].forEach((f, i) => {
       for (const det of [-5, 5]) {
@@ -917,6 +927,7 @@ function initAudio() {
       const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1500; const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8500; src.connect(hp); hp.connect(lp); lp.connect(g); src.start(); }
     { const g = ac.createGain(); g.gain.value = 0; g.connect(master); A.windG = g; const src = ac.createBufferSource(); src.buffer = buf; src.loop = true; src.playbackRate.value = 0.55;
       const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 300; bp.Q.value = 0.6; A.windF = bp; src.connect(bp); bp.connect(g); src.start(); }
+    try { A.meadow = createMeadow(ac, master); A.meadow.setEnabled(S.meadow); } catch (e) { A.meadow = null; }
   } catch (e) { A.ctx = null; }
 }
 function chime(L) {
@@ -924,7 +935,7 @@ function chime(L) {
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = 'sine'; o.frequency.value = notes[Math.floor(Math.random() * notes.length)] * (Math.random() < 0.3 ? 2 : 1) / Math.sqrt(playerF);
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.03 * L, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
-  o.connect(g); g.connect(A.master); g.connect(A.send); o.start(t); o.stop(t + 2.3);
+  o.connect(g); g.connect(A.tone); o.start(t); o.stop(t + 2.3);
 }
 function inhale(vol, k = 1) {
   const ac = A.ctx, t = ac.currentTime;
@@ -977,7 +988,7 @@ function beginStint() {
   walling.start(st);
 }
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (walling.busy && walling.onDown(e.button)) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(e.button)) return; if (e.button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
@@ -1012,6 +1023,7 @@ const endTouch = e => {
       const quick = performance.now() - o.t0 < 260 && Math.hypot(o.x - o.x0, o.y - o.y0) < 14, now = performance.now();
       const hit = quick && !spaceOn ? pickVoid(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1)) : null;
       if (hit) { collapseVoid(hit); lastTap = 0; }
+      else if (quick && !spaceOn && planter.tap(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1))) lastTap = 0;
       else if (quick && !spaceOn) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
     }
     touches.delete(t.identifier);
@@ -1039,11 +1051,13 @@ function pickVoid(nx, ny) {   // the nearest void whose shadow (or, for a sleepi
 const tempCol = (T, out) => {   // blackbody-ish colour for a temperature on a 0..1 scale: dull red, orange, white, then blue-white
   return out.setRGB(Math.min(1, 0.5 + T * 1.6), Math.min(1, Math.max(0, T * 1.4 - 0.1)), Math.min(1.25, Math.max(0, T * 1.6 - 0.55)));
 };
-function collapseVoid(v) {
-  if (body) body.reach(clock.elapsedTime);
+function collapseVoid(v, self = false) {
+  if (v.evap) return;
+  if (body && !self) body.reach(clock.elapsedTime);
   const t = clock.elapsedTime, slot = voidSlots.indexOf(v);
-  v.evap = { t0: t, T: (v.giant ? 5.5 : 1.6 + 1.3 * v.k) * S.evapTime, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot };
-  if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
+  v.evap = { t0: t, T: (v.giant ? 5.5 : 1.6 + 1.3 * v.k) * S.evapTime, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot, self };
+  if (self) { if (!firstSelf && started) { firstSelf = true; setHint('a void gave out on its own · it lies dormant a while, then gathers again somewhere near', 8000); } }
+  else if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
   if (A.ctx && A.on) { const ac = A.ctx, t0 = ac.currentTime, T = v.evap.T;   // a rising whistle as it heats, then the pop
     const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(70, t0); o.frequency.exponentialRampToValueAtTime(3200, t0 + T);
     g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.12, t0 + T * 0.97); g.gain.exponentialRampToValueAtTime(0.0001, t0 + T + 0.05);
@@ -1052,15 +1066,28 @@ function collapseVoid(v) {
     const gn = ac.createGain(); gn.gain.setValueAtTime(0.0001, t0 + T); gn.gain.linearRampToValueAtTime(0.35 * Math.min(1.4, 0.5 + 0.35 * v.k), t0 + T + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + T + 1.8);
     s.connect(f); f.connect(gn); gn.connect(A.master); gn.connect(A.send); s.start(t0 + T); s.stop(t0 + T + 2); }
 }
-let firstCollapse = false;
+let firstCollapse = false, firstSelf = false, waterAt = 0;
+// The voids are restless: each has a lifetime of its own, drawn at random, and gives out when it is up. A dormant spell follows, and then it gathers again
+// near where it was, a little larger or smaller than before. Decay with no memory: the chance of going in the next minute is the same however old it is.
+const lifeOf = v => { const mean = v.giant ? 1500 : v.spawned ? 1200 : 900; return Math.max(v.giant ? 300 : 90, -Math.log(1 - Math.random() * 0.999) * mean); };   // with nine of them, one goes about every two minutes
+const dormancy = (v, self) => !S.restless ? (v.giant ? 75 : 45) : v.giant ? 90 + 60 * Math.random() : self ? 90 + 150 * Math.random() : 30 + 90 * Math.random();
+function reformSpot(r) {   // a jittered place within a few metres of the void's first home, clear of the others
+  if (r.giant || !S.restless) return { x: r.origin.x, y: r.origin.y, z: r.origin.z, k: r.k0 };
+  const k = Math.min(3, Math.max(0.3, r.k0 * (0.75 + 0.5 * Math.random()))), reach = 2 + 2.5 * r.k0;
+  for (let tries = 0; tries < 10; tries++) {
+    const a = Math.random() * 6.2832, d = reach * Math.sqrt(Math.random()), x = r.origin.x + Math.cos(a) * d, z = r.origin.z + Math.sin(a) * d;
+    if (voidSlots.every(v => !v || Math.hypot(v.home.x - x, v.home.z - z) > 3 + 2 * (k + v.k))) return { x, y: Math.max(r.origin.y + (k - r.k0) * 0.9, 1.6 + 0.9 * k), z, k };
+  }
+  return { x: r.origin.x, y: r.origin.y, z: r.origin.z, k: r.k0 };
+}
 function evapStep(t) {
   let fl = 0; const fc = new THREE.Color(); U.uFlashCol.value.set(0, 0, 0);
   voidSlots.forEach((v, i) => {
     const sp = evapSprites[i]; if (!v || !v.evap) { sp.visible = false; return; }
     const E = v.evap, e = E.hold != null ? E.hold : (t - E.t0) / E.T;
     if (e >= 1) {   // gone: a flash where it was; the garden's own voids condense again later
-      flash.t0 = t; flash.pos.copy(v.pos); flash.col.copy(v.col); flash.k = v.k; sp.visible = false; voidSlots[i] = null;
-      if (!v.spawned && S.reform) reformQ.push({ slot: i, at: t + (v.giant ? 75 : 45), home: v.home.clone(), k: v.k, giant: !!v.giant }); return; }
+      flash.t0 = t; flash.pos.copy(v.pos); flash.col.setRGB(v.col.x, v.col.y, v.col.z); flash.k = v.k;   // (v.col is a vector: copying it into a Color left it empty, and the burst lit everything with not-a-number) sp.visible = false; voidSlots[i] = null;
+      if (!v.spawned && S.reform) reformQ.push({ slot: i, at: t + dormancy(v, E.self), origin: v.origin.clone(), k0: v.k0, giant: !!v.giant }); return; }
     const m = Math.cbrt(1 - e);                                  // mass left
     v.R = E.R0 * m; v.wake = E.wake0 * m; v.drain = E.drain0 * m * m; v.scar = 0; v.reach = Math.max(0.5, v.reach * (0.995));
     const heat = Math.min(1, 0.08 / Math.max(m, 0.08)), lum = Math.min(40, 0.2 / (m * m + 0.005)) * (0.4 + 0.6 * Math.min(1, v.k));   // T ∝ 1/M, power ∝ 1/M²
@@ -1075,7 +1102,7 @@ function evapStep(t) {
   else fs.visible = false;
   for (let j = reformQ.length - 1; j >= 0; j--) { const r = reformQ[j]; if (t < r.at) continue; reformQ.splice(j, 1);
     let slot = voidSlots[r.slot] ? voidSlots.findIndex(v => !v) : r.slot; if (slot < 0) continue;
-    const nv = makeVoid(r.home.x, r.home.y, r.home.z, slot, r.k); if (r.giant) nv.giant = true; }
+    const at = reformSpot(r), nv = makeVoid(at.x, at.y, at.z, slot, at.k); nv.origin.copy(r.origin); nv.k0 = r.k0; if (r.giant) nv.giant = true; }
   if (document.pointerLockElement === canvas) $('aim').classList.toggle('hot', !!pickVoid(0, 0));
 }
 function openVoid() {
@@ -1301,6 +1328,8 @@ const SETTINGS = [
   { id: 'streams', tab: 'voids', label: 'Streams of stolen light', kind: 'toggle', hands: true, get: () => S.streams, set: v => { S.streams = v; save(); } },
   { id: 'evapTime', tab: 'voids', group: 'Evaporation', label: 'Evaporation time', kind: 'range', min: 0.3, max: 4, log: true, fmt: fmtX, get: () => S.evapTime, set: v => { S.evapTime = v; save(); },
     note: 'click a void to evaporate it by Hawking radiation, sped up from about 10^57 years' },
+  { id: 'restless', tab: 'voids', label: 'Restless voids', kind: 'toggle', get: () => S.restless, set: v => { S.restless = v; save(); if (v) for (const o of voidSlots) if (o) o.dieAt = null; },
+    note: 'now and then one gives out by itself, lies dormant for a minute or four, and gathers again a few metres from where it was, a little larger or smaller' },
   { id: 'reform', tab: 'voids', label: 'The garden’s voids re-form', kind: 'toggle', get: () => S.reform, set: v => { S.reform = v; save(); } },
   { id: 'openVoid', tab: 'voids', label: 'Open a void', kind: 'action', hands: true, set: () => openVoid() },
   { id: 'evaporate', tab: 'voids', label: 'Evaporate the nearest', kind: 'action', hands: true, set: () => { const v = nearestVoid(true) || nearestVoid(false); if (v) collapseVoid(v); } },
@@ -1342,6 +1371,14 @@ const SETTINGS = [
   { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
   { id: 'spaceView', tab: 'garden', group: 'You', label: 'Space view', kind: 'toggle', hands: true, get: () => spaceOn, set: v => { if (v) drawer.close(); setSpaceView(v); },
     note: 'step outside the bubble and watch it go (Z). Drag circles it, the wheel or a pinch comes nearer' },
+  { id: 'chimes', tab: 'garden', group: 'Sound', label: 'Chimes and tones', kind: 'toggle', get: () => S.chimes, set: v => { S.chimes = v; save(); if (A.tone) A.tone.gain.setTargetAtTime(v ? 1 : 0, A.ctx.currentTime, 0.4); },
+    note: 'off leaves only the natural sound: wind, weather, birds and crickets, as in Dry Stack' },
+  { id: 'meadow', tab: 'garden', label: 'Meadow sounds', kind: 'toggle', get: () => S.meadow, set: v => { S.meadow = v; save(); if (A.meadow) A.meadow.setEnabled(v); },
+    note: 'gusting wind in the grass and leaves, birdsong by day, crickets on summer and autumn nights, an owl now and then' },
+  { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
+  { id: 'plantInfo', tab: 'garden', group: 'Planting', label: '', kind: 'info', get: () => `${planter.count} of ${garden.planting.max} planted by you · each grows to its own height and spread over its own years, on the garden's seasons` },
+  { id: 'plantOpen', tab: 'garden', label: 'Open the plant menu (P)', kind: 'action', set: () => { drawer.close(); planter.setOpen(true); } },
+  { id: 'plantClear', tab: 'garden', label: 'Dig up everything you planted', kind: 'action', set: () => { if (confirm('Dig up every plant you have set out? This cannot be undone.')) planter.clear(); } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
@@ -1489,6 +1526,8 @@ function update(dt, t) {
   evapStep(t);
   for (const v of voidSlots) {
     if (!v || v.evap) continue;
+    if (v.dieAt == null) v.dieAt = t + lifeOf(v);
+    if (S.restless && started && t > v.dieAt) { collapseVoid(v, true); continue; }
     const d = player.distanceTo(v.pos);
     const k = v.k, wakeR = (v.giant ? 28 : 5.5 + 7 * Math.pow(k, 0.9)) * S.wakeRange;
     let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
@@ -1608,8 +1647,10 @@ function update(dt, t) {
     A.padG.gain.setTargetAtTime(0.05 + 0.13 * Lhere, ct, 0.5);
     A.rumble.gain.setTargetAtTime(0.32 * near + 0.05 * nearPull, ct, 0.4);
     if (A.rainG) { const gust = U.uGust.value; A.rainG.gain.setTargetAtTime(0.2 * Math.pow(WX.rain, 0.7), ct, 0.8);
-      A.windG.gain.setTargetAtTime(Math.min(0.3, 0.16 * Math.max(0, WX.wind - 0.15) * (0.5 + 0.5 * gust)), ct, 0.6); A.windF.frequency.setTargetAtTime(220 + 300 * WX.wind + 160 * gust, ct, 0.7); }
-    if (Math.random() < dt * 1.6 * Lhere * Lhere) chime(Lhere);
+      A.windG.gain.setTargetAtTime((S.meadow && A.meadow ? 0.35 : 1) * Math.min(0.3, 0.16 * Math.max(0, WX.wind - 0.15) * (0.5 + 0.5 * gust)), ct, 0.6); A.windF.frequency.setTargetAtTime(220 + 300 * WX.wind + 160 * gust, ct, 0.7); }
+    if (S.chimes && Math.random() < dt * 1.6 * Lhere * Lhere) chime(Lhere);
+    if (A.meadow && (waterAt -= dt) < 0) { waterAt = 0.15; const w = BROOK.range(player.x, player.z); A.meadow.water(w.stream, w.fall); }
+    if (A.meadow) A.meadow.set(U.uDay.value, Math.min(1, WX.wind * (0.6 + 0.4 * U.uGust.value)), Math.max(WX.rain, WX.snow || 0), ((calDoy() % 365) + 365) % 365);
   }
 }
 
@@ -1693,9 +1734,20 @@ bSpace.addEventListener('click', e => { e.stopPropagation(); if (started) setSpa
 
 // ------------------------------------------------------------------ at the wall: the suit's reach, the pose, and the forearm console
 const _aimW = new THREE.Vector3(), _aimT = new THREE.Vector3(); let wallPromptAt = 0, wallPrompt = -1, consoleAt = 0;
+// ------------------------------------------------------------------ planting (planter.js): the menu, the ring on the ground, the trowel's keys
+addEventListener('keydown', e => {
+  if (!started || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !/^Key[PQX]$/.test(e.code)) return; const tg = e.target; if (tg && (tg.tagName === 'TEXTAREA' || tg.tagName === 'INPUT' || tg.tagName === 'SELECT')) return;
+  if (e.code === 'KeyP' && walling.busy) return;   // with a stint open, P puts the stint away
+  if (planter.onKey(e.code)) e.preventDefault();
+});
+const bPlant = document.createElement('button'); bPlant.id = 'bPlant'; bPlant.textContent = 'plant'; bPlant.title = 'set out perennials (P)';
+bPlant.addEventListener('click', e => { e.stopPropagation(); if (!started) return; if (walling.busy) { setHint('put the stint away first (P), then plant', 4000); return; } if (spaceOn) setSpaceView(false); planter.setOpen(!planter.open); });
+bSpace.after(bPlant);
+
 function stepWalling(dt, t) {
+  planter.update(); planter.tick(performance.now());
   if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand);
-    body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.145)); }   // keep the console inside a narrow window
+    body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
@@ -1705,30 +1757,40 @@ function stepWalling(dt, t) {
   if (body && (wallDirty || (walling.busy && t - consoleAt > 0.2))) { wallDirty = false; consoleAt = t; drawConsole(); drawer && drawer.sync && drawer.sync('wallInfo'); }
 }
 const CLS_NAME = { foundation: 'FOUNDATION', builder: 'BUILDER', through: 'THROUGH', cope: 'COPE', hearting: 'HEARTING', pinning: 'PIN' };
+let consoleKey = '';
 function drawConsole() {
   const { g, w, h, done } = body.console, st = walling.status(), a = st.active; g.clearRect(0, 0, w, h);
-  g.fillStyle = 'rgba(20, 90, 110, 0.22)'; g.fillRect(0, 0, w, h); g.strokeStyle = 'rgba(120, 240, 255, 0.9)'; g.lineWidth = 4; g.strokeRect(5, 5, w - 10, h - 10);
-  const cy = '#9ff4ff', dim = 'rgba(159, 244, 255, 0.6)', warn = '#ffc46b', good = '#9dffb0', F = px => `600 ${px}px ui-monospace, Menlo, Consolas, monospace`;
-  g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = cy; g.font = F(40); g.fillText(a ? `STINT ${a.id + 1}/${st.stints}` : 'THE WALL', 24, 56);
-  g.textAlign = 'right'; g.fillStyle = dim; g.font = F(30); g.fillText(`${st.done} BUILT`, w - 24, 54); g.textAlign = 'left';
-  g.fillStyle = 'rgba(120, 240, 255, 0.5)'; g.fillRect(24, 72, w - 48, 3);
-  if (!a) { g.fillStyle = dim; g.font = F(34); g.fillText('B  BEGIN A STINT', 24, 140); done(); return; }
-  if (a.delivering < 1) { g.fillStyle = cy; g.font = F(40); g.fillText('BRINGING STONE', 24, 142); g.strokeRect(24, 170, w - 48, 30); g.fillRect(24, 170, (w - 48) * a.delivering, 30); done(); return; }
-  const o = a.held || a.hover;
-  if (o) { g.fillStyle = a.held ? '#ffffff' : cy; g.font = F(54); g.fillText(CLS_NAME[o.cls] || o.cls, 24, 138);
-    g.textAlign = 'right'; g.font = F(44); g.fillText(`${o.kg < 10 ? o.kg.toFixed(1) : o.kg.toFixed(0)} kg`, w - 24, 136); g.textAlign = 'left'; }
-  else { g.fillStyle = dim; g.font = F(36); g.fillText('POINT · CLICK LIFTS', 24, 132); }
-  // lift: how much of the suit's strength the stone is taking
-  g.strokeStyle = 'rgba(120, 240, 255, 0.8)'; g.lineWidth = 3; g.strokeRect(24, 158, w - 48, 24);
-  if (a.held) { const e = a.held.effort; g.fillStyle = e > 0.85 ? warn : cy; g.fillRect(24, 158, (w - 48) * e, 24); }
-  const n = a.notes;
-  if (n) {
-    const rows = [['FOOTING', `${Math.round(n.footings * 100)}%`, n.footings > 0.85], ['HEIGHT', `${n.height.toFixed(2)} m`, n.height > n.target * 0.9],
-      ['HEARTING', `${Math.round(n.hearting * 100)}%`, n.hearting > 0.7], ['THROUGHS', `${n.throughs}`, n.throughs >= 2],
-      ['RUN JOINTS', `${n.running}`, n.running === 0], ['COPES', `${Math.round(n.copes * 100)}%`, n.copes > 0.85]];
-    g.font = F(30);
-    rows.forEach((r, i) => { const x = 24 + (i % 2) * 304, y = 240 + Math.floor(i / 2) * 50; g.fillStyle = dim; g.fillText(r[0], x, y); g.textAlign = 'right'; g.fillStyle = r[2] ? good : warn; g.fillText(r[1], x + 286, y); g.textAlign = 'left'; });
+  const cy = '#9ff4ff', dim = 'rgba(159, 244, 255, 0.55)', faint = 'rgba(159, 244, 255, 0.28)', warn = '#ffc46b', good = '#9dffb0', F = (px, wt = 600) => `${wt} ${px}px ui-monospace, Menlo, Consolas, monospace`;
+  // no panel behind it: four corner brackets and a ticked rule are all the frame there is
+  g.strokeStyle = cy; g.lineWidth = 3; g.lineCap = 'square'; const m = 10, L = 26;
+  for (const [x, y, dx, dy] of [[m, m, 1, 1], [w - m, m, -1, 1], [m, h - m, 1, -1], [w - m, h - m, -1, -1]]) { g.beginPath(); g.moveTo(x + dx * L, y); g.lineTo(x, y); g.lineTo(x, y + dy * L); g.stroke(); }
+  g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = cy; g.font = F(30); g.fillText(a ? `STINT ${String(a.id + 1).padStart(2, '0')}` : 'THE WALL', 30, 52);
+  if (a) { const tw = g.measureText(`STINT ${String(a.id + 1).padStart(2, '0')}`).width; g.fillStyle = dim; g.font = F(22); g.fillText(`/ ${st.stints}`, 38 + tw, 52); }
+  g.textAlign = 'right'; g.fillStyle = dim; g.font = F(22); g.fillText(`${st.done} BUILT`, w - 30, 50); g.textAlign = 'left';
+  g.fillStyle = faint; g.fillRect(30, 66, w - 60, 2); g.fillStyle = dim; for (let i = 0; i <= 29; i++) g.fillRect(30 + (w - 62) * i / 29, 66, 2, i % 5 === 0 ? 9 : 5);
+  let key = a ? `${a.id}` : 'idle';
+  if (!a) { g.fillStyle = dim; g.font = F(30); g.fillText('B  BEGIN A STINT', 30, 132); }
+  else if (a.delivering < 1) { key += 'bring'; g.fillStyle = cy; g.font = F(36); g.fillText('BRINGING STONE', 30, 130);
+    for (let i = 0; i < 29; i++) { g.fillStyle = i / 29 < a.delivering ? cy : faint; g.fillRect(30 + i * 20, 152, 15, 16); } }
+  else {
+    const o = a.held || a.hover; key += o ? `${a.held ? 'h' : 'o'}${o.cls}${o.kg.toFixed(1)}` : 'none';
+    if (o) { g.fillStyle = a.held ? '#ffffff' : cy; g.font = F(46); g.fillText(CLS_NAME[o.cls] || o.cls, 30, 126);
+      g.textAlign = 'right'; g.font = F(36); g.fillText(`${o.kg < 10 ? o.kg.toFixed(1) : o.kg.toFixed(0)}`, w - 74, 126); g.fillStyle = dim; g.font = F(22); g.fillText('KG', w - 30, 126); g.textAlign = 'left'; }
+    else { g.fillStyle = dim; g.font = F(30); g.fillText('POINT · CLICK LIFTS', 30, 122); }
+    // lift: how much of the suit's strength the stone is taking, in segments
+    const e = a.held ? a.held.effort : 0; for (let i = 0; i < 29; i++) { g.fillStyle = i / 29 < e ? (i > 23 ? warn : cy) : faint; g.fillRect(30 + i * 20, 146, 15, 14); }
+    const n = a.notes;
+    if (n) {   // six small gauges in a row: a name, a figure, and a bar that is green when that part of the wall is right
+      const cells = [['FTG', `${Math.round(n.footings * 100)}`, n.footings > 0.85, n.footings], ['HGT', n.height.toFixed(2), n.height > n.target * 0.9, n.height / Math.max(0.01, n.target)],
+        ['HRT', `${Math.round(n.hearting * 100)}`, n.hearting > 0.7, n.hearting], ['THR', `${n.throughs}`, n.throughs >= 2, n.throughs / 2],
+        ['JNT', `${n.running}`, n.running === 0, n.running === 0 ? 1 : 0.25], ['COP', `${Math.round(n.copes * 100)}`, n.copes > 0.85, n.copes]];
+      const cw = (w - 60) / 6;
+      cells.forEach((c, i) => { const x = 30 + i * cw; g.fillStyle = dim; g.font = F(20); g.fillText(c[0], x, 208); g.fillStyle = c[2] ? good : warn; g.font = F(30); g.fillText(c[1], x, 246);
+        g.fillStyle = faint; g.fillRect(x, 260, cw - 16, 6); g.fillStyle = c[2] ? good : warn; g.fillRect(x, 260, (cw - 16) * Math.max(0.04, Math.min(1, c[3])), 6); });
+      key += cells.map(c => c[2] ? 1 : 0).join('');
+    }
   }
+  if (key !== consoleKey) { consoleKey = key; body.console.wake(); }
   done();
 }
 // the keys, along the bottom while a stint is open
@@ -1743,6 +1805,8 @@ function wallSummary() {
 
 window.__umbra = { // debug handle
   walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
+  startAudio() { initAudio(); return { ctx: !!A.ctx, meadow: !!A.meadow, tone: !!A.tone }; },
+  uniforms: U, BROOK, planter, audio: A, collapseSelf(i) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v, true); return true; },
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
     const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }

@@ -7,10 +7,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
-import { plantState, flagsFor, lawnTint } from './seasons.js';
+import { plantState, flagsFor, lawnTint, sizeAt } from './seasons.js';
+import { FLORA_BY_KEY } from './flora.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
 import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
 import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
-import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall, edgeR } from './field.js';
+import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall, edgeR, BROOK, nearBrook, createBrook, cutAt } from './field.js';
 
 const TAU = Math.PI * 2, IN = 0.0254;
 export const WATER_Y = 0.35;
@@ -135,6 +136,7 @@ vec4 wp = vec4(transformed, 1.0);
 wp = instanceMatrix * wp;
 #endif
 wp = modelMatrix * wp;
+float gBase = 0.0;
 #ifdef GROW
 { int pid = int(aPlant + 0.5); ivec2 tc = ivec2(pid % uPlantW, pid / uPlantW);
   vec4 PA = texelFetch(uPlantA, tc, 0), PS = texelFetch(uPlantS, tc, 0);
@@ -147,6 +149,7 @@ wp = modelMatrix * wp;
   float gs = PS.x, gpos = PS.x; vSen = PS.z;
   #endif
   if (PA.w > 1.5) gpos = 1.0;                       // trees keep their twigs; only the leaves come and go
+  else gBase = PA.y;                                // a plant on a slope bends from its own foot, not from sea level
   wp.xyz = PA.xyz + (org0 - PA.xyz) * gpos + (wp.xyz - org0) * gs;
   #ifdef PUFF
   // canopy shading: lean every leaf's normal toward "outward from the crown", so the tree lights as one rounded mass
@@ -160,7 +163,7 @@ if (uSway > 0.0) {
   #else
   vec3 org = wp.xyz;
   #endif
-  float hh = max(wp.y, 0.0);
+  float hh = max(wp.y - gBase, 0.0);
   float bend = pow(clamp(hh / uSwayH, 0.0, 1.8), 1.6) * uSway;
   float ph = dot(wp.xz, uWindDir) * 0.8 - uTime * 2.2;
   float wave = 0.55 + 0.3 * sin(ph) + 0.15 * sin(ph * 2.7 + 1.3);
@@ -413,6 +416,20 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   for (const t of [maskTex, mask2Tex]) { t.colorSpace = THREE.NoColorSpace; t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; }
   maskTex.generateMipmaps = true; maskTex.minFilter = THREE.LinearMipmapLinearFilter;   // its coarse mip levels double as a blurred map: how far into a path a point is
   U.uGroundMask = { value: maskTex }; U.uGroundMask2 = { value: mask2Tex };
+  // where you have planted: a cleared circle round each of your plants, so the long grass does not swallow them (the whole land, about 22 cm a texel)
+  const OWNM = { N: lite ? 512 : 1024, x0: -112, z0: -100, s: 224 }, [oc, og] = canvas(OWNM.N, OWNM.N);
+  // the same map carries the brook and the pond: green where the turf is cut away (full over the water, part over the banks),
+  // blue how deep the ground is cut there, so the grass on the banks can stand on the bank and not in the air over it
+  const [bc, bgx] = canvas(OWNM.N, OWNM.N);
+  { const N = OWNM.N, q = N / OWNM.s, B = BROOK, img = bgx.createImageData(N, N), d = img.data; for (let o = 3; o < d.length; o += 4) d[o] = 255;
+    let x0 = B.POND.x - 10, x1 = B.POND.x + 10, z0 = B.POND.z - 10, z1 = B.POND.z + 10; for (let i = 0; i < B.n; i++) { x0 = Math.min(x0, B.X[i] - 4); x1 = Math.max(x1, B.X[i] + 4); z0 = Math.min(z0, B.Z[i] - 4); z1 = Math.max(z1, B.Z[i] + 4); }
+    const i0 = Math.max(0, Math.floor((x0 - OWNM.x0) * q)), i1 = Math.min(N - 1, Math.ceil((x1 - OWNM.x0) * q)), j0 = Math.max(0, Math.floor((z0 - OWNM.z0) * q)), j1 = Math.min(N - 1, Math.ceil((z1 - OWNM.z0) * q));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const x = OWNM.x0 + (i + 0.5) / q, z = OWNM.z0 + (j + 0.5) / q, bk = B.bank(x, z); if (bk > 0.5) continue;
+      const o = (j * N + i) * 4; d[o + 1] = B.edge(x, z) < 0.05 ? 255 : bk < -0.1 ? 140 : 0; d[o + 2] = Math.min(255, Math.round(cutAt(x, z) / 1.5 * 255)); }
+    bgx.putImageData(img, 0, 0); }
+  og.drawImage(bc, 0, 0);
+  const ownTex = new THREE.CanvasTexture(oc); ownTex.colorSpace = THREE.NoColorSpace; ownTex.generateMipmaps = false; ownTex.minFilter = THREE.LinearFilter; ownTex.flipY = false;
+  U.uOwnMask = { value: ownTex };
   U.uMeadow = { value: layout.meadows.map(m => new THREE.Vector4(m.x, m.z, m.r, 0)) };
   U.uSeasonTint = U.uSeasonTint || { value: new V3(1, 1, 1) };
   const MASKUV = `vec2 muv = vec2((gq.x - (${MAP.x0.toFixed(1)})) / ${MAP.s.toFixed(1)}, 1.0 - (gq.y - (${MAP.z0.toFixed(1)})) / ${MAP.s.toFixed(1)}); bool mout = muv.x < 0.0 || muv.y < 0.0 || muv.x > 1.0 || muv.y > 1.0;`;
@@ -425,7 +442,7 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
       Object.assign(sh.uniforms, { tLD: { value: G.lawn.diff }, tSD: { value: G.soil.diff }, tSN: { value: G.soil.nor },
         tGD: { value: G.grav.diff }, tGN: { value: G.grav.nor }, tGA: { value: G.grav.arm }, tPD: { value: G.sett.diff }, tPN: { value: G.sett.nor }, tPA: { value: G.sett.arm } });
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-uniform sampler2D uGroundMask, uGroundMask2, tLD, tSD, tSN, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
+uniform sampler2D uGroundMask, uGroundMask2, uOwnMask, tLD, tSD, tSN, tGD, tGN, tGA, tPD, tPN, tPA; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
 ${FIELD_GLSL}`)
         .replace('#include <map_fragment>', `
 vec2 gq = vWPos.xz; ${MASKUV}
@@ -442,6 +459,7 @@ float wL = max(0.0, 1.0 - wG - wS - wP);
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
 if (length(gq - vec2(0.0, 12.0)) > landEdge(gq) - 0.55 * vnoise(gq * 1.3)) discard;   // the turf is torn off where the land ends
+if (texture2D(uOwnMask, (gq - vec2(${OWNM.x0.toFixed(1)}, ${OWNM.z0.toFixed(1)})) / ${OWNM.s.toFixed(1)}).g > 0.3) discard;   // and cut away over the brook and the pond, whose banks are their own mesh
 float fld = fieldF(gq);               // beyond the wall line the lawn runs out into field
 float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;
@@ -490,7 +508,7 @@ diffuseColor.rgb *= gAlb;`)
     const mat = P.std({ color: 0xffffff, roughness: 0.5, side: THREE.DoubleSide, vertexColors: true }, {
       key: 'grass', translucent: true, extra: sh => {
         sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
-attribute vec4 aOff; attribute float aTier; uniform vec3 uCam; uniform sampler2D uGroundMask; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
+attribute vec4 aOff; attribute float aTier; uniform vec3 uCam; uniform sampler2D uGroundMask, uOwnMask; uniform vec4 uMeadow[2]; uniform vec3 uSeasonTint;
 ${FIELD_GLSL}
 float ghash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float gnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(ghash(i), ghash(i + vec2(1, 0)), f.x), mix(ghash(i + vec2(0, 1)), ghash(i + vec2(1, 1)), f.x), f.y); }`)
@@ -504,11 +522,12 @@ float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
 mead = max(mead, fieldF(gq) * (0.3 + 0.35 * gnoise(gq * 0.11)));   // field grass: longer, in drifts
 float gwork = workF(gq); mead *= 1.0 - 0.95 * gwork;
+vec4 gom = texture2D(uOwnMask, (gq - vec2(${OWNM.x0.toFixed(1)}, ${OWNM.z0.toFixed(1)})) / ${OWNM.s.toFixed(1)}); float gown = gom.r; mead *= 1.0 - gown;
 float gd = length(gq - gc);
 float fade = aTier < 0.5 ? 1.0 - smoothstep(tile * 0.5 - 2.2, tile * 0.5 - 0.4, gd) : smoothstep(3.2, 5.6, gd) * (1.0 - smoothstep(tile * 0.5 - 6.0, tile * 0.5 - 1.0, gd));
 float r1 = aOff.z, r2 = aOff.w, r3 = fract(aOff.z * 91.7 + aOff.w * 37.3);
 float clump = gnoise(gq * 1.6);
-float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), landEdge(gq) - 0.6) * (1.0 - 0.45 * gwork);
+float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), landEdge(gq) - 0.6) * (1.0 - 0.45 * gwork) * (1.0 - 0.7 * gown) * (1.0 - step(0.8, gom.g));   // none in the water; on the banks it grows as anywhere
 float gang = r2 * 6.2831;
 vec2 gside = vec2(cos(gang), sin(gang)), gface = vec2(-gside.y, gside.x);
 float stripe = sign(sin(gq.x * 3.14159 / 1.5));
@@ -518,7 +537,7 @@ vec3 objectNormal = normalize(vec3(gface.x, 0.0, gface.y) + vec3(gside.x, 0.0, g
           .replace('#include <begin_vertex>', `
 float gw = mix(0.0052, 0.0085, r3) * (1.0 + mead * 0.6) * (aTier < 0.5 ? 1.0 : 1.0 + gd * 0.12) * step(0.004, gh) * (1.0 - pow(gy, 1.6) * 0.9);
 float gbend = (0.22 + 0.4 * r3) * (1.0 + mead * 0.8);
-vec3 transformed = vec3(gq.x, fieldH(gq) + gy * gh * (1.0 - 0.22 * gbend * gy), gq.y);
+vec3 transformed = vec3(gq.x, fieldH(gq) - gom.b * 1.5 + gy * gh * (1.0 - 0.22 * gbend * gy), gq.y);
 transformed.xz += gside * position.x * gw * 2.0 + glean * gy * gy * gh * gbend;
 float gph = dot(gq, uWindDir) * 0.8 - uTime * 2.2;
 float gwave = 0.55 + 0.3 * sin(gph) + 0.15 * sin(gph * 2.7 + 1.3);
@@ -534,10 +553,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   }
 
   // ---------------------------------------------------------------- plants: scanned leaf atlas, painted flower atlas, 3D showpiece flowers
-  const CELL = lite ? 256 : 384, PAD = lite ? 6 : 9, SUPER = lite ? 1 : 2;
+  const CELL = lite ? 224 : 320, PAD = lite ? 6 : 8, SUPER = lite ? 1 : 2;   // one cell per flowering species, about 120 of them
   const speciesKeys = Object.keys(LOOKS).filter(k => SIZE[k] && PlantArt.FL[LOOKS[k].flStyle]);
   const flAtlas = (() => {
-    const cols = 8, rows = Math.ceil(speciesKeys.length / cols), W = cols * CELL, H = rows * CELL, [c, g] = canvas(W, H), rects = {};
+    const cols = 12, rows = Math.ceil(speciesKeys.length / cols), W = cols * CELL, H = rows * CELL, [c, g] = canvas(W, H), rects = {};
     speciesKeys.forEach((k, i) => {
       const L = LOOKS[k], F = PlantArt.FL[L.flStyle], [w, h] = F.size || [256, 256], [tc, tg] = canvas(w * SUPER, h * SUPER); tg.scale(SUPER, SUPER); tg.save(); F.paint(tg, L, w, h); tg.restore();
       const cx = (i % cols) * CELL, cy = Math.floor(i / cols) * CELL; g.drawImage(tc, cx + PAD, cy + PAD, CELL - 2 * PAD, CELL - 2 * PAD);
@@ -575,10 +594,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   }
   const TYPES = Object.keys(GEOS);
   // every plant (and tree) has its own clock; instances carry the index of the plant they belong to
-  const PT = { k: [], x: [], y: [], z: [], bx: [], by: [], bz: [], tau: [], planted: [] }, pgrid = new Map();
+  const PT = { k: [], x: [], y: [], z: [], bx: [], by: [], bz: [], tau: [], planted: [], own: [], crowd: [], gone: [] }, pgrid = new Map();
   let curPid = 0, baseAge = 3;
   function registerPlant(k, x, y, z, bx = x, by = y, bz = z) {
-    const i = PT.k.length; PT.k.push(k); PT.x.push(x); PT.y.push(y); PT.z.push(z); PT.bx.push(bx); PT.by.push(by); PT.bz.push(bz); PT.tau.push(0); PT.planted.push(0);
+    const i = PT.k.length; PT.k.push(k); PT.x.push(x); PT.y.push(y); PT.z.push(z); PT.bx.push(bx); PT.by.push(by); PT.bz.push(bz); PT.tau.push(0); PT.planted.push(0); PT.own.push(0); PT.crowd.push(1); PT.gone.push(0);
     if (k !== 'tree') { const g = Math.floor(x / 2) + ',' + Math.floor(z / 2); let L = pgrid.get(g); if (!L) pgrid.set(g, L = []); L.push(i); }
     curPid = i; return i;
   }
@@ -645,6 +664,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
 
   function addPlant(k, x, z, o = {}) {
     const L = LOOKS[k], sz = SIZE[k]; if (!L || !sz) return;
+    if (nearBrook(x, z, 0.15)) return;                                   // nothing is planted in the brook
     const F = PlantArt.FL[L.flStyle] || { kind: 'none' };
     const seed = ((Math.floor(x * 997) * 73856093) ^ (Math.floor(z * 991) * 19349663) ^ (o.salt || 0)) >>> 0;
     const r = PlantArt.rngOf(seed + 17), G0 = art.gen(L, seed), sc = o.scale || 1;
@@ -1340,8 +1360,11 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
 
   // ---------------------------------------------------------------- bake the plant buckets into instanced meshes
   const chunks = []; let instTotal = 0; const byType = {};
-  for (const bk of buckets.values()) {
-    const ch = { x: bk.x, z: bk.z, meshes: [] };
+  // bk.ch, once set, is the chunk a bucket was last baked into: baking again replaces its meshes (that is how a planted bed grows)
+  function bakeBucket(bk) {
+    const ch = bk.ch || { x: bk.x, z: bk.z, meshes: [] };
+    for (const M of ch.meshes) { scene.remove(M.mesh); M.mesh.geometry.dispose(); }
+    ch.meshes = [];
     for (const type of TYPES) {
       const Bk = bk[type]; if (!Bk.n) continue;
       const n = Bk.n, perm = Array.from({ length: n }, (_, i) => i);
@@ -1360,22 +1383,38 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
       mesh.customDepthMaterial = DEPTHS[type]; mesh.castShadow = mesh.receiveShadow = true; mesh.computeBoundingSphere();
       scene.add(mesh); ch.meshes.push({ mesh, n, type }); instTotal += n; byType[type] = (byType[type] || 0) + n;
     }
-    chunks.push(ch);
+    if (!bk.ch) { bk.ch = ch; chunks.push(ch); }
+    return ch;
   }
+  { // the brook's own planting: sedges, iris, marsh marigold, ferns and the like along the banks, thick round the pond and thin inside the garden
+    const rr = PlantArt.rngOf(90210), B = BROOK, ok = k => LOOKS[k] && SIZE[k];
+    const WET = ['carex', 'carex', 'irisP', 'caltha', 'ligularia', 'filipendula', 'lobelia', 'astilbe', 'fern', 'fern', 'hosta', 'rodgersia', 'camassia', 'molinia', 'hakonechloa'].filter(ok), TALL = ['typha', 'typha', 'irisP', 'miscanthus', 'filipendula'].filter(ok);
+    const put = (k, x, z, scale) => { if (!k || blocked(x, z) || nearBrook(x, z, 0.15)) return false; const r = radiusOf(k) * 0.9 * scale; if (!spaceOk(x, z, r, 0.7)) return false;
+      claim(x, z, r); addPlant(k, x, z, { salt: 31, scale, y: heightAt(x, z) || 1e-4 }); return true; };
+    for (let i = 4; i < B.n - 8; i++) { const inG = Math.abs(B.X[i]) < 27.6 && B.Z[i] < 55.5 && B.Z[i] > -31.5;
+      for (const sd of [-1, 1]) { if (rr() > (inG ? 0.09 : 0.4)) continue; const o = sd * (B.HW[i] + B.BW[i] + 0.2 + rr() * rr() * 1.5), x = B.X[i] - B.TZ[i] * o, z = B.Z[i] + B.TX[i] * o;
+        if (inG && layout.distToPath(x, z) < 1.7) continue; put(WET[Math.floor(rr() * WET.length)], x, z, 0.65 + 0.5 * rr()); } }
+    for (let a = 0; a < 6.283; a += 0.055) { if (rr() > 0.8) continue; const tall = Math.sin(a * 2 + 1) > 0.2, R = B.pondR(a) + B.POND.bank + 0.15 + rr() * rr() * 2.2, list = tall && rr() < 0.6 ? TALL : WET;
+      put(list[Math.floor(rr() * list.length)], B.POND.x + Math.cos(a) * R, B.POND.z + Math.sin(a) * R, 0.7 + 0.5 * rr()); }
+    if (ok('gunnera')) { const a = Math.atan2(B.Z[0] - B.POND.z, B.X[0] - B.POND.x) + 2.5, R = B.pondR(a) + B.POND.bank + 1.6; put('gunnera', B.POND.x + Math.cos(a) * R, B.POND.z + Math.sin(a) * R, 0.85); }
+  }
+  for (const bk of buckets.values()) bakeBucket(bk);
   buckets.clear();
   console.log(`[garden] ${plantCount} plants, ${instTotal} plant instances in ${chunks.length} chunks ${JSON.stringify(byType)}`);
 
   // ---------------------------------------------------------------- the clocks
-  const NP = PT.k.length, PW = 128, PH = Math.ceil(NP / PW);
+  const NP0 = PT.k.length, PW = 128, PCAP = NP0 + 4096, PH = Math.ceil(PCAP / PW);   // room for the plants you set out yourself
   const pa = new Float32Array(PW * PH * 4), ps = new Float32Array(PW * PH * 4);
-  for (let i = 0; i < NP; i++) pa.set([PT.bx[i], PT.by[i], PT.bz[i], flagsFor(PT.k[i])], i * 4);
+  for (let i = 0; i < NP0; i++) pa.set([PT.bx[i], PT.by[i], PT.bz[i], flagsFor(PT.k[i])], i * 4);
   const texA = new THREE.DataTexture(pa, PW, PH, THREE.RGBAFormat, THREE.FloatType), texS = new THREE.DataTexture(ps, PW, PH, THREE.RGBAFormat, THREE.FloatType);
   for (const t of [texA, texS]) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true; }
   U.uPlantA = { value: texA }; U.uPlantS = { value: texS }; U.uPlantW = { value: PW };
   const st = [0, 0, 0, 0], DOY0 = 165;   // the garden opens on 14 June
   function writeStates() {
-    for (let i = 0; i < NP; i++) { const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, age = baseAge + (PT.tau[i] - PT.planted[i]) / 365;
-      plantState(PT.k[i], d, age, st); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3];
+    for (let i = 0, NP = PT.k.length; i < NP; i++) { const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, own = PT.own[i], age = (own ? 0 : baseAge) + (PT.tau[i] - PT.planted[i]) / 365;
+      if (PT.gone[i]) { ps[i * 4] = ps[i * 4 + 1] = 0; continue; }
+      // a plant you set out: its size is its species' curve from the pot, held back by whatever crowds it
+      plantState(PT.k[i], d, age, st, own ? sizeAt(PT.k[i], age, own) * PT.crowd[i] : undefined); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3];
       if (treeSp[i] !== undefined) { ps[i * 4 + 1] = d; ps[i * 4 + 3] = treeSp[i]; } }   // a tree's leaves read its own day and species (leaves.js)
     texS.needsUpdate = true;
     leafFall.update(T => ((DOY0 + PT.tau[T.pid]) % 365 + 365) % 365);
@@ -1383,26 +1422,96 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
   // the year's leaf model: a table of every leaf class's pigments by day, and each species' fall
   const leafTab = new THREE.DataTexture(new Uint8Array((ND + 1) * SPECIES.length * NC * 4), ND + 1, SPECIES.length * NC, THREE.RGBAFormat, THREE.UnsignedByteType);
   leafTab.magFilter = leafTab.minFilter = THREE.NearestFilter; leafTab.generateMipmaps = false; leafTab.needsUpdate = true; U.uLeafTab = { value: leafTab };
+  const brook = createBrook({ U, COMMON, P, gravel: G.grav, wn: TX.waternormals, lite }); scene.add(brook.group);
   const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite, heightAt }); scene.add(leafFall.group);
   let autumn = null;
   function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }
   console.log(`[garden] leaves: ${TREES.length} trees, ${leafFall.count.litter} litter, ${leafFall.count.falling} falling`);
   setAutumn({});
   const seasons = {
-    count: NP, DOY0,
-    advance(dDays, dil) { if (dDays !== 0) for (let i = 0; i < NP; i++) PT.tau[i] += dDays * dil(PT.x[i], PT.y[i] + 0.4, PT.z[i]); writeStates(); },
-    jump(dDays) { for (let i = 0; i < NP; i++) PT.tau[i] += dDays; writeStates(); },
-    replant() { for (let i = 0; i < NP; i++) PT.planted[i] = PT.tau[i]; baseAge = 0; writeStates(); },
-    age() { return baseAge + (NP ? (PT.tau[0] - PT.planted[0]) / 365 : 0); },
-    setAge(y) { for (let i = 0; i < NP; i++) PT.planted[i] = PT.tau[i]; baseAge = Math.max(0, y); writeStates(); },
+    get count() { return PT.k.length; }, DOY0,
+    advance(dDays, dil) { if (dDays !== 0) for (let i = 0, NP = PT.k.length; i < NP; i++) PT.tau[i] += dDays * dil(PT.x[i], PT.y[i] + 0.4, PT.z[i]); writeStates(); },
+    jump(dDays) { for (let i = 0, NP = PT.k.length; i < NP; i++) PT.tau[i] += dDays; writeStates(); },
+    replant() { for (let i = 0; i < NP0; i++) PT.planted[i] = PT.tau[i]; baseAge = 0; writeStates(); },   // the garden's own planting; yours keeps its age
+    age() { return baseAge + (NP0 ? (PT.tau[0] - PT.planted[0]) / 365 : 0); },
+    setAge(y) { for (let i = 0; i < NP0; i++) PT.planted[i] = PT.tau[i]; baseAge = Math.max(0, y); writeStates(); },
   };
+  // ---------------------------------------------------------------- planting: perennials you set out yourself
+  // A plant goes in at pot size and grows to its species' height and spread over its species' years (seasons.js sizeAt), on its own clock
+  // like every other plant here. Spacing is the gardener's rule: neighbours whose full spreads would overlap hold each other back, and
+  // one set almost on top of another is refused. Paths, paving, water, hedges and trunks are not for planting; lawn, beds and the field are.
+  let kindData = null;
+  const kindAt = (x, z) => {
+    if (x < MAP.x0 || z < MAP.z0 || x >= MAP.x0 + MAP.s || z >= MAP.z0 + MAP.s) return 'field';
+    if (!kindData) { const N = 1024, [kc, kg] = canvas(N, N); kg.drawImage(mc, 0, 0, N, N); kindData = { N, d: kg.getImageData(0, 0, N, N).data }; }
+    const N = kindData.N, d = kindData.d, i = (Math.min(N - 1, Math.floor((z - MAP.z0) / MAP.s * N)) * N + Math.min(N - 1, Math.floor((x - MAP.x0) / MAP.s * N))) * 4;
+    return d[i] > 128 ? 'lawn' : d[i + 1] > 128 ? 'bed' : d[i + 2] > 128 ? 'gravel' : 'paving';
+  };
+  const OWN = [], OWN_MAX = 800;
+  // how near the nearest neighbour is, as a fraction of the two full spreads meeting (1 = just touching when both are grown)
+  const nearRatio = (x, z, r, skip) => {
+    let ratio = 9; const n = Math.ceil((r + 1.6) / 2), i0 = Math.floor(x / 2), j0 = Math.floor(z / 2);
+    for (let j = j0 - n; j <= j0 + n; j++) for (let i = i0 - n; i <= i0 + n; i++) { const L = placed.get(i + ',' + j); if (L) for (const p of L) { if (p === skip) continue; ratio = Math.min(ratio, Math.hypot(p[0] - x, p[1] - z) / (p[2] + r)); } }
+    return ratio;
+  };
+  const crowdOf = ratio => clamp(ratio / 0.85, 0.5, 1);
+  function checkSpot(k, x, z) {
+    if (!LOOKS[k] || !SIZE[k]) return { ok: false, why: 'no such plant' };
+    const r = radiusOf(k);
+    if (blocked(x, z)) return { ok: false, why: 'something is in the way', r };
+    if (nearBrook(x, z, 0.1)) return { ok: false, why: 'that is the brook', r };
+    const g = kindAt(x, z); if (g === 'gravel' || g === 'paving') return { ok: false, why: 'not in the path', r };
+    if (OWN.length >= OWN_MAX || PT.k.length >= PCAP - 1) return { ok: false, why: 'the garden is full', r };
+    const ratio = nearRatio(x, z, r * 0.9);
+    if (ratio < 0.42) return { ok: false, why: 'too close: it would be smothered', r };
+    return { ok: true, r, crowd: crowdOf(ratio), ground: g };
+  }
+  let ownT = 0;
+  function drawOwn() {   // redrawn whole, a moment after the last change
+    ownT = 0; og.globalCompositeOperation = 'source-over'; og.drawImage(bc, 0, 0); og.globalCompositeOperation = 'lighter';
+    const q = OWNM.N / OWNM.s;
+    for (const o of OWN) { const r = (0.35 + 0.7 * o.cl[2]) * q, cx = (o.x - OWNM.x0) * q, cy = (o.z - OWNM.z0) * q, gr = og.createRadialGradient(cx, cy, 0, cx, cy, r);
+      gr.addColorStop(0, '#f00'); gr.addColorStop(0.6, '#f00'); gr.addColorStop(1, '#000'); og.fillStyle = gr; og.beginPath(); og.arc(cx, cy, r, 0, 6.2832); og.fill(); }
+    ownTex.needsUpdate = true;
+  }
+  const ownChanged = () => { if (!ownT) ownT = setTimeout(drawOwn, 0); };
+  function recrowd() { for (const o of OWN) PT.crowd[o.id] = crowdOf(nearRatio(o.x, o.z, o.cl[2], o.cl)); }
+  function setOut(k, x, z, ageDays = 0, quiet = false) {
+    const c = checkSpot(k, x, z); if (!c.ok) return null;
+    const [h, w] = SIZE[k], near = nearestPid(x, z);
+    addPlant(k, x, z, { y: heightAt(x, z) || 1e-4, salt: (OWN.length * 7919 + 3) | 0 });
+    const id = curPid; PT.own[id] = clamp(9 / Math.max(h, w), 0.16, 0.5);            // a pot about nine inches across
+    PT.tau[id] = PT.tau[near] || 0; PT.planted[id] = PT.tau[id] - ageDays;
+    pa.set([PT.bx[id], PT.by[id], PT.bz[id], flagsFor(k)], id * 4); texA.needsUpdate = true;
+    const cl = [x, z, c.r * 0.9]; { const key = Math.floor(x / 2) + ',' + Math.floor(z / 2); let L = placed.get(key); if (!L) placed.set(key, L = []); L.push(cl); }
+    OWN.push({ id, k, x, z, cl }); recrowd(); ownChanged();
+    bakeBucket(buckets.get(Math.floor(x / CH) + ',' + Math.floor(z / CH)));
+    if (!quiet) writeStates();
+    return id;
+  }
+  function digUp(id) {
+    const i = OWN.findIndex(o => o.id === id); if (i < 0) return false; const o = OWN[i];
+    const L = placed.get(Math.floor(o.x / 2) + ',' + Math.floor(o.z / 2)); if (L) { const j = L.indexOf(o.cl); if (j >= 0) L.splice(j, 1); }
+    PT.gone[id] = 1; OWN.splice(i, 1); recrowd(); ownChanged(); writeStates(); return true;
+  }
+  const planting = {
+    check: checkSpot, plant: setOut, digUp, max: OWN_MAX, get count() { return OWN.length; }, refresh: writeStates,
+    /** Your plant nearest a point, within d metres: { id, k, age (years), size (fraction of full), crowd }. */
+    near(x, z, d = 1.2) { let best = null, bd = d; for (const o of OWN) { const q = Math.hypot(o.x - x, o.z - z); if (q < Math.max(bd, 0)) { bd = q; best = o; } }
+      if (!best) return null; const age = (PT.tau[best.id] - PT.planted[best.id]) / 365; return { id: best.id, k: best.k, x: best.x, z: best.z, age, crowd: PT.crowd[best.id], size: sizeAt(best.k, age, PT.own[best.id]) * PT.crowd[best.id] }; },
+    /** Everything you have planted, for saving: [species, x, z, age in days]. */
+    list: () => OWN.map(o => [o.k, Math.round(o.x * 100) / 100, Math.round(o.z * 100) / 100, Math.round(PT.tau[o.id] - PT.planted[o.id])]),
+    clear() { for (const o of OWN.slice()) digUp(o.id); },
+    flora: FLORA_BY_KEY, radius: radiusOf,
+  };
+
   const lt = [1, 1, 1];
   function setLawnSeason(d) { lawnTint(((d % 365) + 365) % 365, lt); U.uSeasonTint.value.set(lt[0], lt[1], lt[2]); }
 
   // ---------------------------------------------------------------- per-frame
   const v2 = new THREE.Vector2(), clipPlane = [new THREE.Plane(new V3(0, 1, 0), -WATER_Y)];
   function update(dt, t, camera) {
-    U.uCam.value.copy(camera.position);
+    U.uCam.value.copy(camera.position); brook.update(dt, t, camera.position.x, camera.position.z);
     sheetT.offset.y = (sheetT.offset.y - dt * 1.5) % 1; foamT.offset.x = (foamT.offset.x + dt * 0.05) % 1;
     TX.waternormals.offset.set(t * 0.011, t * 0.017);
     const cx = camera.position.x, cz = camera.position.z;
@@ -1430,5 +1539,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall };
+  return { update, preRender, blocked, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
 }

@@ -1,6 +1,7 @@
 // field.js: the garden's setting. A field about two football pitches across, rolling a little, inside a bubble of air
 // travelling through space. The garden and the trees just beyond its wall stand on a level plateau at the centre.
 import * as THREE from 'three';
+import { makeBrook, createBrookView } from './brook.js';
 
 export const CENTRE = { x: 0, z: 12 };                 // middle of the garden, and of the bubble
 export const RIM = 106;                                // where the ground meets the bubble's skin (m from the centre)
@@ -14,10 +15,21 @@ const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
 /** How far a point is outside the plateau (0 on it). */
 export function outside(x, z) { return Math.hypot(Math.max(Math.abs(x) - PX, 0), Math.max(Math.abs(z - PZC) - PZ, 0)); }
 /** Ground height: level on the plateau, long swells beyond it, rising gently to the rim. The GLSL below is the same function. */
-export function heightAt(x, z) {
+function baseH(x, z) {
   const w = ss(0, 34, outside(x, z)), r = Math.hypot(x - CENTRE.x, z - CENTRE.z), e = ss(84, 108, r);
   return w * (1.5 * Math.sin(x * 0.033 + 1.3) * Math.cos(z * 0.029 - 0.4) + 0.8 * Math.sin(x * 0.071 - z * 0.057 + 2.1) + 0.28 * Math.sin(x * 0.19 + z * 0.15 + 0.7)) + 2.6 * e * e;
 }
+/** The pond and the brook (brook.js): cut into the ground below. */
+export const BROOK = makeBrook(baseH, edgeR, CENTRE);
+/** The ground as it is cut: down into the brook's channel and the pond. */
+export function terrainAt(x, z) { const b = baseH(x, z); return b - BROOK.carve(x, z, b); }
+/** The ground you walk and plant on: the cut ground, but the slabs over the brook are floor too. */
+export function heightAt(x, z) { const b = baseH(x, z); return BROOK.onDeck(x, z) ? b + 0.04 : b - BROOK.carve(x, z, b); }
+/** True within m metres of the brook's or the pond's banks: nothing is planted or stood there. */
+export const nearBrook = (x, z, m = 0) => BROOK.bank(x, z) < m;
+/** How deep the ground is cut here for the brook or the pond (m; 0 away from them). */
+export const cutAt = (x, z) => BROOK.carve(x, z, baseH(x, z));
+export function createBrook(o) { return createBrookView({ brook: BROOK, ground: terrainAt, ...o }); }
 export const FIELD_GLSL = /* glsl */`
 float fieldOut(vec2 p){ return length(max(abs(p - vec2(0.0, ${PZC.toFixed(1)})) - vec2(${PX.toFixed(1)}, ${PZ.toFixed(1)}), 0.0)); }
 float fieldH(vec2 p){
@@ -38,7 +50,7 @@ float workF(vec2 p){ vec2 d = p - uWork.xy; float lx = d.x * uWork.z - d.y * uWo
 /** The ground as a mesh: a 2 m grid out to the rim, lifted to the field's height. */
 export function groundGeometry() {
   const N = 112, S = 224, g = new THREE.PlaneGeometry(S, S, N, N).rotateX(-Math.PI / 2), p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) { const x = p.getX(i) + CENTRE.x, z = p.getZ(i) + CENTRE.z; p.setXYZ(i, x, heightAt(x, z), z); }
+  for (let i = 0; i < p.count; i++) { const x = p.getX(i) + CENTRE.x, z = p.getZ(i) + CENTRE.z; p.setXYZ(i, x, baseH(x, z), z); }   // uncut: the turf over the brook is thrown away in the shader, and the banks are their own mesh
   const idx = g.index.array, keep = [];
   for (let t = 0; t < idx.length; t += 3) { let inside = false; for (let k = 0; k < 3; k++) { const i = idx[t + k]; if (Math.hypot(p.getX(i) - CENTRE.x, p.getZ(i) - CENTRE.z) < RIM + 3.5) inside = true; } if (inside) keep.push(idx[t], idx[t + 1], idx[t + 2]); }
   g.setIndex(keep); g.computeVertexNormals(); return g;
@@ -64,7 +76,7 @@ export const FIELD_TREES = (() => {
     // stands: half the time a tree is of its nearest neighbour's kind
     out.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round((4.4 + 1.8 * rnd()) * 10) / 10, near && nd < 19 && rnd() < 0.5 ? near[3] : pick()]);
   }
-  return out;
+  return out.filter(t => BROOK.bank(t[0], t[1]) > 1.6);            // none standing in the brook or the pond (taken out afterwards, so the rest of the wood is as it was)
 })();
 
 // ---------------------------------------------------------------- space, seen through the bubble
@@ -198,13 +210,14 @@ export function createLand(U) {
   const h3 = (i, j, k) => { let n = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(k, 2147483647); n = Math.imul(n ^ n >>> 13, 1274126177); return ((n ^ n >>> 16) >>> 0) / 4294967296; };
   const n3 = (x, y, z) => { const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), u = ss(0, 1, x - i), v = ss(0, 1, y - j), w = ss(0, 1, z - k), L = (a, b, t) => a + (b - a) * t;
     return L(L(L(h3(i, j, k), h3(i + 1, j, k), u), L(h3(i, j + 1, k), h3(i + 1, j + 1, k), u), v), L(L(h3(i, j, k + 1), h3(i + 1, j, k + 1), u), L(h3(i, j + 1, k + 1), h3(i + 1, j + 1, k + 1), u), v), w) * 2 - 1; };
+  const notch = (x, z) => 1.7 * ss(5.0, 1.6, Math.hypot(x - BROOK.fall.x, z - BROOK.fall.z));        // the rock is cut down where the brook goes over, so the water clears it
   const NR = F.length + 2, pos = new Float32Array(NT * NR * 3), dep = new Float32Array(NT * NR), idx = [];
   for (let t = 0; t < NT; t++) {
     const a = t / NT * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a), ex = CENTRE.x + ca, ez = CENTRE.z + sa, E = edgeR(ex, ez);
     const put = (k, x, y, z, d) => { const o = (t * NR + k) * 3; pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; dep[t * NR + k] = d; };
     // under the turf, then the bare lip
-    { const r = E - 2.0, x = CENTRE.x + ca * r, z = CENTRE.z + sa * r; put(0, x, heightAt(x, z) - 0.7, z, 0); }   // well under the turf (the ground is a 2 m mesh and sags a little between its points)
-    const bx = CENTRE.x + ca * E, bz = CENTRE.z + sa * E, by = heightAt(bx, bz) - 0.3; put(1, bx, by, bz, 0);
+    { const r = E - 2.0, x = CENTRE.x + ca * r, z = CENTRE.z + sa * r; put(0, x, terrainAt(x, z) - 0.7 - notch(x, z), z, 0); }   // well under the turf (the ground is a 2 m mesh and sags a little between its points)
+    const bx = CENTRE.x + ca * E, bz = CENTRE.z + sa * E, by = terrainAt(bx, bz) - 0.3 - notch(bx, bz); put(1, bx, by, bz, 0);
     const D = 64 + 15 * Math.sin(2 * a + 1.0) + 9 * Math.sin(5 * a + 0.4) + 5 * Math.sin(11 * a + 2.0);
     const fin = Math.pow(1 - Math.abs(Math.sin(2.5 * a + 0.6)), 2.2) + 0.6 * Math.pow(1 - Math.abs(Math.sin(5.5 * a + 2.2)), 3) + 0.35 * Math.pow(1 - Math.abs(Math.sin(12.5 * a + 0.9)), 4);   // ridges, sharp along their crests
     F.forEach((f, k) => {

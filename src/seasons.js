@@ -24,6 +24,21 @@ const SEEDHEADS = new Set(['sesleria', 'deschampsia', 'hakonechloa', 'molinia', 
 // foliage that dies down in summer after flowering (Shortwood's `dormant`)
 const SUMMER_DORMANT = { alliumG: 1.6, papaver: 2.3 };
 
+// How long each kind takes to reach its full size from a nursery pot (years), where it is not the usual two and a half. Sources: growers'
+// and botanic-garden notes; "first year sleeps, second creeps, third leaps" is the rule the curve below follows.
+export const GROW_YEARS = { peony: 5, baptisia: 4, amsonia: 4, hydrangea: 4, sporobolus: 4, hakonechloa: 4, roseKO: 3, roseDA: 3, asclepias: 3, phloxJ: 3, phloxR: 3, echinacea: 3, echinaceaS: 3,
+  astrantia: 3, sedum: 3, liatris: 3, platycodon: 3, hemerocallis: 3, lilium: 3, iris: 3, irisG: 3, echinops: 3, eutrochium: 3, perovskia: 3, sanguisorba: 3, persicaria: 3, panicum: 3,
+  schizachyrium: 3, sesleria: 3, molinia: 3, hibiscus: 3, lavandula: 3, papaver: 3, anemone: 3, alliumG: 3, verbena: 1, gaillardia: 1.5, digitalis: 2, coreopsis: 2, nepeta: 2 };
+/** Add a species to the calendar (flora.js): o.bloom lists months 0 = May to 4 = September; o.cls is any of grass, woody, evergreen, early, late, seedheads; o.dormant a summer-dormancy month; o.years to full size. */
+export function addSpecies(k, o) {
+  if (o.bloom) BLOOM[k] = o.bloom; if (o.years) GROW_YEARS[k] = o.years; if (o.dormant != null) SUMMER_DORMANT[k] = o.dormant;
+  for (const c of o.cls || []) ({ grass: GRASS, woody: WOODY, evergreen: EVERGREEN, early: EARLY, late: LATE, seedheads: SEEDHEADS })[c].add(k);
+}
+/** The fraction of its full size a plant set out from a pot has reached after `age` years: it starts at `start` and follows an S-curve to 1 at the species' years. */
+export function sizeAt(k, age, start = 0.3) { const x = Math.min(1, Math.max(0, age / (GROW_YEARS[k] || 2.5))); return start + (1 - start) * x * x * (3 - 2 * x); }
+/** When a species flowers, as month names. */
+export function bloomLabel(k) { const L = BLOOM[k]; if (!L || !L.length) return ''; const M = ['May', 'Jun', 'Jul', 'Aug', 'Sep'], a = Math.min(...L), b = Math.max(...L); return a === b ? M[a] : M[a] + '–' + M[b]; }
+
 const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const M0 = 120, MD = 30.6;   // 1 May, days per month
 export const FLAG_WOODY = 1, FLAG_TREE = 2;
@@ -36,8 +51,9 @@ function bloomAt(k, d) {
 function bloomEnd(k) { const L = BLOOM[k] || []; return L.length ? M0 + MD * (Math.max(...L) + 1) : 240; }
 
 // d: day of year in the plant's own time (0 = 1 Jan); age: years since planting
-export function plantState(k, d, age, out) {
-  const mature = Math.min(1, 0.4 + 0.6 * age / 2.5);
+// size (optional): the plant's size as a fraction of full, for one the player set out (the garden works it out from sizeAt and its crowding)
+export function plantState(k, d, age, out, size) {
+  const mature = size != null ? size : Math.min(1, 0.4 + 0.6 * age / 2.5);
   if (k === 'tree') {   // deciduous: leaf-out in spring. Autumn colour and leaf fall are the pigment model's, leaf by leaf (senescence.js);
     // through the winter the scale stays 1 so the leaves an oak holds on to can show. The garden overwrites out[1] and out[3] with the day and species.
     out[0] = d < 95 ? 1 : sm(95, 128, d); out[1] = 0; out[2] = d >= 95 && d < 160 ? -0.4 * (1 - sm(118, 160, d)) : 0; out[3] = 0; return out;
