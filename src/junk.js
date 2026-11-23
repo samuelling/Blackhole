@@ -5,9 +5,13 @@
 //
 // The drops are read from the Shred Hole's mailbox (its Cloudflare Worker), which any page may read. Only drops addressed to the
 // garden (to: 'garden') are taken. The heap is kept in this browser: what you build with leaves it, and comes back if you put it back.
+//
+// A thing that reached the portal unbroken (the Shred Hole's WHOLE switch, or something too tough for the fan) comes with its recipe,
+// and comes out of the wormhole as itself (whole.js): a duck, a watermelon, a car. It lands upright beside the heap rather than in it.
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { wholeShape, recipeKey, keepRecipe, surfaceShader } from './whole.js';
 
 export const RELAY = 'https://tunnel-claude.samuelling.workers.dev/drops';
 export const HEAP = { x: 50.4, z: 6.4 };                               // where the junk piles up
@@ -44,6 +48,7 @@ function shapeOf(rec) {
   for (let f = 0; f < n / 3; f++) { h = (Math.imul(h, 1103515245) + 12345) | 0; const inner = ((h >>> 8) & 255) < 70, j = 0.88 + 0.24 * (((h >>> 16) & 255) / 255);
     k.copy(inner ? ci : co).multiplyScalar(j); for (let v = 0; v < 3; v++) col.set([k.r, k.g, k.b], (f * 3 + v) * 3); }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  { const sf = new Float32Array(n * 3); for (let v = 0; v < n; v++) sf.set([1.6, 0.15, 0], v * 3); geo.setAttribute('aSurf', new THREE.BufferAttribute(sf, 3)); }   // the junk material's own roughness and metalness
   const hull = new Float32Array(pts.length * 3); pts.forEach((p, i) => hull.set([p.x, p.y, p.z], i * 3));
   // volume, by the divergence theorem over the hull's faces
   let vol = 0; const P = geo.attributes.position, a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3();
@@ -54,11 +59,14 @@ function shapeOf(rec) {
 
 export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArrive = () => {}, hint = () => {} }) {
   const group = new THREE.Group(); group.name = 'junk'; scene.add(group);
-  let store = { since: 0, pieces: {}, heap: [], seq: 0, drops: 0 };
+  let store = { since: 0, pieces: {}, heap: [], seq: 0, drops: 0, recipes: {} };   // a whole thing's piece has w: the key of its recipe
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.pieces) store = Object.assign(store, s); } catch (e) {}
+  if (!store.recipes) store.recipes = {};
   let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { hint('this browser would not keep the junk heap (storage full or blocked)', 6000); } }, 800); };
-  const shapes = new Map(); const shape = id => { let s = shapes.get(id); if (!s && store.pieces[id]) { s = shapeOf({ ...store.pieces[id], id }); shapes.set(id, s); } return s; };
-  const mat = P.std({ vertexColors: true, roughness: 0.6, metalness: 0.15 }, { key: 'junk' });
+  const shapes = new Map(); const shape = id => { let s = shapes.get(id); const rec = store.pieces[id];
+    if (!s && rec) { s = rec.w ? (store.recipes[rec.w] && wholeShape(store.recipes[rec.w])) : shapeOf({ ...rec, id }); if (s) shapes.set(id, s); } return s; };
+  const isWhole = id => !!(store.pieces[id] && store.pieces[id].w);
+  const mat = P.std({ vertexColors: true, roughness: 0.6, metalness: 0.15 }, { key: 'junk', extra: surfaceShader });
   const g0 = heightAt(HEAP.x, HEAP.z), holeC = new THREE.Vector3(HOLE.x, heightAt(HOLE.x, HOLE.z) + HOLE.h, HOLE.z);
 
   // ---------------------------------------------------------------- the heap: a height grid the pieces stack on, drawn in chunks
@@ -71,11 +79,11 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     const i0 = Math.max(0, Math.floor((x + x0 * 0.8 - gx0) / GC)), i1 = Math.min(GN - 1, Math.floor((x + x1 * 0.8 - gx0) / GC)), j0 = Math.max(0, Math.floor((z + z0 * 0.8 - gz0) / GC)), j1 = Math.min(GN - 1, Math.floor((z + z1 * 0.8 - gz0) / GC));
     return fn(i0, i1, j0, j1, minY, maxY);
   }
-  function restOn(sh, q, x, z) {         // where a piece comes to rest: on whatever is highest under it, nested in a little
+  function restOn(sh, q, x, z, nest = 0.18) {   // where a piece comes to rest: on whatever is highest under it, nested in a little
     return footprint(sh, q, x, z, (i0, i1, j0, j1, minY, maxY) => {
       let top = -1e9; for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) top = Math.max(top, grid[j * GN + i]);
       if (top < -1e8) top = heightAt(x, z);
-      return top - minY - 0.18 * (maxY - minY);
+      return top - minY - nest * (maxY - minY);
     });
   }
   function settle(sh, q, x, y, z) {      // and once it lies there, the heap is that much higher
@@ -143,15 +151,22 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   const queue = [];                      // pieces still to come out
   let flare = 0;
   const gauss = () => { let u = 0, v = 0; while (u === 0) u = Math.random(); v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.2832 * v); };
+  // a whole thing comes down on its feet, round the edge of the heap (bigger things further out), where it can be seen
+  function wholePlace(sh) {
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(gauss() * 0.04, Math.random() * 6.28, gauss() * 0.04)), a = Math.random() * 6.28, rr = 2.2 + 1.2 * Math.random() + Math.min(3, sh.r);
+    const x = HEAP.x + Math.cos(a) * rr, z = HEAP.z + Math.sin(a) * rr * 0.85;
+    return { q, x, z, y: restOn(sh, q, x, z, 0.02) };
+  }
   function launch(id) {
     const sh = shape(id); if (!sh) return;
-    const q1 = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28));
+    let q1 = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28));
     const spread = 0.6 + 0.05 * Math.sqrt(store.heap.length);
-    const x = HEAP.x + gauss() * spread, z = HEAP.z + gauss() * spread * 0.85, y = restOn(sh, q1, x, z);
+    let x = HEAP.x + gauss() * spread, z = HEAP.z + gauss() * spread * 0.85, y;
+    if (sh.whole) { const w = wholePlace(sh); q1 = w.q; x = w.x; z = w.z; y = w.y; } else y = restOn(sh, q1, x, z);
     const dir = new THREE.Vector3(x - holeC.x, 0, z - holeC.z).normalize(), p0 = holeC.clone().addScaledVector(dir, HOLE.r * 0.7).add(new THREE.Vector3(gauss() * 0.3, gauss() * 0.3 - 0.3, gauss() * 0.3));
     const T = 0.9 + Math.random() * 0.6, v0 = new THREE.Vector3(x - p0.x, y - p0.y + 4.9 * T * T, z - p0.z).divideScalar(T);
     const mesh = new THREE.Mesh(sh.geo, mat); mesh.castShadow = true; mesh.position.copy(p0); group.add(mesh);
-    flying.push({ id, mesh, p0, v0, T, t: 0, q0: new THREE.Quaternion().random(), q1, spin: new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(6), x, y, z });
+    flying.push({ id, mesh, p0, v0, T, t: 0, q0: new THREE.Quaternion().random(), q1, spin: new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(sh.whole ? 2.5 : 6), x, y, z });
   }
   function land(f) {
     group.remove(f.mesh);
@@ -166,16 +181,27 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
       const total = names.reduce((n, o) => n + (o.pieces || 0), 0), budget = Math.min(400, total); owner = [];
       names.forEach((o, i) => { const share = Math.max(Math.min(8, o.pieces || 0), Math.round(budget * (o.pieces || 0) / Math.max(1, total))); for (let k = 0; k < share; k++) owner.push(i); });
     }
+    const wholeSeen = new Set(); let whole = 0;
     pieces.forEach((pc, n) => {
+      const oi = pc.k != null ? pc.k : owner ? owner[n] : null, from = names && oi != null && names[oi] ? names[oi] : obj;
+      // part of a thing that came through in one piece, with its recipe: the thing itself, once
+      const rcp = pc.u != null && keepRecipe(from.recipe);
+      if (rcp) {
+        const key = (oi ?? '') + ':' + pc.u; if (wholeSeen.has(key)) return; wholeSeen.add(key);
+        const rk = recipeKey(rcp); store.recipes[rk] = rcp;
+        const id = 'j' + (store.seq++).toString(36);
+        store.pieces[id] = { w: rk, c: pc.c, m: Math.max(0.03, +rcp.mass || +pc.m || 0.3), n: (from.name || rcp.name || 'something').slice(0, 40), k: from.icon || rcp.icon || '' };
+        if (!shape(id)) { delete store.pieces[id]; return; }
+        ids.push(id); whole++; return;
+      }
       const id = 'j' + (store.seq++).toString(36), enc = Array.isArray(pc.p) ? encodePoints(pc.p) : { s: pc.s, b: pc.b };
       if (!enc.b) return;
-      const oi = pc.k != null ? pc.k : owner ? owner[n] : null, from = names && oi != null && names[oi] ? names[oi] : obj;
       store.pieces[id] = { c: pc.c, i: pc.i, m: Math.max(0.03, +pc.m || 0.3), s: enc.s, b: enc.b, n: (from.name || obj.name || 'something').slice(0, 40), k: from.icon || obj.icon || '' };
       ids.push(id);
     });
     if (!ids.length) return;
     store.drops++; queue.push(...ids); flare = Math.max(flare, 0.4);
-    onArrive({ name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length });
+    onArrive({ name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length - whole, whole });
     trim(); save();
   }
   function trim() {   // the heap keeps the newest pieces; what is built into a wall is never thrown away
@@ -184,6 +210,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     if (n <= MAXP) return;
     for (const e of store.heap.slice()) { if (n <= MAXP) break; if (used.has(e[0])) continue; take(e[0]); delete store.pieces[e[0]]; shapes.delete(e[0]); n--; }
     for (const id of Object.keys(store.pieces)) if (!inUse.has(id) && !used.has(id) && n > MAXP) { delete store.pieces[id]; shapes.delete(id); n--; }
+    const live = new Set(Object.values(store.pieces).map(p => p.w).filter(Boolean)); for (const k of Object.keys(store.recipes)) if (!live.has(k)) delete store.recipes[k];
   }
   let usedElsewhere = () => new Set();
 
@@ -245,7 +272,8 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   /** Put a piece back on the heap (a stint was finished without it). */
   function giveBack(id) {
     const sh = shape(id); if (!sh || where.has(id)) return;
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28)), x = HEAP.x + gauss() * 1.4, z = HEAP.z + gauss() * 1.2, y = restOn(sh, q, x, z);
+    let q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28)), x = HEAP.x + gauss() * 1.4, z = HEAP.z + gauss() * 1.2, y;
+    if (sh.whole) ({ q, x, z, y } = wholePlace(sh)); else y = restOn(sh, q, x, z);
     const e = [id, +x.toFixed(3), +y.toFixed(3), +z.toFixed(3), +q.x.toFixed(4), +q.y.toFixed(4), +q.z.toFixed(4), +q.w.toFixed(4)];
     settle(sh, q, x, y, z); store.heap.push(e); addToHeap(e); dirtySave = true;
   }
@@ -254,14 +282,14 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     const sh = shape(id), rec = store.pieces[id]; if (!sh || !rec) return null;
     const L = Math.max(sh.size.x, sh.size.y, sh.size.z), H = Math.min(sh.size.x, sh.size.y, sh.size.z), m = rec.m, rho = m / sh.vol;
     const cls = L > 0.6 ? 'through' : L > 0.13 ? 'builder' : H / L < 0.3 ? 'pinning' : 'hearting';
-    return { geometry: sh.geo.clone(), hullPoints: sh.hull, massKg: m, cls, name: rec.n, icon: rec.k, junk: id, density: rho,
+    return { geometry: sh.geo.clone(), hullPoints: sh.hull, massKg: m, cls, name: rec.n, icon: rec.k, junk: id, density: rho, whole: !!sh.whole,
       friction: rho < 350 ? 0.55 : rho < 1500 ? 0.62 : 0.7, restitution: rho < 350 ? 0.12 : 0.05, damp: rho < 200 ? [0.6, 0.8] : null, r: sh.r };
   }
   /** The top of the junk heap here (world y), or -Infinity off it: the physics stands on it. */
   function topAt(x, z) { const i = Math.floor((x - gx0) / GC), j = Math.floor((z - gz0) / GC); if (i < 0 || j < 0 || i >= GN || j >= GN) return -Infinity; const g = under[j * GN + i]; return g > heightAt(x, z) + 0.05 ? g - 0.06 : -Infinity; }
   /** Land everything at once (for tests, and for a page coming back from the background). */
   function finish() { while (queue.length) launch(queue.shift()); for (const f of flying.splice(0)) land(f); for (const c of chunks) if (c.dirty) rebuild(c); save(); }
-  return { group, update, pick, take, giveBack, stoneData, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id),
+  return { group, update, pick, take, giveBack, stoneData, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id), isWhole,
     set usedElsewhere(fn) { usedElsewhere = fn; },
     get count() { return store.heap.length; }, get drops() { return store.drops; }, get flying() { return flying.length + queue.length; },
     hole: holeC, heap: HEAP, throat: HOLE.r, get flare() { return flare; } };

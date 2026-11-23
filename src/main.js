@@ -1126,7 +1126,7 @@ function collapseVoid(v, self = false) {
 let firstCollapse = false, firstSelf = false, waterAt = 0; const _wormV = new THREE.Vector3();
 function junkArrived(o) {
   const d = Math.hypot(player.x - junk.hole.x, player.z - junk.hole.z);
-  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${o.pieces} pieces`, 6000);
+  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${[o.whole ? (o.whole === 1 && !o.pieces ? 'in one piece' : `${o.whole} whole`) : '', o.pieces ? `${o.pieces} pieces` : ''].filter(Boolean).join(', ')}`, 6000);
   if (!A.ctx || !A.on || !A.noise) return;   // a rush down from high to low, louder the nearer you are
   const ac = A.ctx, t0 = ac.currentTime, v = Math.min(1, 14 / Math.max(6, d)), s = ac.createBufferSource(); s.buffer = A.noise; s.loop = true;
   const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2.2; f.frequency.setValueAtTime(2400, t0); f.frequency.exponentialRampToValueAtTime(160, t0 + 2.6);
