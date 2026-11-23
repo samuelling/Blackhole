@@ -27,7 +27,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself';
 
 let renderer;
 try {
@@ -1654,6 +1654,10 @@ function update(dt, t) {
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = 70 + 7 * near;
   stepSpaceView(dt, groundY + 1.65 + bob);
+  if (selfView && !spaceOn) {   // see yourself: the camera steps out and looks back at you, turning with you
+    const a = yaw + selfAng, d = selfDist; _selfT.set(player.x, groundY + 1.05, player.z);
+    camera.position.set(player.x - Math.sin(a) * d, groundY + 1.35, player.z - Math.cos(a) * d); camera.lookAt(_selfT);
+  }
   camera.updateProjectionMatrix();
   if (body) body.setInk(0.0027 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));   // ink lines a constant width on screen
   camera.updateMatrixWorld();
@@ -1726,11 +1730,14 @@ function update(dt, t) {
   }
 }
 
-addEventListener('keydown', e => { if (e.code === 'KeyF' && e.shiftKey && !e.metaKey && !e.ctrlKey) { toggleFull(); return; } if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
-let lastDraw = 0;
-function frame() {
-  if (G.fpsCap) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
-  const rawDt = clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
+addEventListener('keydown', e => { if (e.code === 'KeyV' && e.shiftKey && !e.metaKey && !e.ctrlKey && started && !walling.busy) { selfView = !selfView; setHint(selfView ? 'seeing yourself · Shift+V to go back behind your eyes' : 'back behind your eyes', 3000); return; }
+  if (e.code === 'KeyF' && e.shiftKey && !e.metaKey && !e.ctrlKey) { toggleFull(); return; } if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
+let lastDraw = 0, FIXED_DT = null, holdLoop = false;
+let selfView = false, selfAng = 2.5, selfDist = 3.4; const _selfT = new THREE.Vector3();
+function frame(once) {
+  if (holdLoop && once !== true) { requestAnimationFrame(frame); return; }
+  if (G.fpsCap && once !== true) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
+  const rawDt = FIXED_DT != null ? (clock.elapsedTime += FIXED_DT, FIXED_DT) : clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
   applyTimeOfDay();
   if (!started) { yaw = Math.sin(t * 0.07) * 0.12; pitch = 0.04 + Math.sin(t * 0.05) * 0.02; }
@@ -1740,7 +1747,7 @@ function frame() {
   precip.group.visible = false;      // rain and snow are drawn for the eye only, not for the water's mirror or the lens probe
   if (body) body.pass('mirror');   // a view from outside sees your helmet; you, inside it, don't
   garden.preRender(camera, bufW, bufH);
-  if (body) body.pass(U.uOut.value > 0.03 ? 'mirror' : 'eye');
+  if (body) body.pass(U.uOut.value > 0.03 || selfView ? 'mirror' : 'eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
     if (junk.hole.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = G.env && cubeReady && need ? 1 : 0; }
@@ -1760,7 +1767,7 @@ function frame() {
     else if (!G.fpsCap && t - prAt > 8 && slowT < 1 / 57 && PR < PR_MAX) np = Math.min(PR_MAX, PR / 0.9);
     if (np !== PR) { PR = np; prAt = t; slowT = np < PR ? 1 / 60 : slowT; renderer.setPixelRatio(PR); composer.setPixelRatio(PR); starPR.value = PR; onResize(); drawer && drawer.isOpen && drawer.sync('gfxInfo'); } }
   else prAt = t + 3;
-  requestAnimationFrame(frame);
+  if (once !== true) requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden'; $('intro').classList.remove('loading');
@@ -1897,7 +1904,16 @@ function wallSummary() {
 window.__umbra = { // debug handle
   walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
   startAudio() { initAudio(); return { ctx: !!A.ctx, meadow: !!A.meadow, tone: !!A.tone }; },
-  uniforms: U, BROOK, junk, planter, audio: A, collapseSelf(i) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v, true); return true; },
+  uniforms: U, BROOK, junk, planter,
+  selfie(on, ang = 2.5, dist = 3.4) { selfView = !!on; selfAng = ang; selfDist = dist; },
+  /** For tests: run n frames at a fixed step, capturing the canvas every k-th (data URLs). */
+  capture(n, dt = 1 / 30, every = 1, walk = null) {
+    holdLoop = true; FIXED_DT = dt; const out = [];
+    const held = walk ? [].concat(walk) : []; for (const k of held) keys.add(k);   // a key, or several ('KeyW' walks, ['KeyW','ShiftLeft'] runs)
+    try { for (let i = 0; i < n; i++) { frame(true); if (i % every === 0) out.push(renderer.domElement.toDataURL('image/jpeg', 0.85)); } }
+    finally { for (const k of held) keys.delete(k); FIXED_DT = null; holdLoop = false; clock.getDelta(); }
+    return out;
+  }, audio: A, collapseSelf(i) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v, true); return true; },
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
     const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }

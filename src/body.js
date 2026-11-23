@@ -110,6 +110,12 @@ export function createBody({ model, U, COMMON }) {
 
   // gait state
   const prev = new THREE.Vector3(); let has = false, speed = 0, move = 0, cyc = 0, vf = 1, vr = 0, reachT = -9, bob = 0, enabled = true;
+  // what keeps it from walking like a machine: weight carried over the stance foot, the hips dropping and turning, the spine leaning into
+  // starts and turns, every joint arriving a little late and a little past (springs), strides that are never quite the same twice,
+  // and, standing still, a person's slow shifting from foot to foot
+  const spr = {}; const spg = (k, target, dt, stiff = 60, zeta = 0.55) => { let e = spr[k]; if (!e) e = spr[k] = [target, 0]; const c = 2 * Math.sqrt(stiff) * zeta; e[1] += (stiff * (target - e[0]) - c * e[1]) * dt; e[0] += e[1] * dt; return e[0]; };
+  let prevYaw = null, turnRate = 0, accel = 0, prevSpeed = 0, stride = 0, lastCyc = 0, strideK = 1, strideW = 0, idleT = 0, idleShift = 0, idleTarget = 0, idleNext = 3;
+  const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
   const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
   const H = v3(), A = v3(), K = v3(), dir = v3(), pole = v3(), kd = v3(), bx = v3(), by = v3(), bz = v3(), tmp = v3(), aim = v3(), sh = v3();
   const q = new THREE.Quaternion(), qP = new THREE.Quaternion(), qT = new THREE.Quaternion(), qS = new THREE.Quaternion(), qI = new THREE.Quaternion(), M = new THREE.Matrix4(), eul = new THREE.Euler();
@@ -155,15 +161,16 @@ export function createBody({ model, U, COMMON }) {
   let wakeAt = -9, nowT = 0; const pc = v3();
   const DOWN = v3(0, -1, 0), UP = v3(0, 1, 0), XA = v3(1, 0, 0);
 
+  let stepW = 0, legRun = 0;
   function leg(sd, u, duty, travel, lift, pelvisPos) {
     // where this foot should be: planted and sliding back under you through stance, lifted and carried forward through swing
     let along, h, pitch;
     if (u < duty) { const s = u / duty; along = lerp(0.42, -0.58, s) * travel; h = 0; pitch = s < 0.15 ? lerp(-0.18, 0, s / 0.15) : sstep(0.55, 1, s) * 0.62; }
-    else { const s = (u - duty) / (1 - duty), e = s * s * (3 - 2 * s); along = lerp(-0.58, 0.42, e) * travel; h = lift * Math.pow(Math.sin(Math.PI * Math.pow(s, 0.8)), 1.2); pitch = lerp(0.62, -0.18, sstep(0.1, 0.9, s)) + 0.35 * Math.sin(Math.PI * s) * Math.min(1, lift * 5); }
+    else { const s = (u - duty) / (1 - duty), e = s * s * (3 - 2 * s); along = lerp(-0.58, 0.42, e) * travel; h = lift * Math.pow(Math.sin(Math.PI * Math.pow(s, 0.8)), 1.2) + legRun * 0.14 * Math.pow(Math.sin(Math.PI * Math.min(1, s * 1.7)), 2);   /* running, the heel kicks up behind */ pitch = lerp(0.62, -0.18, sstep(0.1, 0.9, s)) + 0.35 * Math.sin(Math.PI * s) * Math.min(1, lift * 5); }
     along *= move; h *= move; pitch *= move;
     const sx = sd === 'L' ? 1 : -1, hip = hipRest[sd];
     H.copy(hip).applyQuaternion(qP).add(pelvisPos);
-    A.set(sx * 0.1 + vr * along * -1, ANKLE + h + 0.13 * Math.sin(Math.max(pitch, 0)), vf * along);   // model front is +z; the wearer's right is -x
+    A.set(sx * (0.1 + stepW * move) + vr * along * -1, ANKLE + h + 0.13 * Math.sin(Math.max(pitch, 0)), vf * along);   // model front is +z; the wearer's right is -x
     dir.subVectors(A, H); let D = dir.length(); const Dm = L1 + L2 - 0.004; if (D > Dm) { dir.multiplyScalar(Dm / D); A.addVectors(H, dir); D = Dm; }
     dir.divideScalar(D);
     pole.set(0, 0.25, 1); kd.copy(pole).addScaledVector(dir, -pole.dot(dir)).normalize();
@@ -174,7 +181,7 @@ export function createBody({ model, U, COMMON }) {
     qT.setFromRotationMatrix(M.makeBasis(bx, by, bz)); B['thigh_' + sd].quaternion.copy(qI.copy(qP).invert()).multiply(qT);
     by.subVectors(K, A).normalize(); bz.crossVectors(bx, by);
     qS.setFromRotationMatrix(M.makeBasis(bx, by, bz)); B['shin_' + sd].quaternion.copy(qI.copy(qT).invert()).multiply(qS);
-    q.setFromEuler(eul.set(pitch, 0, 0)); B['foot_' + sd].quaternion.copy(qI.copy(qS).invert()).multiply(q);
+    q.setFromEuler(eul.set(pitch, sx * 0.1, 0)); B['foot_' + sd].quaternion.copy(qI.copy(qS).invert()).multiply(q);   // toes turned out a little
   }
 
   /** Pose the body under the camera. s = { x, z, yaw, pitch, t }. Returns the eye's bob for this frame. */
@@ -187,11 +194,20 @@ export function createBody({ model, U, COMMON }) {
     const sp = Math.min(8, Math.hypot(vx, vz)); speed += (sp - speed) * Math.min(1, dt * 9);
     move += ((speed > 0.25 ? 1 : 0) - move) * Math.min(1, dt * (speed > 0.25 ? 9 : 6));
     if (sp > 0.3) { const f = (vx * fx + vz * fz) / sp, r = (vx * fz * -1 + vz * fx) / sp, k = Math.min(1, dt * 10); vf += (f - vf) * k; vr += (r - vr) * k; const n = Math.hypot(vf, vr) || 1; vf /= n; vr /= n; }
-    const run = sstep(1.4, 3.4, speed), sprint = sstep(3.6, 6.2, speed);
-    const stepLen = 0.5 + 0.19 * speed, duty = lerp(0.6, 0.4, run), travel = Math.min(0.86, duty * 2 * stepLen), lift = lerp(0.06, 0.2, run) + 0.06 * sprint;
+    const run = sstep(2.7, 5.2, speed),   // the ordinary 3.2 m/s pace is a brisk walk; Shift is a run
+          sprint = sstep(3.6, 6.2, speed);
+    const stepLen = (0.5 + 0.19 * speed) * strideK, duty = lerp(0.6, 0.4, run), travel = Math.min(0.86, duty * 2 * stepLen), lift = (lerp(0.06, 0.2, run) + 0.06 * sprint) * (0.9 + 0.2 * hash(stride * 3.1));
     cyc = (cyc + speed * dt / (2 * stepLen)) % 1;
+    if (cyc < lastCyc) { stride++; strideK = 0.96 + 0.08 * hash(stride); strideW = (hash(stride * 7.3) - 0.5) * 0.03; } lastCyc = cyc;   // no two strides alike
     const psi = 2 * Math.PI * (cyc - duty / 2), two = Math.cos(2 * psi);
-    bob = -two * lerp(0.012, 0.024, run) * move;                       // lowest in mid-stance, highest in flight
+    // walking vaults over a stiff leg, so you are highest at mid-stance; running drops onto a bent one, so you are lowest there
+    bob = lerp(1, -1, run) * two * lerp(0.016, 0.026, run) * move;
+    // how you are changing speed and heading, for leaning into them
+    if (dt > 0) { accel += (((speed - prevSpeed) / dt) - accel) * Math.min(1, dt * 4); prevSpeed = speed;
+      if (prevYaw != null) { let dy = s.yaw - prevYaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); turnRate += (dy / dt - turnRate) * Math.min(1, dt * 5); } prevYaw = s.yaw; }
+    // standing: the weight moves from one foot to the other now and then, slowly, the way people stand
+    idleT += dt; if (idleT > idleNext) { idleT = 0; idleNext = 3 + 6 * Math.random(); idleTarget = Math.random() < 0.25 ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.6 + 0.4 * Math.random()); }
+    idleShift += (idleTarget - idleShift) * Math.min(1, dt * 0.9);
     const breath = Math.sin(s.t * 1.15) * (1 - 0.6 * move);
     if (!enabled) return bob;
 
@@ -201,20 +217,36 @@ export function createBody({ model, U, COMMON }) {
     own.uLampDir.value.set(0.5, 0.62, 0.6).normalize().applyAxisAngle(UP, s.yaw + Math.PI);
 
     // pelvis: bobs with the stride, drops a little at speed, turns against the shoulders
-    const pel = B.pelvis; pel.position.copy(rest.pelvis); pel.position.y += bob * 1.2 - 0.022 - 0.04 * run * move - 0.012 * down;
-    pel.rotation.set(0.02 * run * move, -0.07 * Math.sin(psi) * move, 0.035 * Math.sin(psi) * move); qP.copy(pel.quaternion);
-    leg('L', cyc, duty, travel, lift, pel.position); leg('R', (cyc + 0.5) % 1, duty, travel, lift, pel.position);
-    const tor = B.torso; tor.rotation.set(0.03 + 0.05 * run * move + 0.004 * breath + 0.03 * down, 0.13 * Math.sin(psi) * move, -0.035 * Math.sin(psi) * move);
+    const still = 1 - move, cp = Math.cos(psi);
+    const swayX = (lerp(0.028, 0.012, run) * cp * move + 0.024 * idleShift * still) * (1 + 0.15 * Math.sin(s.t * 0.7));   // over the foot that carries you
+    const lean = Math.max(-0.12, Math.min(0.12, accel * 0.035)), bank = Math.max(-0.16, Math.min(0.16, -turnRate * speed * 0.05));
+    const pel = B.pelvis; pel.position.copy(rest.pelvis); pel.position.y += bob * 1.2 - 0.022 - 0.04 * run * move - 0.012 * down - 0.012 * Math.abs(idleShift) * still;
+    pel.position.x += spg('swayX', swayX, dt, 40, 0.5);
+    // the hip drops on the side of the swinging leg, the pelvis turns with it, and the whole body banks into a turn
+    pel.rotation.set(spg('pelX', 0.02 * run * move + lean * 0.4, dt, 50), -0.09 * Math.sin(psi) * move * (1 - 0.3 * run), spg('pelZ', lerp(0.05, 0.03, run) * cp * move + 0.035 * idleShift * still + bank * 0.6, dt, 60, 0.5)); qP.copy(pel.quaternion);
+    legRun = run * move; stepW = strideW; leg('L', cyc, duty, travel, lift, pel.position); stepW = -strideW; leg('R', (cyc + 0.5) % 1, duty, travel, lift, pel.position);
+    // the spine: shoulders turning against the hips, bending to keep the head level over the dropping hip, leaning into starts and turns, all a beat late
+    const tor = B.torso;
+    tor.rotation.set(spg('torX', 0.03 + 0.1 * run * move + 0.004 * breath + 0.03 * down + lean * 0.8, dt, 45, 0.5),
+      spg('torY', 0.15 * Math.sin(psi - 0.35) * move, dt, 70, 0.6),
+      spg('torZ', -0.75 * pel.rotation.z + bank * 0.5 + 0.01 * Math.sin(s.t * 0.37) * still, dt, 55, 0.5));
     tor.position.copy(rest.torso); tor.position.y += 0.002 * breath;
 
-    // arms: swing against the legs, elbows folding as the pace rises
-    const sw = lerp(0.16, 0.5, run) * move, fold = 0.32 + 0.95 * run * move + 0.012 * breath;
+    // arms: swing against the legs, loose and nearly straight walking, bent and pumping running
+    const sw = lerp(0.36, 0.55, run) * move;
     const g = tune.reach != null ? tune.reach : reachT < 0 ? 0 : (() => { const a = s.t - reachT; return a < 0.14 ? sstep(0, 0.14, a) : a < 0.7 ? 1 : 1 - sstep(0.7, 1.25, a); })();
     for (const sd of ['L', 'R']) {
       const sx = sd === 'L' ? 1 : -1, ph = Math.sin(psi) * sx;
       const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd];
-      up.position.copy(rest['armU_' + sd]); up.position.y += 0.003 * breath;
-      up.rotation.set(-0.1 - sw * ph + 0.1 * run * move, 0, sx * (0.075 + 0.05 * run * move)); lo.rotation.set(-fold - 0.3 * sw * Math.max(ph, 0), 0, -sx * 0.25 * run * move); hd.rotation.set(-0.08, 0, sx * 0.1);
+      up.position.copy(rest['armU_' + sd]); up.position.y += 0.003 * breath + 0.006 * run * move * Math.max(0, -ph);   // the shoulder rides up a little on the back swing
+      // From the shoulder, swinging further forward than back. Jogging, the elbows bend and the hands come across toward the middle of the body
+      // as they swing forward and out to the side going back; the elbow closes as the arm comes forward and opens going back, a beat late.
+      const phL = Math.sin(psi - 0.45) * sx, fwd = Math.max(ph, 0), bk = Math.max(-ph, 0), rm = run * move;
+      const uX = spg('uX' + sd, -0.06 - sw * (fwd * 1.1 - bk * 0.75) + 0.05 * rm + 0.012 * breath * still + 0.03 * idleShift * sx * still, dt, 34, 0.4);
+      const uZ = spg('uZ' + sd, sx * (0.08 + 0.06 * rm * bk - 0.07 * rm * fwd + 0.025 * Math.abs(ph) * move * (1 - rm) + 0.01 * Math.sin(s.t * 0.5 + sx)), dt, 36, 0.45);
+      const lX = spg('lX' + sd, -(0.28 + 0.92 * rm) - 0.34 * sw * phL - 0.06 * still * (0.5 + 0.5 * Math.sin(s.t * 0.31 + sx * 2)), dt, 28, 0.36);
+      up.rotation.set(uX, spg('uY' + sd, sx * 0.12 * rm * fwd, dt, 30, 0.5), uZ); lo.rotation.set(lX, spg('lY' + sd, -sx * (0.12 + 0.3 * rm) * fwd * move, dt, 30, 0.5), -sx * 0.18 * rm);
+      hd.rotation.set(spg('hX' + sd, -0.08 + 0.18 * sw * Math.sin(psi - 0.9) * sx, dt, 35, 0.35), 0, sx * 0.1);
       if (sd === 'R' && g > 0) {   // reaching out toward what you are pointing at
         aim.set(0, EYE.y + Math.sin(s.pitch) * 2, back + Math.cos(s.pitch) * 2); sh.copy(rest.armU_R).add(rest.torso).add(rest.pelvis);
         tmp.subVectors(aim, sh).normalize(); q.setFromUnitVectors(DOWN, tmp); up.quaternion.slerp(q, g);
@@ -263,7 +295,7 @@ export function createBody({ model, U, COMMON }) {
     }
     // the hands, last: gestures, springs and their own inertia on top of the arms' pose
     turnKick *= Math.exp(-dt * 5);
-    hands.update(dt, s.t || nowT, { move, run, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
+    hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
     B.head.rotation.set(-s.pitch * 0.55 - tor.rotation.x * 0.5, 0, 0);
     return bob;

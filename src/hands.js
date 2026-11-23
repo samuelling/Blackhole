@@ -80,6 +80,7 @@ export function createHands({ B, mat, ink, hullOf }) {
       lag: new THREE.Vector3(), lagV: new THREE.Vector3(),                        // the hand's swing from its own inertia
       prevP: new THREE.Vector3(), vel: new THREE.Vector3(), has: false, seed: s > 0 ? 1.7 : 4.1,
       target: null,
+      fid: null, fidNext: 3 + Math.random() * 6,                                   // a fidget: { kind, t0, len }
     };
   }
 
@@ -89,11 +90,24 @@ export function createHands({ B, mat, ink, hullOf }) {
 
   /** Gesture targets for one hand from what the body is doing. */
   function aimFor(h, sd, st, t) {
-    const n = (k, f) => 0.5 + 0.5 * Math.sin(t * f + h.seed * (k + 1) * 1.37);   // slow idle drift, finger by finger
-    const T = { curl: [0.24, 0.28, 0.32, 0.37, 0.43].map((c, k) => c + 0.06 * (n(k, 0.37) - 0.5)), spread: 0.14, opp: 0.2, wr: [0, 0, 0] };
-    // walking: the relaxed curl tightens toward a loose fist as the pace rises
-    const run = st.run * st.move; for (let k = 0; k < 5; k++) T.curl[k] = lerp(T.curl[k], [0.45, 0.62, 0.66, 0.7, 0.74][k], run);
-    T.opp = lerp(T.opp, 0.45, run);
+    // never quite still: each finger drifts on two slow rhythms of its own
+    const n = (k, f) => 0.5 + 0.5 * Math.sin(t * f + h.seed * (k + 1) * 1.37) * Math.sin(t * f * 0.43 + k * 2.1 + h.seed);
+    const T = { curl: [0.24, 0.28, 0.32, 0.37, 0.43].map((c, k) => c + 0.12 * (n(k, 0.37 + 0.05 * k) - 0.5)), spread: 0.14 + 0.06 * (n(5, 0.23) - 0.5), opp: 0.2 + 0.08 * (n(6, 0.29) - 0.5),
+      wr: [0.05 * (n(7, 0.19) - 0.5), 0.06 * (n(8, 0.17) - 0.5), 0.05 * (n(9, 0.21) - 0.5)] };
+    // walking: the relaxed curl tightens toward a loose fist as the pace rises; the fingers open a little as the hand comes forward and close going back
+    const run = st.run * st.move, sw = Math.sin((st.phase || 0) - 0.6) * h.s;
+    for (let k = 0; k < 5; k++) T.curl[k] = lerp(T.curl[k], [0.45, 0.62, 0.66, 0.7, 0.74][k], run) - 0.1 * sw * st.move * (1 - 0.5 * run);
+    T.spread += 0.08 * sw * st.move; T.opp = lerp(T.opp, 0.45, run); T.wr[0] += 0.12 * sw * st.move;
+    // and now and then, a fidget: the fingers rolled in from the little one, a stretch, a quick flex, the thumb rubbed across the fingertips
+    if (!h.fid && t > h.fidNext && st.work < 0.2 && !(st.reach > 0)) h.fid = { kind: ['roll', 'stretch', 'flex', 'rub'][Math.floor(Math.random() * 4)], t0: t, len: 1.1 + Math.random() * 0.8 };
+    if (h.fid) {
+      const f = h.fid, u = (t - f.t0) / f.len, env = Math.sin(Math.PI * Math.min(1, Math.max(0, u)));
+      if (f.kind === 'roll') for (let k = 1; k < 5; k++) T.curl[k] += 0.5 * Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, u * 1.6 - (4 - k) * 0.15))));
+      else if (f.kind === 'stretch') { for (let k = 0; k < 5; k++) T.curl[k] = lerp(T.curl[k], -0.05, env); T.spread = lerp(T.spread, 1.0, env); T.wr[0] -= 0.35 * env; }
+      else if (f.kind === 'flex') for (let k = 0; k < 5; k++) T.curl[k] += 0.45 * env * (0.8 + 0.2 * Math.sin(u * 20 + k));
+      else { T.opp = lerp(T.opp, 0.9, env); T.curl[0] += 0.4 * env; for (let k = 1; k < 5; k++) T.curl[k] += 0.22 * env + 0.08 * Math.sin(u * 18 + k) * env; }
+      if (u >= 1) { h.fid = null; h.fidNext = t + 4 + Math.random() * 10 * (st.move > 0.5 ? 2 : 1); }
+    }
     if (sd === 'R' && st.reach > 0) {   // reaching for a void: fingers open and spread, close on it as it goes
       const a = st.reachAge, close = ss(0.55, 0.85, a) * (1 - ss(0.95, 1.3, a));
       for (let k = 0; k < 5; k++) T.curl[k] = lerp(lerp(T.curl[k], 0.04, st.reach), 0.72, close);
@@ -132,7 +146,7 @@ export function createHands({ B, mat, ink, hullOf }) {
     root.updateMatrixWorld(true);
     for (const sd of ['L', 'R']) {
       const h = hands[sd], T = h.target || aimFor(h, sd, st, t);
-      for (let k = 0; k < 5; k++) [h.curl[k], h.curlV[k]] = spring(h.curl[k], h.curlV[k], clamp(T.curl[k], -0.05, 1.1), 160, dt);
+      for (let k = 0; k < 5; k++) [h.curl[k], h.curlV[k]] = spring(h.curl[k], h.curlV[k], clamp(T.curl[k], -0.05, 1.1), [190, 170, 150, 130, 115][k], dt);   // the little finger a touch slower than the index
       [h.spread, h.spreadV] = spring(h.spread, h.spreadV, T.spread, 120, dt); [h.opp, h.oppV] = spring(h.opp, h.oppV, T.opp, 110, dt);
       for (const a of ['x', 'y', 'z']) [h.wr[a], h.wrV[a]] = spring(h.wr[a], h.wrV[a], T.wr[{ x: 0, y: 1, z: 2 }[a]], 90, dt);
       // the hand's own inertia: how the wrist is being accelerated, in the hand's frame (relative to the body, so walking at a steady pace does not count)
@@ -140,8 +154,8 @@ export function createHands({ B, mat, ink, hullOf }) {
       if (h.has && dt > 0) { _a.subVectors(_p, h.prevP).divideScalar(dt); const acc = _a.clone().sub(h.vel).divideScalar(dt); h.vel.lerp(_a, Math.min(1, dt * 30));
         h.hd.getWorldQuaternion(_q); root.getWorldQuaternion(_qi); _q.premultiply(_qi.invert()).invert(); acc.applyQuaternion(_q).clampLength(0, 60);
         // the fingers swing against it, and the wrist bends: a pendulum, about a twentieth of a radian per g
-        const kx = -acc.z * 0.012, kz = acc.x * 0.012 * h.s, kc = -acc.x * h.s * 0.006;
-        [h.lag.x, h.lagV.x] = spring(h.lag.x, h.lagV.x, clamp(kx, -0.5, 0.5), 70, dt); [h.lag.z, h.lagV.z] = spring(h.lag.z, h.lagV.z, clamp(kz, -0.4, 0.4), 70, dt); [h.lag.y, h.lagV.y] = spring(h.lag.y, h.lagV.y, clamp(kc, -0.25, 0.25), 90, dt);
+        const kx = -acc.z * 0.028, kz = acc.x * 0.026 * h.s, kc = -acc.x * h.s * 0.014 + acc.y * 0.008;   // the fingers fall open as the hand is pulled back, curl as it is thrown forward
+        [h.lag.x, h.lagV.x] = spring(h.lag.x, h.lagV.x, clamp(kx, -0.6, 0.6), 55, dt); [h.lag.z, h.lagV.z] = spring(h.lag.z, h.lagV.z, clamp(kz, -0.45, 0.45), 55, dt); [h.lag.y, h.lagV.y] = spring(h.lag.y, h.lagV.y, clamp(kc, -0.3, 0.3), 70, dt);
       }
       h.prevP.copy(_p); h.has = true;
       // pose: the wrist on top of the arm's own pose
