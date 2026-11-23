@@ -1563,7 +1563,7 @@ drawer = createDrawer({
 });
 if (hands) { const box = document.createElement('div'); box.className = 'hands'; box.append(hands.panel());
   const link = document.createElement('a'); link.textContent = 'open the console ↗'; link.target = '_blank'; link.rel = 'noopener'; link.style.cssText = 'display:inline-block;margin-top:14px;color:inherit;opacity:.7';
-  const setLink = () => { link.href = 'https://samuelling.github.io/InvisibleHands/console/' + (hands.room ? '?room=' + encodeURIComponent(hands.room) : ''); };
+  const setLink = () => { link.href = 'https://linglab.org/invisiblehands/console/' + (hands.room ? '?room=' + encodeURIComponent(hands.room) : ''); };
   setLink(); link.addEventListener('mouseenter', setLink); link.addEventListener('focus', setLink); box.append(link); drawer.pane('hands').append(box); }
 $('bSettings').addEventListener('click', e => { e.stopPropagation(); drawer.toggle(); });
 { const b = $('bHands'), ic = handsIcon(12); if (ic) b.prepend(ic); b.addEventListener('click', e => { e.stopPropagation(); drawer.toggle('hands'); }); if (!hands) b.style.display = 'none'; }
