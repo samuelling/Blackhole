@@ -27,7 +27,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen';
 
 let renderer;
 try {
@@ -1438,6 +1438,8 @@ const SETTINGS = [
   { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 5.5, 1.65, junk.heap.z + 3.5); yaw = -1.1; pitch = 0.12; } },
   { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
   { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
+  { id: 'fullScreen', tab: 'gfx', group: 'Screen', label: 'Full screen (Shift+F)', kind: 'toggle', get: () => !!(document.fullscreenElement || document.webkitFullscreenElement), set: v => toggleFull(v),
+    note: (document.fullscreenEnabled || document.webkitFullscreenEnabled) ? 'Esc leaves it (the first Esc frees the mouse, the second leaves full screen)' : 'not available in this browser or frame: on an iPhone, Share → Add to Home Screen opens the garden without the browser around it' },
   { id: 'spaceView', tab: 'garden', group: 'You', label: 'Space view', kind: 'toggle', hands: true, get: () => spaceOn, set: v => { if (v) drawer.close(); setSpaceView(v); },
     note: 'step outside the bubble and watch it go (Z). Drag circles it, the wheel or a pinch comes nearer' },
   { id: 'chimes', tab: 'garden', group: 'Sound', label: 'Chimes and tones', kind: 'toggle', get: () => S.chimes, set: v => { S.chimes = v; save(); if (A.tone) A.tone.gain.setTargetAtTime(v ? 1 : 0, A.ctx.currentTime, 0.4); },
@@ -1724,7 +1726,7 @@ function update(dt, t) {
   }
 }
 
-addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
+addEventListener('keydown', e => { if (e.code === 'KeyF' && e.shiftKey && !e.metaKey && !e.ctrlKey) { toggleFull(); return; } if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
 let lastDraw = 0;
 function frame() {
   if (G.fpsCap) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
@@ -1814,6 +1816,21 @@ addEventListener('keydown', e => {
 const bPlant = document.createElement('button'); bPlant.id = 'bPlant'; bPlant.textContent = 'plant'; bPlant.title = 'set out perennials (P)';
 bPlant.addEventListener('click', e => { e.stopPropagation(); if (!started) return; if (walling.busy) { setHint('put the stint away first (P), then plant', 4000); return; } if (spaceOn) setSpaceView(false); planter.setOpen(!planter.open); });
 bSpace.after(bPlant);
+// full screen: the whole page (the buttons and hints come too). Where the browser cannot (an iPhone, or a frame that does not allow it) the button is not shown.
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+function toggleFull(on = !fsEl()) {
+  const root = document.documentElement;
+  try {
+    if (on) { const p = (root.requestFullscreen || root.webkitRequestFullscreen).call(root, { navigationUI: 'hide' }); if (p && p.then) p.then(() => started && !spaceOn && tryLock(), () => setHint('this browser would not go full screen here', 4000)); }
+    else { const p = (document.exitFullscreen || document.webkitExitFullscreen).call(document); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { setHint(fsOk ? 'this browser would not go full screen here' : 'full screen is not available here (on an iPhone: Share → Add to Home Screen opens it without the browser around it)', 6000); }
+}
+const bFull = document.createElement('button'); bFull.id = 'bFull'; bFull.textContent = 'full screen'; bFull.title = 'full screen (Shift+F)';
+bFull.addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
+if (fsOk) $('bSettings').before(bFull);
+const onFull = () => { const f = !!fsEl(); bFull.textContent = f ? 'exit full screen' : 'full screen'; document.body.classList.toggle('full', f); drawer && drawer.sync && drawer.sync('fullScreen'); };
+document.addEventListener('fullscreenchange', onFull); document.addEventListener('webkitfullscreenchange', onFull);
 
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t);
