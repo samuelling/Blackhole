@@ -62,7 +62,7 @@ function stoneAt(type, cls, seed, detail) {
   try { return generateStone(type, cls, seed); } finally { S.detail = d0; perf.lite = l0; }
 }
 
-export function createWalling({ scene, camera, U, patchFrag, garden, junk = null, lite = false, hint = () => {}, onChange = () => {} }) {
+export function createWalling({ scene, camera, U, patchFrag, garden, junk = null, lite = false, hint = () => {}, onChange = () => {}, onTurn = () => {} }) {
   perf.lite = !!lite;
   // the stone shader takes the garden's light, weather and voids (see makePatcher.fragOnly)
   hooks.post = (sh, mat) => {
@@ -439,7 +439,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (ghosted) { st.collider.setCollisionGroups(0xffffffff); ghosted = false; }
     look(st, false); held = null; ring.visible = false; notesAt = 0; onChange();
   }
-  function rotateWorld(axis, ang) { targetQ.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang)).normalize(); }
+  function rotateWorld(axis, ang) { targetQ.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang)).normalize(); onTurn(Math.sign(ang) * Math.min(1, Math.abs(ang) / 0.5 + 0.3)); }
   // the stone's long axis laid across the wall: length into the wall, as wallers set them
   function turnIn() {
     const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(targetQ); ax.y = 0; if (ax.lengthSq() < 1e-4) return; ax.normalize();
@@ -613,5 +613,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     get _a() { return A; },   // for tests
     _t: { pickExt, pluck, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
     get active() { return A ? A.s : null; }, get holding() { return !!held; }, get busy() { return !!A; },
+    /** What the hands should be doing: for the body's gestures. */
+    get gesture() { return { held: !!held, effort, hover: !!hover, press: press && !!held, placing, ghost: ghosted, kg: held ? held.mass : 0 }; },
     get stone() { return store.stone; }, set stone(k) { if (STONE_TYPES[k]) { store.stone = k; persist(); } }, types: Object.keys(STONE_TYPES).filter(k => !STONE_TYPES[k].unit).map(k => ({ value: k, label: STONE_TYPES[k].name })) };
 }

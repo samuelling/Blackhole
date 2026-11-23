@@ -3,6 +3,7 @@
 // rig is a tree of groups posed each frame: legs by two-bone IK to planted feet, arms swinging against them.
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createHands } from './hands.js';
 
 const PARENT = { pelvis: null, torso: 'pelvis', head: 'torso', armU_L: 'torso', armL_L: 'armU_L', hand_L: 'armL_L', armU_R: 'torso', armL_R: 'armU_R', hand_R: 'armL_R',
   thigh_L: 'pelvis', shin_L: 'thigh_L', foot_L: 'shin_L', thigh_R: 'pelvis', shin_R: 'thigh_R', foot_R: 'shin_R' };
@@ -81,6 +82,7 @@ void main(){ if (uGhost > 0.5) discard;
   });
 }
 
+function hullOf(geo) { let hull = geo.clone(); hull.deleteAttribute('normal'); hull = mergeVertices(hull, 2e-4); hull.computeVertexNormals(); return hull; }
 export function createBody({ model, U, COMMON }) {
   const root = new THREE.Group(); root.name = 'body';
   const own = { uLampDir: { value: new THREE.Vector3(0, 1, 0) }, uLampCol: { value: new THREE.Vector3(0.05, 0.055, 0.065) }, uBodyFwd: { value: new THREE.Vector3(0, 0, 1) },
@@ -97,9 +99,11 @@ export function createBody({ model, U, COMMON }) {
     (p ? B[p] : root).add(g); g.position.copy(joint[n]); if (p) g.position.sub(joint[p]);
     const geo = o.geometry;
     const m = new THREE.Mesh(geo, isHead ? headMat : mat); m.castShadow = true; m.receiveShadow = true; g.add(m);
-    let hull = geo.clone(); hull.deleteAttribute('normal'); hull = mergeVertices(hull, 2e-4); hull.computeVertexNormals();
-    const im = new THREE.Mesh(hull, isHead ? headInk : ink); g.add(im);
+    const im = new THREE.Mesh(hullOf(geo), isHead ? headInk : ink); g.add(im);
   }
+  // the gloves get jointed fingers (hands.js)
+  const hands = createHands({ B, mat, ink, hullOf });
+  let gesture = {}, point = 0, turnKick = 0;
   const rest = {}; for (const n in B) rest[n] = B[n].position.clone();
   const L1 = joint.shin_L.distanceTo(joint.thigh_L), L2 = joint.foot_L.distanceTo(joint.shin_L), ANKLE = joint.foot_L.y;
   const hipRest = { L: joint.thigh_L.clone().sub(joint.pelvis), R: joint.thigh_R.clone().sub(joint.pelvis) };
@@ -257,6 +261,9 @@ export function createBody({ model, U, COMMON }) {
         lo.rotation.x = lerp(lo.rotation.x, -0.28, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.55, w * (hasAim ? 1 : 0.4));
       }
     }
+    // the hands, last: gestures, springs and their own inertia on top of the arms' pose
+    turnKick *= Math.exp(-dt * 5);
+    hands.update(dt, s.t || nowT, { move, run, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
     B.head.rotation.set(-s.pitch * 0.55 - tor.rotation.x * 0.5, 0, 0);
     return bob;
@@ -272,6 +279,9 @@ export function createBody({ model, U, COMMON }) {
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
+    /** What the hands are doing at the wall: { held, effort, hover, press, placing, ghost }; turn(sign) when the stone in hand is turned; point(0..1) aims a finger. */
+    setGesture(g) { gesture = g || {}; }, turn(sign) { turnKick = Math.max(-0.5, Math.min(0.5, turnKick + 0.22 * sign)); }, point(v) { point += (v - point) * 0.2; },
+    hands,
     /** The right palm, in world space: where the suit's lifting beam starts. */
     palm(out) { return B.hand_R.localToWorld(out.set(0, -0.09, 0.02)); },
     /** The console's canvas: draw on g (640 x 320), then call done(). wake() brightens it for a moment: call it when what it says has changed. */

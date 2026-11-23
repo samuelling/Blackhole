@@ -595,7 +595,7 @@ if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); 
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
 const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o) });
-const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; } });
+const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; }, onTurn: sg => { if (body) body.turn(sg); } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
   isTouch, blockedNow: () => !started || spaceOn || walling.busy });
@@ -1835,7 +1835,7 @@ document.addEventListener('fullscreenchange', onFull); document.addEventListener
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t);
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
-  if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand);
+  if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand); body.setGesture(walling.busy ? walling.gesture : null); body.point(planter.armed && !planter.open ? 1 : 0);
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);

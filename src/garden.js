@@ -470,7 +470,8 @@ float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;
 float gmix = smoothstep(0.35, 0.65, vnoise(gq * 0.45));
 float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 1.0) * (1.0 - mead) * (1.0 - fld);
-vec3 cL = texture2D(tLD, uvL).rgb * vec3(0.74, 1.0, 0.46) * 1.08 * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * mix(vec3(1.0), vec3(0.62, 0.86, 0.5) * (0.8 + 0.3 * vnoise(gq * 0.09)), fld) * uSeasonTint;
+vec3 tl0 = texture2D(tLD, uvL).rgb; float tsoil = smoothstep(-0.02, 0.07, tl0.r - tl0.g);   // the scan is sparse grass on bare earth: the earth is turned to dense turf
+vec3 cL = mix(tl0 * vec3(0.74, 1.0, 0.46) * 1.08, dot(tl0, vec3(0.3, 0.55, 0.15)) * vec3(0.4, 0.74, 0.2) * 1.2, 0.5 + 0.45 * tsoil) * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * mix(vec3(1.0), vec3(0.62, 0.86, 0.5) * (0.8 + 0.3 * vnoise(gq * 0.09)), fld) * uSeasonTint;
 { vec3 tl = texture2D(tLD, uvL).rgb;   // the field: the same turf seen through long grass, so it takes the blades' green and no soil shows between them
   cL = mix(cL, dot(tl, vec3(0.333)) * vec3(0.30, 0.62, 0.14) * (0.8 + 0.35 * vnoise(gq * 0.09)) * gmacro * uSeasonTint, fld); }
 cL *= mix(vec3(1.0), vec3(1.12, 1.02, 0.8), workF(gq));
@@ -484,7 +485,7 @@ vec3 aL = vec3(1.0, 0.92, 0.0), aS = vec3(1.0, 0.94, 0.0), aG = mix(texture2D(tG
 vec3 gArm = aL * wL + aS * wS + aG * wG + aP * wP;
 vec3 gN = vec3(0.0, 0.0, 1.0) * wL + (texture2D(tSN, uvS).xyz * 2.0 - 1.0) * wS + (texture2D(tGN, uvG).xyz * 2.0 - 1.0) * vec3(1.9, 1.9, 1.0) * wG + (texture2D(tPN, uvP).xyz * 2.0 - 1.0) * wP * 1.2;
 float gWet = g2.b * (wG + wP + wS * 0.5);
-vec3 gAlb = (cL * wL + cS * wS + cG * wG + cP * wP) * mix(1.0, gArm.r, 0.8) * mix(1.0, g2.g, 0.9) * mix(1.0, 0.55, gWet);
+vec3 gAlb = (cL * wL + cS * wS + cG * wG + cP * wP) * mix(1.0, gArm.r, 0.8 - 0.4 * wL) * mix(1.0, g2.g, 0.9) * mix(1.0, 0.55, gWet);
 diffuseColor.rgb *= gAlb;`)
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(max(gArm.g, 0.8), 0.16, gWet * 0.85), 0.05, 1.0);')
         .replace('#include <normal_fragment_maps>', '{ vec3 fn = fieldN(gq); normal = normalize((viewMatrix * vec4(normalize(vec3(gN.x, gN.z + 0.35, gN.y) + vec3(fn.x, 0.0, fn.z) * 1.35), 0.0)).xyz); }');
@@ -525,6 +526,7 @@ ${MASKUV}
 float lawn = mout ? 1.0 : texture2D(uGroundMask, muv).r;
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
+float gmead0 = mead;                  // the garden's own meadows go to straw at the tips; the field stays green
 mead = max(mead, fieldF(gq) * (0.3 + 0.35 * gnoise(gq * 0.11)));   // field grass: longer, in drifts
 float gwork = workF(gq); mead *= 1.0 - 0.95 * gwork;
 vec4 gom = texture2D(uOwnMask, (gq - vec2(${OWNM.x0.toFixed(1)}, ${OWNM.z0.toFixed(1)})) / ${OWNM.s.toFixed(1)}); float gown = gom.r; mead *= 1.0 - gown;
@@ -550,7 +552,7 @@ transformed.xz += uWindDir * uWind * (0.6 + 1.4 * uGust) * gwave * (0.25 + mead 
 vec3 gbase = vec3(0.022, 0.05, 0.012), gtip = mix(vec3(0.1, 0.17, 0.04), vec3(0.15, 0.2, 0.058), r1);
 gtip = mix(gtip, vec3(0.17, 0.17, 0.055), step(0.86, r3) * 0.8);
 vColor = mix(gbase, gtip, pow(gy, 0.8)) * (0.78 + 0.4 * clump) * (1.0 + 0.1 * stripe * (1.0 - mead)) * uSeasonTint;
-vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);`)
+vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + max(0.0, mead - gmead0) * 0.12) * gy);`)
           .replace('#include <color_vertex>', '');
       },
     });
