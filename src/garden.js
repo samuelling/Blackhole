@@ -8,7 +8,8 @@ import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 import { plantState, flagsFor, lawnTint, sizeAt } from './seasons.js';
-import { FLORA_BY_KEY } from './flora.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
+import { FLORA_BY_KEY } from './flora.js';
+import { HEAP as JUNK_HEAP } from './junk.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
 import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
 import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
 import { heightAt, FIELD_GLSL, FIELD_TREES, groundGeometry, beyondWall, edgeR, BROOK, nearBrook, createBrook, cutAt } from './field.js';
@@ -372,7 +373,9 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   const clearWall = () => { for (let i = 0; i < colliders.length; i++) if (colliders[i] === 2) colliders[i] = 0; };
   const farTrunks = new Map();   // beyond the grid (the field's trees): trunks by 8 m cell
   const blockFar = (x, z, r) => { const key = Math.floor(x / 8) + ',' + Math.floor(z / 8); let L = farTrunks.get(key); if (!L) farTrunks.set(key, L = []); L.push(x, z, r); };
+  let extraBlocked = null;                                  // what you have built freely (walling.js)
   const blocked = (x, z) => { const i = Math.floor((x - MAP.x0) * CG), j = Math.floor((z - MAP.z0) * CG);
+    if (extraBlocked && extraBlocked(x, z)) return true;
     if (i >= 0 && j >= 0 && i < CW && j < CW && colliders[j * CW + i] !== 0) return true;
     const rr = Math.hypot(x, z - 12); if (rr > 88 && rr > edgeR(x, z) - 0.9) return true;   // the brink: as far as the land goes
     const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
@@ -427,6 +430,8 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const x = OWNM.x0 + (i + 0.5) / q, z = OWNM.z0 + (j + 0.5) / q, bk = B.bank(x, z); if (bk > 0.5) continue;
       const o = (j * N + i) * 4; d[o + 1] = B.edge(x, z) < 0.05 ? 255 : bk < -0.1 ? 140 : 0; d[o + 2] = Math.min(255, Math.round(cutAt(x, z) / 1.5 * 255)); }
     bgx.putImageData(img, 0, 0); }
+  { const q = OWNM.N / OWNM.s, cx = (JUNK_HEAP.x - OWNM.x0) * q, cy = (JUNK_HEAP.z - OWNM.z0) * q, gr = bgx.createRadialGradient(cx, cy, 0, cx, cy, 5.5 * q);   // the junk heap: the grass round it is trodden flat
+    gr.addColorStop(0, '#ff0000'); gr.addColorStop(0.7, '#ff0000'); gr.addColorStop(1, '#000000'); bgx.globalCompositeOperation = 'lighter'; bgx.fillStyle = gr; bgx.beginPath(); bgx.arc(cx, cy, 5.5 * q, 0, 6.2832); bgx.fill(); bgx.globalCompositeOperation = 'source-over'; }
   og.drawImage(bc, 0, 0);
   const ownTex = new THREE.CanvasTexture(oc); ownTex.colorSpace = THREE.NoColorSpace; ownTex.generateMipmaps = false; ownTex.minFilter = THREE.LinearFilter; ownTex.flipY = false;
   U.uOwnMask = { value: ownTex };
@@ -1539,5 +1544,5 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), mead * gy * 0.55);
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
+  return { update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
 }

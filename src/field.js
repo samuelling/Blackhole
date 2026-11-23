@@ -58,6 +58,7 @@ export function groundGeometry() {
 // The wood. Most of the field is under trees: [x, z, crown radius, species], thrown down at random with room between trunks.
 // Left open: a band round the garden for the wall and its stone, a ride from the gate to the rim, and four glades for the sky.
 export const GLADES = [[-64, -34, 15], [66, 50, 14], [4, -78, 12], [-58, 70, 11]];
+export const CLEARING = { x: 52.6, z: 5.6, r: 10.5 };    // where the wormhole hangs and the junk lands (junk.js); kept clear of trees after the wood is laid out
 export const RIDE = 5.5;                                // half the ride's width; it runs south from the gate
 const KEEP = 13.5;                                      // metres clear beyond the wall line (27.25; -31.25 and 55.25)
 /** How far a point lies outside the wall line (0 inside it). */
@@ -76,7 +77,7 @@ export const FIELD_TREES = (() => {
     // stands: half the time a tree is of its nearest neighbour's kind
     out.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round((4.4 + 1.8 * rnd()) * 10) / 10, near && nd < 19 && rnd() < 0.5 ? near[3] : pick()]);
   }
-  return out.filter(t => BROOK.bank(t[0], t[1]) > 1.6);            // none standing in the brook or the pond (taken out afterwards, so the rest of the wood is as it was)
+  return out.filter(t => BROOK.bank(t[0], t[1]) > 1.6 && Math.hypot(t[0] - CLEARING.x, t[1] - CLEARING.z) > CLEARING.r);   // and none in the wormhole's clearing            // none standing in the brook or the pond (taken out afterwards, so the rest of the wood is as it was)
 })();
 
 // ---------------------------------------------------------------- space, seen through the bubble

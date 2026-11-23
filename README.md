@@ -18,12 +18,36 @@ The garden stands in the middle of a field about two football pitches across (21
 
 The brick wall is gone, and building its replacement is the long task: a **dry stone wall** on the same line, 277 m of it in 92 lengths ("stints") of about three metres, pegged out with strings. The gate piers are left standing as the two ends. The stones, their physics and the reading of the wall are [Dry Stack](https://github.com/samuelling/dry-stack)'s (`src/drystack/`, with Rapier 0.14 in `vendor/rapier/`; it is fetched only when you begin your first stint, and from jsDelivr where the vendored copy is not served).
 
-- Four great heaps of fieldstone lie at the corners of the walling band, several hundred stones each, for the suit to draw on. Walk up to a pegged length and press **B**. Your suit brings the stone to the field side of the line (about 330 pieces: foundations, builders, throughs, copes, hearting, pins), sets up batter frames and string lines, and treads the grass down so you can see what you have.
+- Four great heaps of fieldstone lie at the corners of the walling band, about a thousand stones each: big stones laid first wherever they do not sit on another, smaller ones in the gaps, hearting in what is left, over a buried layer so the heaps read as solid. **Every stone in them can be lifted out** (see below). Walk up to a pegged length and press **B**. Your suit brings the stone to the field side of the line (about 330 pieces: foundations, builders, throughs, copes, hearting, pins), sets up batter frames and string lines, and treads the grass down so you can see what you have.
 - You do not hold the stones. The suit lifts what your right hand points at: point at a stone and **click** to lift it, look where it should go, click again to set it down. A lifted stone is still a real body. It lags when it is heavy, it shoves and is shoved, and it settles where it is put. The lift is limited (520 N), so a 50 kg foundation moves slowly and the console's lift bar fills.
 - **Wheel** or **Q / E** turn the stone, **R** tips it forward, **V** rolls it, **T** lays its length into the wall, **C** stands it on edge for a cope (Shift for finer steps). **Space** presses it down, **G** lets it pass through others while held, **H** pours a few pieces of hearting where you point, **N** brings more stone, **Backspace** takes back the last move.
 - Your left forearm comes up and its wrist display throws a small hologram into the lower left of your view (lettering only, in scanlines, with a fan of light from the wrist; it idles dim and brightens when what it says changes): the stone in hand and its weight, the lift, and how the stint stands (footings, height against the 1.1 m target, hearting, throughs, running joints, copes).
 - **P** puts the stint away as it lies, to take up again later; walking 40 m off does the same. **Enter** twice finishes it: what stands in the wall is fixed in place and you can no longer walk through that length; the rest of the pile goes back. Finished and half-built stints are kept in this browser (`localStorage`), with every stone where you left it.
-- Settings → **Wall**: the stone (six kinds, for the next stint you begin), progress, and pulling the whole wall down.
+- Settings → **Wall**: the stone (six kinds, for the next stint you begin), progress, the junk heap, taking down your free builds, and pulling the whole wall down.
+
+### Free building, and building from the heaps
+
+The stints are the guided way. You can also build anywhere, however you like:
+
+- **B** away from the wall line opens a *free build* where you stand: no frames, no strings, no reading of the wall. Everything you set stays where it lies. **N** brings a pile of stone in front of you (builders, a few foundations and throughs, a heap of hearting); **P** or **Enter** twice puts the site away, kept just as it is, and **B** inside it again takes it back up. A put-away free build is solid: you walk round it.
+- **Lifting from the heaps.** Point at a stone in any of the four fieldstone heaps, or a piece on the junk heap, and click. If nothing is open, that opens a site where you stand (the stint you are at, the free build you are in, or a new free build) and lifts it. With a site open, heap stones are pointed at and lifted like the pile's. The stone comes out of the heap as itself (the same shape, now a real body), and the heap remembers it is gone. A stone from a heap that is not in the wall when you finish a stint goes back to its place; taking down a free build gives its heap stones and junk back too.
+- The physics stands on the real ground under a site, sampled every 30 cm over 60 m: the field's rise and fall, the brook's channel, and the heaps' mounds, so you can set stones back on a heap.
+
+### The wormhole and the junk heap
+
+In a clearing in the wood about 25 m east of the wall's east side, level with the grand fountain, a wormhole hangs six metres up. It is drawn as a traversable (Ellis) wormhole is expected to look, the way Kip Thorne's group rendered one for *Interstellar*: not a glowing thing but a crystal ball made of bent light. It is done in the same post pass that lenses the black holes, ray by ray:
+
+- A ray that passes the throat (radius 1.8 m) farther out than its radius stays on this side and is bent round it, by about (π/4)(a/b)² far out and without limit as it grazes the throat. So the trees, sky and grass around it are wrapped into rings of stretched and multiplied images, and things directly behind it show round its rim.
+- A ray inside the throat goes through, and comes out at the far mouth, which opens in the Shred Hole's hall: the lamps round its walls, the hazard ring and the violet vortex portal below, the tower's yellow hoops and lit shaft overhead with the fan turning in it. The whole of that far sky is fitted into the disc, more and more compressed toward its edge.
+- It gives off no light of its own. While a payload is coming through, the far portal flares and the pieces are seen streaming up the throat toward you before they fly out.
+
+When someone pulls **FLUSH!** in [Shred Hole](https://samuelling.github.io/Tunnel/) with the **🌳 GARDEN** destination chosen, the payload comes out of it a few pieces at a time, arcs down and lands on a junk heap below, the hole flaring while it comes.
+
+- Every piece is the shredder's own: its convex hull (16 points), its mass, its outer and inner colours, and the name of what it was ("VAT OF REGRETS · 0.6 kg" on the console). From mass over hull volume the suit judges its density: foam is light, slides and bounces a little; steel sits heavy. By size it is a through (over 60 cm), a builder, hearting or a pin, so it counts in a stint's reading like stone.
+- The garden reads the Shred Hole's mailbox every 25 s while the page is open, and only the drops marked for the garden; the first visit looks back two weeks. The heap is kept in this browser, up to 1,400 pieces (the oldest that are not built into anything go first). Each browser gets the same drops, so everyone's shreds land in everyone's garden.
+- **Walk me to the wormhole** in Settings → Wall puts you at the heap; Shred Hole's 🌀 does the same when it is set to the garden (`?at=wormhole`).
+
+Not modelled for junk: material (the drop carries none, so friction and bounce are guessed from density), and shape detail beyond the 16-point hull.
 
 Not in this version: touch controls for walling, the hammer and the fit light from Dry Stack, and any collision between you and loose stones (you walk through the pile).
 

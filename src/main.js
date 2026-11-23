@@ -12,6 +12,7 @@ import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
 import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
 import { createWalling } from './walling.js';
+import { createJunk } from './junk.js';
 import { createMeadow } from './meadow.js';
 import { createPlanter } from './planter.js';
 import { fetchHistory, fetchWeather, describe as describeWeather, toScene as weatherToScene, createPrecip } from './weather.js';
@@ -592,7 +593,9 @@ const body = assets.models.astronaut ? createBody({ model: assets.models.astrona
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
-const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; } });
+// the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
+const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o) });
+const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
   isTouch, blockedNow: () => !started || spaceOn || walling.busy });
@@ -772,6 +775,7 @@ const lensMat = new THREE.ShaderMaterial({
     uLensB: { value: Array.from({ length: MAXV }, () => new THREE.Vector4()) },
     uLensC: { value: Array.from({ length: MAXV }, () => new THREE.Vector3()) },
     uAspect: { value: 1 }, uNear: { value: camera.near }, uFar: { value: camera.far }, uDark: { value: 0 },
+    uWorm: { value: new THREE.Vector4(0, 0, -100, 1) }, uWormOn: { value: 0 }, uWormFlare: { value: 0 },
   },
   depthTest: false, depthWrite: false,
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
@@ -779,7 +783,37 @@ const lensMat = new THREE.ShaderMaterial({
   uniform sampler2D tScene, tDepth, tAO, tDefl; uniform samplerCube tEnv; uniform float uAO, uEnvOn, uTime, uGiantW, uBend;
   uniform vec4 uLens[${MAXV}]; uniform vec4 uLensB[${MAXV}]; uniform vec3 uLensC[${MAXV}];
   uniform float uAspect, uNear, uFar, uDark; uniform vec2 uProj; uniform mat3 uCamRot; uniform vec3 uDiskN, uDiskCol; uniform int uGiant;
+  uniform vec4 uWorm; uniform float uWormOn, uWormFlare;
   varying vec2 vUv;
+  // The wormhole's far mouth opens in the Shred Hole's hall: what you see through the throat is that place's sky. A dark industrial hall,
+  // a ring of sodium lamps round the walls, the tower's lit shaft straight up, and the vortex portal glowing violet straight down.
+  vec3 farSide(vec3 d){
+    float y = d.y, az = atan(d.z, d.x), sec = floor(az*6.0/6.2832 + 0.5);
+    vec3 c = vec3(0.03, 0.032, 0.045) + vec3(0.06, 0.035, 0.08)*(1.0 - abs(y));                                         // the hall's haze, lit violet from the pit
+    if (y < 0.0) {
+      float r = 1.0/max(-y, 0.035), ring = fract(r*0.5);
+      c = vec3(0.07, 0.07, 0.075)*(0.7 + 0.3*sin(r*3.1 + az*2.0))*(1.0 + 0.25*step(0.92, ring));                         // concrete, with expansion joints
+      c = mix(c, mix(vec3(0.95, 0.75, 0.05), vec3(0.04), step(0.5, fract(az*9.0 + r*0.9))), smoothstep(0.42, 0.4, -y)*smoothstep(0.3, 0.32, -y));   // the hazard ring round the pit
+      c += vec3(1.0, 0.55, 0.2)*0.18*smoothstep(0.35, 0.0, -y)*(0.6 + 0.4*sin(az*10.0));                                  // lamplight pooled on the floor
+      float p = smoothstep(-0.7, -0.96, y), sw = 0.5 + 0.5*sin(az*3.0 + 6.0/max(1.0 + y, 0.02) - uTime*1.8);
+      c += vec3(0.5, 0.18, 1.0)*p*(0.3 + 0.7*sw*sw)*2.2 + vec3(0.9, 0.7, 1.0)*smoothstep(-0.985, -1.0, y)*2.0;              // the vortex portal, turning, straight down
+    } else {
+      c += vec3(1.0, 0.6, 0.22)*pow(max(0.0, cos(az*10.0)), 50.0)*exp(-pow((y - 0.16)/0.022, 2.0))*9.0;                 // sodium lamps round the walls
+      c += vec3(1.0, 0.6, 0.22)*0.12*exp(-pow((y - 0.16)/0.12, 2.0));                                                   // and their glow on the haze
+      float girder = step(0.93, fract(az*36.0/6.2832))*smoothstep(0.02, 0.1, y)*(1.0 - smoothstep(0.85, 0.9, y));
+      c = mix(c, vec3(0.015), girder*0.8);                                                                               // the hall's frame against the glow
+      c += vec3(1.0, 0.85, 0.1)*smoothstep(0.03, 0.0, abs(y - 0.3))*step(abs(az - 1.2), 0.22)*3.0;                     // THE SHRED HOLE, on its board
+      c += vec3(1.0, 0.8, 0.2)*(smoothstep(0.01, 0.0, abs(y - 0.62)) + smoothstep(0.01, 0.0, abs(y - 0.78)))*2.0;        // the tower's yellow hoops
+      float shaft = smoothstep(0.93, 0.97, y);
+      float blades = step(0.5, fract((az + uTime*3.5)*4.0/6.2832 + 0.15*(1.0 - y)*8.0));                              // the fan, turning, high up the lit shaft
+      c = mix(c, vec3(0.6, 0.75, 0.95)*1.6*mix(1.0, 0.25, blades*smoothstep(0.97, 0.985, y)), shaft);
+    }
+    return c;
+  }
+  // Ellis wormhole, throat radius a: a ray passing at impact parameter b turns through about (pi/4)(a/b)^2 far out, without limit as b nears a.
+  // Inside b < a it goes through, and the same law, read from the other side, winds it round: the whole far sky is fitted into the disc,
+  // ever more compressed toward its edge. Outside, this side's light is bent round the throat, into a ring of images of what lies around it.
+  float wormBend(float x){ x = min(x, 0.9995); return min(0.785*x*x/sqrt(1.0 - x*x)*(1.0 + 0.6*x*x*x*x), 14.0); }
   float linZ(vec2 uv){ return (uNear*uFar)/(uFar - (uFar - uNear)*texture2D(tDepth, uv).x); }
   float deflect(float x){ return texture2D(tDefl, vec2(clamp(-log(1.0 - x + 1e-5)/11.5, 0.0, 1.0), 0.5)).r; }   // x = b_c / b
   vec2 toUv(vec3 d){ return (d.xy/(-d.z)/uProj)*0.5 + 0.5; }
@@ -814,7 +848,7 @@ const lensMat = new THREE.ShaderMaterial({
     return acc;
   }
   void main(){
-    vec3 v = normalize(vec3((vUv*2.0 - 1.0)*uProj, -1.0));
+    vec3 v = normalize(vec3((vUv*2.0 - 1.0)*uProj, -1.0)); vec3 v0 = v;
     float pdist = linZ(vUv)/max(-v.z, 1e-3), shade = 1.0, bent = 0.0; vec3 ringc = vec3(0.0); vec4 disk = vec4(0.0);
     for(int i=0;i<${MAXV};i++){
       vec4 L = uLens[i];
@@ -846,6 +880,30 @@ const lensMat = new THREE.ShaderMaterial({
       col = mix(beyond, texture2D(tScene, uvS).rgb, inside);
     }
     if (uAO > 0.0) { float lum = max(col.r, max(col.g, col.b)); col *= mix(mix(1.0, texture2D(tAO, uvS).r, uAO), 1.0, smoothstep(0.9, 2.8, lum)); }   // lights and glows are not occluded
+    if (uWormOn > 0.5) {
+      float Dw = length(uWorm.xyz), a = uWorm.w; vec3 hw = uWorm.xyz/Dw; float ct = dot(v0, hw);
+      if (ct > 0.0) {
+        float st = sqrt(max(1.0 - ct*ct, 0.0)), b = Dw*st, reach = a*5.0;
+        if (b < reach && pdist > Dw - a) {                                     // nothing standing between you and it
+          vec3 e = normalize(hw - v0*ct + 1e-6), wc;
+          if (b < a) {
+            float x = b/a, al = wormBend(x); wc = farSide(uCamRot*normalize(v0*cos(al) - e*sin(al)));
+            // something coming through: the far portal flares, and pieces stream up the throat toward you, out from the middle
+            vec3 bx = normalize(cross(hw, vec3(0.0, 1.0, 0.0)) + 1e-5), by = cross(bx, hw); float th = atan(dot(e, by), dot(e, bx)), lane = floor(th*14.0/6.2832);
+            float sp = fract(sin(lane*91.7)*437.5), streak = smoothstep(0.86, 1.0, sin((x*3.0 - uTime*(2.0 + 2.0*sp) + sp*7.0)*6.2832)*0.5 + 0.5)*step(0.55, fract(sp*13.1));
+            wc += (vec3(0.6, 0.35, 1.0)*0.5*(1.0 - x) + vec3(1.0, 0.9, 0.75)*streak*x*x*1.5)*uWormFlare;
+          }
+          else {
+            float al = wormBend(a/b)*smoothstep(reach, reach*0.55, b); vec3 d1 = normalize(v0*cos(al) + e*sin(al)), dw = uCamRot*d1;
+            vec3 fallback = mix(texture2D(tScene, vec2(0.5, 0.06)).rgb, texture2D(tScene, vec2(0.5, 0.97)).rgb, smoothstep(-0.12, 0.12, dw.y));   // light from behind you
+            vec2 u1 = toUv(d1); float on = step(0.05, -d1.z)*smoothstep(0.0, 0.05, min(min(u1.x, 1.0 - u1.x), min(u1.y, 1.0 - u1.y)));
+            vec3 off = uEnvOn > 0.5 ? textureCube(tEnv, dw).rgb : fallback;
+            wc = mix(off, texture2D(tScene, clamp(u1, 0.0, 1.0)).rgb, on);
+          }
+          col = mix(col, wc, smoothstep(reach, reach*0.9, b));
+        }
+      }
+    }
     col = (col*shade + ringc)*(1.0 - disk.a) + disk.rgb;
     float vig = smoothstep(0.3, 1.1, length((vUv - 0.5)*vec2(uAspect, 1.0))*1.25);
     col *= 1.0 - vig*(0.3 + 0.6*uDark);
@@ -956,6 +1014,7 @@ function setSound(on) {
 // ------------------------------------------------------------------ controls
 const player = new THREE.Vector3(layout.start.x, 1.65, layout.start.z);
 let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
+if (/[?&]at=wormhole\b/.test(location.search)) { player.set(junk.heap.x - 5.5, 1.65, junk.heap.z + 3.5); yaw = -1.1; pitch = 0.12; }   // from the Shred Hole: start by the junk heap, looking at the wormhole
 // The page opens out in space, watching the bubble go by: that is the title screen. Entering holds the view a moment, then flies in to your eyes.
 let spaceOn = true, spaceT = 1, titleK = 1, flyIn = 2.6, introTimer = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 340, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
 const keys = new Set();
@@ -981,14 +1040,12 @@ addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyu
 addEventListener('wheel', e => { if (started && spaceOn && !(drawer && drawer.isOpen)) { orbit.dist = Math.max(150, Math.min(620, orbit.dist * Math.exp(e.deltaY * 0.0012))); orbit.idle = 0; e.preventDefault(); return; }
   if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
 function beginStint() {
-  if (walling.busy) { setHint('you have a stint open already · P puts it away, Enter twice finishes it', 5000); return; }
-  const st = walling.nearest(player.x, player.z);
-  if (!st) { setHint(walling.stints.every(q => q.state === 'done') ? 'the wall is finished, all the way round' : 'walk up to a pegged-out length of the wall line, then B', 6000); return; }
-  if (isTouch) { setHint('walling needs a mouse and keys for now', 6000); return; }
-  walling.start(st);
+  if (walling.busy) { setHint(walling.active && walling.active.free ? 'you are building here already · P puts it away' : 'you have a stint open already · P puts it away, Enter twice finishes it', 5000); return; }
+  if (isTouch) { setHint('building needs a mouse and keys for now', 6000); return; }
+  walling.begin(player.x, player.z, yaw);   // at a pegged-out stint: that stint; anywhere else: a free build where you stand
 }
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(e.button)) return; if (e.button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(e.button)) return; if (!walling.busy && e.button === 0 && walling.idleHover && !isTouch) { walling.pluckIdle(player.x, player.z, yaw); return; } if (e.button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
@@ -1066,7 +1123,16 @@ function collapseVoid(v, self = false) {
     const gn = ac.createGain(); gn.gain.setValueAtTime(0.0001, t0 + T); gn.gain.linearRampToValueAtTime(0.35 * Math.min(1.4, 0.5 + 0.35 * v.k), t0 + T + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, t0 + T + 1.8);
     s.connect(f); f.connect(gn); gn.connect(A.master); gn.connect(A.send); s.start(t0 + T); s.stop(t0 + T + 2); }
 }
-let firstCollapse = false, firstSelf = false, waterAt = 0;
+let firstCollapse = false, firstSelf = false, waterAt = 0; const _wormV = new THREE.Vector3();
+function junkArrived(o) {
+  const d = Math.hypot(player.x - junk.hole.x, player.z - junk.hole.z);
+  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${o.pieces} pieces`, 6000);
+  if (!A.ctx || !A.on || !A.noise) return;   // a rush down from high to low, louder the nearer you are
+  const ac = A.ctx, t0 = ac.currentTime, v = Math.min(1, 14 / Math.max(6, d)), s = ac.createBufferSource(); s.buffer = A.noise; s.loop = true;
+  const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2.2; f.frequency.setValueAtTime(2400, t0); f.frequency.exponentialRampToValueAtTime(160, t0 + 2.6);
+  const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.4 * v, t0 + 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 3.2);
+  s.connect(f); f.connect(g); g.connect(A.master); g.connect(A.send); s.start(t0); s.stop(t0 + 3.3);
+}
 // The voids are restless: each has a lifetime of its own, drawn at random, and gives out when it is up. A dormant spell follows, and then it gathers again
 // near where it was, a little larger or smaller than before. Decay with no memory: the chance of going in the next minute is the same however old it is.
 const lifeOf = v => { const mean = v.giant ? 1500 : v.spawned ? 1200 : 900; return Math.max(v.giant ? 300 : 90, -Math.log(1 - Math.random() * 0.999) * mean); };   // with nine of them, one goes about every two minutes
@@ -1365,9 +1431,12 @@ const SETTINGS = [
   { id: 'wallInfo', tab: 'wall', group: 'The wall', label: '', kind: 'info', get: wallSummary },
   { id: 'wallStone', tab: 'wall', label: 'Stone', kind: 'choice', options: walling.types, get: () => walling.stone, set: v => { walling.stone = v; },
     note: 'for the next stint you begin; one already begun keeps its stone' },
-  { id: 'wallBegin', tab: 'wall', label: 'Begin the nearest stint', kind: 'action', set: () => { drawer.close(); beginStint(); } },
+  { id: 'wallBegin', tab: 'wall', label: 'Begin here (B): the stint you stand at, or a free build', kind: 'action', set: () => { drawer.close(); beginStint(); } },
   { id: 'wallPause', tab: 'wall', label: 'Put this stint away', kind: 'action', set: () => walling.pause() },
   { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
+  { id: 'junkInfo', tab: 'wall', group: 'Junk from the Shred Hole', label: '', kind: 'info', get: () => `${junk.count} pieces on the junk heap, from ${junk.drops} flush${junk.drops === 1 ? '' : 'es'} · it comes through the wormhole in the clearing east of the wall, when someone in the Shred Hole flushes to the garden` },
+  { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 5.5, 1.65, junk.heap.z + 3.5); yaw = -1.1; pitch = 0.12; } },
+  { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
   { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
   { id: 'spaceView', tab: 'garden', group: 'You', label: 'Space view', kind: 'toggle', hands: true, get: () => spaceOn, set: v => { if (v) drawer.close(); setSpaceView(v); },
     note: 'step outside the bubble and watch it go (Z). Drag circles it, the wheel or a pinch comes nearer' },
@@ -1634,6 +1703,7 @@ function update(dt, t) {
   lensMat.uniforms.uAspect.value = innerWidth / innerHeight;
   { const lu = lensMat.uniforms, th = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), G = voidSlots[GIANT];
     lu.uProj.value.set(th * camera.aspect, th); lu.uCamRot.value.setFromMatrix4(camera.matrixWorld);
+    { const w = _wormV.copy(junk.hole).applyMatrix4(camera.matrixWorldInverse); lu.uWorm.value.set(w.x, w.y, w.z, junk.throat); lu.uWormOn.value = w.z < -0.3 && w.length() < 400 ? 1 : 0; lu.uWormFlare.value = junk.flare; }
     lu.uGiant.value = GIANT; lu.uGiantW.value = G && S.disk ? G.wake : 0; lu.uDiskCol.value.copy(G ? G.col : lu.uDiskCol.value);
     lu.uDiskN.value.set(0, 1, 0).applyMatrix3(diskTilt).transformDirection(camera.matrixWorldInverse);
     holeMat.uniforms.uSkip.value = G && G.wake > 0.01 ? GIANT : -1; }
@@ -1670,6 +1740,7 @@ function frame() {
   garden.preRender(camera, bufW, bufH);
   if (body) body.pass(U.uOut.value > 0.03 ? 'mirror' : 'eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
+    if (junk.hole.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = G.env && cubeReady && need ? 1 : 0; }
   renderer.shadowMap.needsUpdate = true; precip.group.visible = U.uOut.value < 0.05;
   renderer.setRenderTarget(rt); renderer.render(scene, camera);
@@ -1733,7 +1804,7 @@ const bSpace = document.createElement('button'); bSpace.id = 'bSpace'; bSpace.te
 bSpace.addEventListener('click', e => { e.stopPropagation(); if (started) setSpaceView(!spaceOn); }); $('bVoid').after(bSpace);
 
 // ------------------------------------------------------------------ at the wall: the suit's reach, the pose, and the forearm console
-const _aimW = new THREE.Vector3(), _aimT = new THREE.Vector3(); let wallPromptAt = 0, wallPrompt = -1, consoleAt = 0;
+const _aimW = new THREE.Vector3(), _aimT = new THREE.Vector3(); let wallPromptAt = 0, wallPrompt = -1, consoleAt = 0, idleKey = '';
 // ------------------------------------------------------------------ planting (planter.js): the menu, the ring on the ground, the trowel's keys
 addEventListener('keydown', e => {
   if (!started || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !/^Key[PQX]$/.test(e.code)) return; const tg = e.target; if (tg && (tg.tagName === 'TEXTAREA' || tg.tagName === 'INPUT' || tg.tagName === 'SELECT')) return;
@@ -1745,11 +1816,14 @@ bPlant.addEventListener('click', e => { e.stopPropagation(); if (!started) retur
 bSpace.after(bPlant);
 
 function stepWalling(dt, t) {
-  planter.update(); planter.tick(performance.now());
+  planter.update(); planter.tick(performance.now()); junk.update(dt, t);
+  walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
   if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand);
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
+  { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
+    if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
     const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
     if (id !== wallPrompt) { wallPrompt = id; if (st && !isTouch) setHint(st.state === 'paused' ? `B · take up stint ${id + 1} again` : `B · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } }
@@ -1764,19 +1838,19 @@ function drawConsole() {
   // no panel behind it: four corner brackets and a ticked rule are all the frame there is
   g.strokeStyle = cy; g.lineWidth = 3; g.lineCap = 'square'; const m = 10, L = 26;
   for (const [x, y, dx, dy] of [[m, m, 1, 1], [w - m, m, -1, 1], [m, h - m, 1, -1], [w - m, h - m, -1, -1]]) { g.beginPath(); g.moveTo(x + dx * L, y); g.lineTo(x, y); g.lineTo(x, y + dy * L); g.stroke(); }
-  g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = cy; g.font = F(30); g.fillText(a ? `STINT ${String(a.id + 1).padStart(2, '0')}` : 'THE WALL', 30, 52);
-  if (a) { const tw = g.measureText(`STINT ${String(a.id + 1).padStart(2, '0')}`).width; g.fillStyle = dim; g.font = F(22); g.fillText(`/ ${st.stints}`, 38 + tw, 52); }
-  g.textAlign = 'right'; g.fillStyle = dim; g.font = F(22); g.fillText(`${st.done} BUILT`, w - 30, 50); g.textAlign = 'left';
+  g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = cy; g.font = F(30); g.fillText(a ? (a.free ? 'FREE BUILD' : `STINT ${String(a.id + 1).padStart(2, '0')}`) : 'THE WALL', 30, 52);
+  if (a && !a.free) { const tw = g.measureText(`STINT ${String(a.id + 1).padStart(2, '0')}`).width; g.fillStyle = dim; g.font = F(22); g.fillText(`/ ${st.stints}`, 38 + tw, 52); }
+  g.textAlign = 'right'; g.fillStyle = dim; g.font = F(22); g.fillText(a && a.free ? `${a.count} STONE${a.count === 1 ? '' : 'S'}` : `${st.done} BUILT`, w - 30, 50); g.textAlign = 'left';
   g.fillStyle = faint; g.fillRect(30, 66, w - 60, 2); g.fillStyle = dim; for (let i = 0; i <= 29; i++) g.fillRect(30 + (w - 62) * i / 29, 66, 2, i % 5 === 0 ? 9 : 5);
   let key = a ? `${a.id}` : 'idle';
   if (!a) { g.fillStyle = dim; g.font = F(30); g.fillText('B  BEGIN A STINT', 30, 132); }
   else if (a.delivering < 1) { key += 'bring'; g.fillStyle = cy; g.font = F(36); g.fillText('BRINGING STONE', 30, 130);
     for (let i = 0; i < 29; i++) { g.fillStyle = i / 29 < a.delivering ? cy : faint; g.fillRect(30 + i * 20, 152, 15, 16); } }
   else {
-    const o = a.held || a.hover; key += o ? `${a.held ? 'h' : 'o'}${o.cls}${o.kg.toFixed(1)}` : 'none';
-    if (o) { g.fillStyle = a.held ? '#ffffff' : cy; g.font = F(46); g.fillText(CLS_NAME[o.cls] || o.cls, 30, 126);
-      g.textAlign = 'right'; g.font = F(36); g.fillText(`${o.kg < 10 ? o.kg.toFixed(1) : o.kg.toFixed(0)}`, w - 74, 126); g.fillStyle = dim; g.font = F(22); g.fillText('KG', w - 30, 126); g.textAlign = 'left'; }
-    else { g.fillStyle = dim; g.font = F(30); g.fillText('POINT · CLICK LIFTS', 30, 122); }
+    const o = a.held || a.hover; key += o ? `${a.held ? 'h' : 'o'}${o.cls}${o.name || ''}${o.kg != null ? o.kg.toFixed(1) : ''}` : 'none';
+    if (o) { const label = o.name ? o.name.toUpperCase() : (CLS_NAME[o.cls] || o.cls); g.fillStyle = a.held ? '#ffffff' : cy; g.font = F(label.length > 14 ? 34 : 46); g.fillText(label.slice(0, 20), 30, 126);
+      if (o.kg != null) { g.textAlign = 'right'; g.font = F(36); g.fillText(`${o.kg < 10 ? o.kg.toFixed(1) : o.kg.toFixed(0)}`, w - 74, 126); g.fillStyle = dim; g.font = F(22); g.fillText('KG', w - 30, 126); g.textAlign = 'left'; } }
+    else { g.fillStyle = dim; g.font = F(30); g.fillText(a.free && !a.count ? 'POINT AT A HEAP · N STONE' : 'POINT · CLICK LIFTS', 30, 122); }
     // lift: how much of the suit's strength the stone is taking, in segments
     const e = a.held ? a.held.effort : 0; for (let i = 0; i < 29; i++) { g.fillStyle = i / 29 < e ? (i > 23 ? warn : cy) : faint; g.fillRect(30 + i * 20, 146, 15, 14); }
     const n = a.notes;
@@ -1806,7 +1880,7 @@ function wallSummary() {
 window.__umbra = { // debug handle
   walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
   startAudio() { initAudio(); return { ctx: !!A.ctx, meadow: !!A.meadow, tone: !!A.tone }; },
-  uniforms: U, BROOK, planter, audio: A, collapseSelf(i) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v, true); return true; },
+  uniforms: U, BROOK, junk, planter, audio: A, collapseSelf(i) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v, true); return true; },
   treeSpecs,
   simulate(days, giantWake) {   // headless testing: advance the calendar in steps with the giant held awake
     const G = voidSlots[GIANT]; for (let i = 0; i < 60; i++) { if (giantWake != null && G) { G.wake = giantWake; G.R = (0.18 + 1.0) * G.k; }
