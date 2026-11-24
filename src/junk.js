@@ -15,7 +15,7 @@ import { wholeShape, recipeKey, keepRecipe, surfaceShader } from './whole.js';
 
 export const RELAY = 'https://tunnel-claude.samuelling.workers.dev/drops';
 export const HEAP = { x: 50.4, z: 6.4 };                               // where the junk piles up
-export const HOLE = { x: 55.6, z: 4.4, h: 6.0, r: 1.8 };                // the wormhole: centre, height above the ground, radius
+export const HOLE = { x: 55.6, z: 4.4, h: 11.0, r: 1.8 };               // the wormhole: centre, height above the ground (high, so the heap can grow under it), radius
 const KEY = 'gd.junk.v1', MAXP = 1400, CHUNK = 160, FIRST_LOOK = 14 * 86400e3;
 const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -170,7 +170,8 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   }
   function land(f) {
     group.remove(f.mesh);
-    const sh = shape(f.id), e = [f.id, +f.x.toFixed(3), +f.y.toFixed(3), +f.z.toFixed(3), +f.q1.x.toFixed(4), +f.q1.y.toFixed(4), +f.q1.z.toFixed(4), +f.q1.w.toFixed(4)];
+    const sh = shape(f.id); if (!sh) return;
+    const e = [f.id, +f.x.toFixed(3), +f.y.toFixed(3), +f.z.toFixed(3), +f.q1.x.toFixed(4), +f.q1.y.toFixed(4), +f.q1.z.toFixed(4), +f.q1.w.toFixed(4)];
     settle(sh, f.q1, f.x, f.y, f.z); store.heap.push(e); addToHeap(e);
   }
   function receive(d) {
@@ -205,7 +206,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     trim(); save();
   }
   function trim() {   // the heap keeps the newest pieces; what is built into a wall is never thrown away
-    const inUse = new Set(store.heap.map(e => e[0]).concat(queue)), used = usedElsewhere();
+    const inUse = new Set(store.heap.map(e => e[0]).concat(queue, flying.map(f => f.id))), used = usedElsewhere();   // (what is still in the air counts: trimming it left nothing to land)
     let n = Object.keys(store.pieces).length;
     if (n <= MAXP) return;
     for (const e of store.heap.slice()) { if (n <= MAXP) break; if (used.has(e[0])) continue; take(e[0]); delete store.pieces[e[0]]; shapes.delete(e[0]); n--; }
@@ -277,6 +278,20 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     const e = [id, +x.toFixed(3), +y.toFixed(3), +z.toFixed(3), +q.x.toFixed(4), +q.y.toFixed(4), +q.z.toFixed(4), +q.w.toFixed(4)];
     settle(sh, q, x, y, z); store.heap.push(e); addToHeap(e); dirtySave = true;
   }
+  /** Vaporize a piece on the heap: gone for good. Returns where it was, for the flash, or null. */
+  function vaporize(id) {
+    const w = take(id); if (!w) return null;
+    delete store.pieces[id]; shapes.delete(id); dirtySave = true;
+    const live = new Set(Object.values(store.pieces).map(p => p.w).filter(Boolean)); for (const k of Object.keys(store.recipes)) if (!live.has(k)) delete store.recipes[k];
+    return w.pos;
+  }
+  /** Vaporize the whole heap (what is built into walls stays). Returns how many pieces went. */
+  function vaporizeAll() {
+    finish(); let n = 0;
+    for (const e of store.heap.slice()) if (vaporize(e[0])) n++;
+    for (let j = 0; j < GN; j++) for (let i = 0; i < GN; i++) under[j * GN + i] = grid[j * GN + i] = heightAt(gx0 + (i + 0.5) * GC, gz0 + (j + 0.5) * GC);   // back to bare ground
+    return n;
+  }
   /** What walling.js needs to build with a piece. */
   function stoneData(id) {
     const sh = shape(id), rec = store.pieces[id]; if (!sh || !rec) return null;
@@ -289,7 +304,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   function topAt(x, z) { const i = Math.floor((x - gx0) / GC), j = Math.floor((z - gz0) / GC); if (i < 0 || j < 0 || i >= GN || j >= GN) return -Infinity; const g = under[j * GN + i]; return g > heightAt(x, z) + 0.05 ? g - 0.06 : -Infinity; }
   /** Land everything at once (for tests, and for a page coming back from the background). */
   function finish() { while (queue.length) launch(queue.shift()); for (const f of flying.splice(0)) land(f); for (const c of chunks) if (c.dirty) rebuild(c); save(); }
-  return { group, update, pick, take, giveBack, stoneData, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id), isWhole,
+  return { group, update, pick, take, giveBack, stoneData, vaporize, vaporizeAll, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id), isWhole,
     set usedElsewhere(fn) { usedElsewhere = fn; },
     get count() { return store.heap.length; }, get drops() { return store.drops; }, get flying() { return flying.length + queue.length; },
     hole: holeC, heap: HEAP, throat: HOLE.r, get flare() { return flare; } };

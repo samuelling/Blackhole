@@ -465,11 +465,12 @@ float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
 if (length(gq - vec2(0.0, 12.0)) > landEdge(gq) - 0.55 * vnoise(gq * 1.3)) discard;   // the turf is torn off where the land ends
 if (texture2D(uOwnMask, (gq - vec2(${OWNM.x0.toFixed(1)}, ${OWNM.z0.toFixed(1)})) / ${OWNM.s.toFixed(1)}).g > 0.3) discard;   // and cut away over the brook and the pond, whose banks are their own mesh
-float fld = fieldF(gq);               // beyond the wall line the lawn runs out into field
+float fld0 = fieldF(gq), gsw = swathF(gq);   // beyond the wall line the lawn runs out into field: mown, with swaths of meadow
+float fld = fld0 * mix(0.3, 1.0, gsw);
 float gmacro = 0.82 + 0.36 * vnoise(gq * 0.13) * (0.7 + 0.3 * vnoise(gq * 0.7));
 vec2 uvL = gq / 1.7, uvS = gq / 1.5, uvG = gq / 1.45, uvP = gq / 1.25, uvG2 = vec2(gq.y, -gq.x) / 2.3 + 0.37;
 float gmix = smoothstep(0.35, 0.65, vnoise(gq * 0.45));
-float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 1.0) * (1.0 - mead) * (1.0 - fld);
+float gstripe = sin(gq.x * 3.14159 / 1.5); gstripe = clamp(gstripe * 4.0, -1.0, 1.0) * (1.0 - mead) * (1.0 - fld0);
 vec3 tl0 = texture2D(tLD, uvL).rgb; float tsoil = smoothstep(-0.02, 0.07, tl0.r - tl0.g);   // the scan is sparse grass on bare earth: the earth is turned to dense turf
 vec3 cL = mix(tl0 * vec3(0.74, 1.0, 0.46) * 1.08, dot(tl0, vec3(0.3, 0.55, 0.15)) * vec3(0.4, 0.74, 0.2) * 1.2, 0.5 + 0.45 * tsoil) * (1.0 + 0.09 * gstripe) * gmacro * mix(vec3(1.0), vec3(1.2, 1.05, 0.7), mead * 0.6) * mix(vec3(1.0), vec3(0.62, 0.86, 0.5) * (0.8 + 0.3 * vnoise(gq * 0.09)), fld) * uSeasonTint;
 { vec3 tl = texture2D(tLD, uvL).rgb;   // the field: the same turf seen through long grass, so it takes the blades' green and no soil shows between them
@@ -498,7 +499,14 @@ diffuseColor.rgb *= gAlb;`)
   // ---------------------------------------------------------------- lawn: two tiers of GPU grass blades that follow the walker
   let grass;
   {
-    const NN = Math.round((lite ? 55000 : 210000) * grassScale), NF = Math.round((lite ? 50000 : 150000) * grassScale), N = NN + NF, T0 = 13, T1 = 46;
+    // Three rings of blades round the walker (12, 28 and 80 m across), drawn as ONE sward: past two metres the blades thin out smoothly
+    // (as 1/d²) while each widens a little (as √d), so there is no ring where one tier hands over to the next: the old two tiers
+    // dropped from 1,240 blades a square metre to 70 at five metres out, a circle that followed you about. Which blades are kept is
+    // each blade's own dice against the density wanted there, and a blade near its threshold is short, so they grow in as you approach
+    // and never pop. Far blades turn to face you. Mown grass is too short to see past about 15 m and shrinks away into the turf under
+    // it between 9 and 17 m; tall meadow grass carries on, thinning away over 27 to 39 m.
+    const N0 = Math.round((lite ? 46000 : 150000) * grassScale), N1 = Math.round((lite ? 39000 : 126000) * grassScale), N2 = Math.round((lite ? 38000 : 125000) * grassScale), N = N0 + N1 + N2, T0 = 12, T1 = 28, T2 = 80;
+    const RHO = [N0 / (T0 * T0), N1 / (T1 * T1), N2 / (T2 * T2)], DREF = 2.2, WS = Math.min(2, Math.max(1, Math.sqrt(1040 / RHO[0])));   // fewer blades (phones): wider ones
     const geo = new THREE.InstancedBufferGeometry(), pos = [], idx = [];
     for (let k = 0; k < 4; k++) pos.push(-0.5, k / 4, 0, 0.5, k / 4, 0); pos.push(0, 1, 0);
     for (let k = 0; k < 3; k++) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } idx.push(6, 7, 8);
@@ -507,7 +515,7 @@ diffuseColor.rgb *= gAlb;`)
     geo.setAttribute('color', new THREE.Float32BufferAttribute(new Array(27).fill(1), 3));
     geo.setIndex(idx);
     const off = new Float32Array(N * 4), tier = new Float32Array(N);
-    for (let i = 0; i < N; i++) { off[i * 4] = rng(); off[i * 4 + 1] = rng(); off[i * 4 + 2] = rng(); off[i * 4 + 3] = rng(); tier[i] = i < NN ? 0 : 1; }
+    for (let i = 0; i < N; i++) { off[i * 4] = rng(); off[i * 4 + 1] = rng(); off[i * 4 + 2] = rng(); off[i * 4 + 3] = rng(); tier[i] = i < N0 ? 0 : i < N0 + N1 ? 1 : 2; }
     geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4)); geo.setAttribute('aTier', new THREE.InstancedBufferAttribute(tier, 1));
     geo.instanceCount = N;
     U.uCam = U.uCam || { value: new V3() };
@@ -519,7 +527,7 @@ ${FIELD_GLSL}
 float ghash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float gnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(ghash(i), ghash(i + vec2(1, 0)), f.x), mix(ghash(i + vec2(0, 1)), ghash(i + vec2(1, 1)), f.x), f.y); }`)
           .replace('#include <beginnormal_vertex>', `
-float tile = aTier < 0.5 ? ${T0.toFixed(1)} : ${T1.toFixed(1)};
+float tile = aTier < 0.5 ? ${T0.toFixed(1)} : aTier < 1.5 ? ${T1.toFixed(1)} : ${T2.toFixed(1)};
 vec2 gc = uCam.xz;
 vec2 gq = gc + mod(aOff.xy * tile - gc + 0.5 * tile, tile) - 0.5 * tile;
 ${MASKUV}
@@ -527,22 +535,30 @@ float lawn = mout ? 1.0 : texture2D(uGroundMask, muv).r;
 float mead = 0.0;
 for (int i = 0; i < 2; i++) mead = max(mead, 1.0 - smoothstep(uMeadow[i].z - 1.6, uMeadow[i].z, distance(gq, uMeadow[i].xy)));
 float gmead0 = mead;                  // the garden's own meadows go to straw at the tips; the field stays green
-mead = max(mead, fieldF(gq) * (0.3 + 0.35 * gnoise(gq * 0.11)));   // field grass: longer, in drifts
+float gsw = swathF(gq);
+mead = max(mead, fieldF(gq) * mix(0.06, 0.6 + 0.4 * gnoise(gq * 0.11), gsw));   // the field: mown like the lawn, with swaths of tall meadow
 float gwork = workF(gq); mead *= 1.0 - 0.95 * gwork;
 vec4 gom = texture2D(uOwnMask, (gq - vec2(${OWNM.x0.toFixed(1)}, ${OWNM.z0.toFixed(1)})) / ${OWNM.s.toFixed(1)}); float gown = gom.r; mead *= 1.0 - gown;
 float gd = length(gq - gc);
-float fade = aTier < 0.5 ? 1.0 - smoothstep(tile * 0.5 - 2.2, tile * 0.5 - 0.4, gd) : smoothstep(3.2, 5.6, gd) * (1.0 - smoothstep(tile * 0.5 - 6.0, tile * 0.5 - 1.0, gd));
+float want = ${RHO[0].toFixed(2)} * min(1.0, ${(DREF * DREF).toFixed(2)} / (gd * gd));   // blades per square metre wanted at this distance
+float share = aTier < 0.5 ? 1.0 - smoothstep(3.6, 5.6, gd) : aTier < 1.5 ? smoothstep(3.6, 5.6, gd) * (1.0 - smoothstep(10.0, 13.4, gd)) : smoothstep(10.0, 13.4, gd) * (1.0 - smoothstep(27.0, 39.0, gd));
+float meadK = smoothstep(0.1, 0.4, mead); want = mix(want, ${RHO[0].toFixed(2)}, meadK);   // tall meadow grass keeps every blade each ring has: it is seen from far off
+float keepP = min(1.0, want / (aTier < 0.5 ? ${RHO[0].toFixed(2)} : aTier < 1.5 ? ${RHO[1].toFixed(2)} : ${RHO[2].toFixed(2)})) * share;
+float fade = smoothstep(0.0, 0.3, (keepP - fract(aOff.x * 57.31 + aOff.y * 113.17 + aOff.z * 7.77)) / max(keepP, 1e-3));
 float r1 = aOff.z, r2 = aOff.w, r3 = fract(aOff.z * 91.7 + aOff.w * 37.3);
 float clump = gnoise(gq * 1.6);
+fade *= 1.0 - smoothstep(9.0, 17.0, gd) * (1.0 - meadK);   // mown grass, far off, is the turf's own texture
 float gh = mix(0.05 + 0.055 * r1 + 0.035 * clump, 0.26 + 0.62 * r1, mead) * smoothstep(0.42, 0.7, lawn) * fade * step(length(gq - vec2(0.0, 12.0)), landEdge(gq) - 0.6) * (1.0 - 0.45 * gwork) * (1.0 - 0.7 * gown) * (1.0 - step(0.8, gom.g));   // none in the water; on the banks it grows as anywhere
 float gang = r2 * 6.2831;
-vec2 gside = vec2(cos(gang), sin(gang)), gface = vec2(-gside.y, gside.x);
+vec2 gside = vec2(cos(gang), sin(gang));
+{ vec2 gv = normalize(gq - gc + vec2(1e-4)), gp = vec2(-gv.y, gv.x); gside = normalize(mix(gside, gp * (dot(gside, gp) < 0.0 ? -1.0 : 1.0), smoothstep(3.0, 9.0, gd))); }   // far blades face you
+vec2 gface = vec2(-gside.y, gside.x);
 float stripe = sign(sin(gq.x * 3.14159 / 1.5));
 vec2 glean = normalize(gface * 0.7 + vec2(0.0, stripe * 0.9 * (1.0 - mead)) + vec2(1e-4));
 float gy = position.y;
 vec3 objectNormal = normalize(vec3(gface.x, 0.0, gface.y) + vec3(gside.x, 0.0, gside.y) * position.x * 1.5 + vec3(0.0, 0.55 + gy * 0.6, 0.0) - vec3(glean.x, 0.0, glean.y) * gy * 0.5);`)
           .replace('#include <begin_vertex>', `
-float gw = mix(0.0052, 0.0085, r3) * (1.0 + mead * 0.6) * (aTier < 0.5 ? 1.0 : 1.0 + gd * 0.12) * step(0.004, gh) * (1.0 - pow(gy, 1.6) * 0.9);
+float gw = min(mix(0.0052, 0.0085, r3) * ${WS.toFixed(3)} * (1.0 + mead * 0.6) * mix(min(2.4, sqrt(max(1.0, gd / ${DREF.toFixed(1)}))), min(3.6, pow(max(1.0, gd / ${DREF.toFixed(1)}), 0.7)), meadK), max(0.5 * gh, 0.012)) * step(0.004, gh) * (1.0 - pow(gy, 1.6) * 0.9);
 float gbend = (0.22 + 0.4 * r3) * (1.0 + mead * 0.8);
 vec3 transformed = vec3(gq.x, fieldH(gq) - gom.b * 1.5 + gy * gh * (1.0 - 0.22 * gbend * gy), gq.y);
 transformed.xz += gside * position.x * gw * 2.0 + glean * gy * gy * gh * gbend;
@@ -551,8 +567,9 @@ float gwave = 0.55 + 0.3 * sin(gph) + 0.15 * sin(gph * 2.7 + 1.3);
 transformed.xz += uWindDir * uWind * (0.6 + 1.4 * uGust) * gwave * (0.25 + mead * 1.3) * 0.6 * gy * gy * gh;
 vec3 gbase = vec3(0.022, 0.05, 0.012), gtip = mix(vec3(0.1, 0.17, 0.04), vec3(0.15, 0.2, 0.058), r1);
 gtip = mix(gtip, vec3(0.17, 0.17, 0.055), step(0.86, r3) * 0.8);
-vColor = mix(gbase, gtip, pow(gy, 0.8)) * (0.78 + 0.4 * clump) * (1.0 + 0.1 * stripe * (1.0 - mead)) * uSeasonTint;
-vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + max(0.0, mead - gmead0) * 0.12) * gy);`)
+float gsh = mix(pow(gy, 0.8), 0.62 + 0.38 * gy, smoothstep(3.0, 8.0, gd) * (1.0 - meadK));   // mown grass further off has no dark feet: it sits in the turf's own colour, not as dark flecks on it
+vColor = mix(gbase, gtip, gsh) * (0.78 + 0.4 * clump) * (1.0 + 0.1 * stripe * (1.0 - mead)) * uSeasonTint;
+vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + max(0.0, mead - gmead0) * (0.1 + 0.3 * gsw * step(0.55, r3))) * gy);   // some of the meadow's blades carry straw-coloured seed heads`)
           .replace('#include <color_vertex>', '');
       },
     });
@@ -1490,13 +1507,26 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     const id = curPid; PT.own[id] = clamp(9 / Math.max(h, w), 0.16, 0.5);            // a pot about nine inches across
     PT.tau[id] = PT.tau[near] || 0; PT.planted[id] = PT.tau[id] - ageDays;
     pa.set([PT.bx[id], PT.by[id], PT.bz[id], flagsFor(k)], id * 4); texA.needsUpdate = true;
-    const cl = [x, z, c.r * 0.9]; { const key = Math.floor(x / 2) + ',' + Math.floor(z / 2); let L = placed.get(key); if (!L) placed.set(key, L = []); L.push(cl); }
+    const cl = [x, z, c.r * 0.9]; cl.own = 1; { const key = Math.floor(x / 2) + ',' + Math.floor(z / 2); let L = placed.get(key); if (!L) placed.set(key, L = []); L.push(cl); }
     OWN.push({ id, k, x, z, cl }); recrowd(); ownChanged();
     bakeBucket(buckets.get(Math.floor(x / CH) + ',' + Math.floor(z / CH)));
     if (!quiet) writeStates();
     return id;
   }
+  // The garden's own plants can be dug up too (and put back): hidden, their ground freed for something else, and remembered by the
+  // planter (planter.js) as [plant number, species, x, z], checked against this garden before it is dug again on the next visit.
+  const DUG = new Map();
+  function digGarden(id) {
+    if (!(id >= 0 && id < NP0) || PT.gone[id] || PT.k[id] === 'tree') return false;
+    PT.gone[id] = 1; DUG.set(id, [id, PT.k[id], Math.round(PT.x[id] * 100) / 100, Math.round(PT.z[id] * 100) / 100]);
+    // free its ground: the claim it made when the beds were laid out (the nearest one, within its own spread)
+    const x = PT.x[id], z = PT.z[id]; let best = null, bl = null, bd = 0.5;
+    for (let j = Math.floor(z / 2) - 1; j <= Math.floor(z / 2) + 1; j++) for (let i = Math.floor(x / 2) - 1; i <= Math.floor(x / 2) + 1; i++) { const L = placed.get(i + ',' + j); if (L) for (const c of L) { const d = Math.hypot(c[0] - x, c[1] - z); if (d < bd && !c.own) { bd = d; best = c; bl = L; } } }
+    if (best) { bl.splice(bl.indexOf(best), 1); DUG.get(id).push(best); }
+    recrowd(); writeStates(); return true;
+  }
   function digUp(id) {
+    if (id < NP0) return digGarden(id);
     const i = OWN.findIndex(o => o.id === id); if (i < 0) return false; const o = OWN[i];
     const L = placed.get(Math.floor(o.x / 2) + ',' + Math.floor(o.z / 2)); if (L) { const j = L.indexOf(o.cl); if (j >= 0) L.splice(j, 1); }
     PT.gone[id] = 1; OWN.splice(i, 1); recrowd(); ownChanged(); writeStates(); return true;
@@ -1509,6 +1539,20 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     /** Everything you have planted, for saving: [species, x, z, age in days]. */
     list: () => OWN.map(o => [o.k, Math.round(o.x * 100) / 100, Math.round(o.z * 100) / 100, Math.round(PT.tau[o.id] - PT.planted[o.id])]),
     clear() { for (const o of OWN.slice()) digUp(o.id); },
+    /** Any plant near a point, yours first: as near() for yours; the garden's own come with garden: true. Trees aren't dug. */
+    nearAny(x, z, d = 0.6) {
+      const mine = this.near(x, z, d); if (mine) return mine;
+      let best = -1, bd = d;
+      for (let j = Math.floor(z / 2) - 1; j <= Math.floor(z / 2) + 1; j++) for (let i = Math.floor(x / 2) - 1; i <= Math.floor(x / 2) + 1; i++) { const L = pgrid.get(i + ',' + j); if (L) for (const p of L) { if (p >= NP0 || PT.gone[p]) continue; const q = Math.hypot(PT.x[p] - x, PT.z[p] - z); if (q < bd) { bd = q; best = p; } } }
+      if (best < 0) return null; const age = (PT.tau[best] - PT.planted[best]) / 365 + baseAge;
+      return { id: best, k: PT.k[best], x: PT.x[best], z: PT.z[best], age, crowd: PT.crowd[best], size: 1, garden: true };
+    },
+    /** The garden's own plants you have dug up, for saving; dig them again on load (only where this garden still has them). */
+    dugList: () => [...DUG.values()].map(d => d.slice(0, 4)),
+    redig(list) { let n = 0; for (const d of list || []) { const [id, k, x, z] = d; if (id >= 0 && id < NP0 && PT.k[id] === k && Math.hypot(PT.x[id] - x, PT.z[id] - z) < 0.05 && digGarden(id)) n++; } return n; },
+    /** Put every one of the garden's own plants you dug up back. */
+    undigAll() { for (const [id, d] of DUG) { PT.gone[id] = 0; const c = d[4]; if (c) { const key = Math.floor(c[0] / 2) + ',' + Math.floor(c[1] / 2); let L = placed.get(key); if (!L) placed.set(key, L = []); L.push(c); } } const n = DUG.size; DUG.clear(); recrowd(); writeStates(); return n; },
+    get dug() { return DUG.size; },
     flora: FLORA_BY_KEY, radius: radiusOf,
   };
 

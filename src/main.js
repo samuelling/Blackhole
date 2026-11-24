@@ -19,6 +19,7 @@ import { fetchHistory, fetchWeather, describe as describeWeather, toScene as wea
 import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
+import { createMulti } from './multi.js';
 
 // ------------------------------------------------------------------ setup
 const MAXV = 12;
@@ -27,7 +28,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk';
 
 let renderer;
 try {
@@ -591,6 +592,20 @@ const garden = createGarden({ scene, renderer, U, COMMON, layout, assets, treeSp
 // your own body: a cel-shaded hard suit you see when you look down, and that casts your shadow
 const body = assets.models.astronaut ? createBody({ model: assets.models.astronaut, U, COMMON }) : null;
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
+// together: up to six astronauts in one garden, in outfits of their own, talking (multi.js)
+let lobbyView = null;   // the self view as it was before the lobby turned you round to see your suit
+const multi = assets.models.astronaut ? createMulti({ scene, camera, model: assets.models.astronaut, U, COMMON, createBody, selfBody: body,
+  audio: () => A, initAudio: () => initAudio(), hint: (t, ms) => setHint(t, ms), ink: () => body ? body.uniforms.uInk.value : 0.004,
+  getSky: () => ({ h: +(timeMode === 'live' ? (d => d.getHours() + d.getMinutes() / 60)(new Date()) : timeMode === 'night' ? 23 : manualHour).toFixed(3), doy: +(((calDoy() % 365) + 365) % 365).toFixed(2) }),
+  setSky: m => {
+    if (typeof m.h === 'number' && isFinite(m.h) && (timeMode !== 'manual' || Math.abs(manualHour - m.h) > 0.02)) { manualHour = Math.max(0, Math.min(23.99, m.h)); timeMode = 'manual'; refreshTimeUI(); }
+    if (typeof m.doy === 'number' && isFinite(m.doy)) { const cur = ((calDoy() % 365) + 365) % 365; let dd = Math.abs(m.doy - cur); dd = Math.min(dd, 365 - dd); if (dd > 1) jumpToDoy(m.doy); }
+  },
+  onOpen: on => {   // while the lobby is open the camera turns round so you can see your suit
+    if (on) { if (document.pointerLockElement === canvas) document.exitPointerLock(); if (lobbyView === null) { lobbyView = { on: selfView, ang: selfAng, dist: selfDist }; selfView = true; selfAng = 0.4; selfDist = 3.1; } }
+    else if (lobbyView) { selfView = lobbyView.on; selfAng = lobbyView.ang; selfDist = lobbyView.dist; lobbyView = null; }
+  },
+  onRoom: () => togetherLabel() }) : null;
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
@@ -1014,7 +1029,7 @@ function setSound(on) {
 // ------------------------------------------------------------------ controls
 const player = new THREE.Vector3(layout.start.x, 1.65, layout.start.z);
 let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
-if (/[?&]at=wormhole\b/.test(location.search)) { player.set(junk.heap.x - 5.5, 1.65, junk.heap.z + 3.5); yaw = -1.1; pitch = 0.12; }   // from the Shred Hole: start by the junk heap, looking at the wormhole
+if (/[?&]at=wormhole\b/.test(location.search)) { player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; }   // from the Shred Hole: start by the junk heap, looking at the wormhole
 // The page opens out in space, watching the bubble go by: that is the title screen. Entering holds the view a moment, then flies in to your eyes.
 let spaceOn = true, spaceT = 1, titleK = 1, flyIn = 2.6, introTimer = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 340, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
 const keys = new Set();
@@ -1028,7 +1043,7 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 // at the wall: while a stint is open these keys belong to the stone in hand, and not to voids, seasons or replanting
-const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN']);
+const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'KeyJ', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN']);
 const wallKey = (e, down) => {
   if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
   if (down && e.code === 'KeyB' && !e.repeat) { e.stopImmediatePropagation(); beginStint(); return; }
@@ -1037,6 +1052,17 @@ const wallKey = (e, down) => {
   e.preventDefault(); e.stopImmediatePropagation();
 };
 addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyup', e => wallKey(e, false), true);
+addEventListener('keydown', e => { if (multi && multi.key(e, true)) e.preventDefault(); }); addEventListener('keyup', e => { if (multi && multi.key(e, false)) e.preventDefault(); });
+addEventListener('keydown', e => { if (started && multi && e.code === 'KeyG' && e.shiftKey && !e.metaKey && !e.ctrlKey) multi.toggle(); });
+// X, looking at a piece of junk (not planting): vaporize it, for good
+addEventListener('keydown', e => {
+  if (!started || e.code !== 'KeyX' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || planter.armed || planter.open || walling.busy) return;
+  const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  const ih = walling.idleHover; if (!ih || !ih.junk) return;
+  const name = ih.name, pos = junk.vaporize(ih.junk); if (!pos) return;
+  walling.idle = false; idleKey = '';   // drop the hover on what is no longer there
+  burst(pos, 0.35); setHint(`${name ? name.toLowerCase() : 'the piece'} vaporized`, 2500);
+});
 addEventListener('wheel', e => { if (started && spaceOn && !(drawer && drawer.isOpen)) { orbit.dist = Math.max(150, Math.min(620, orbit.dist * Math.exp(e.deltaY * 0.0012))); orbit.idle = 0; e.preventDefault(); return; }
   if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
 function beginStint() {
@@ -1093,6 +1119,8 @@ canvas.addEventListener('touchend', endTouch); canvas.addEventListener('touchcan
 // dM/dt ∝ -1/M^2 means M^3 falls linearly, M(t) = M0 (1 - t/T)^(1/3), so it shrinks slowly, then all at once, and ends in a flash.
 // For a hole of this size T is about 10^57 years (and it would be colder than the cosmic background, so it would grow, not shrink).
 const reformQ = [], evapSprites = [], flash = { t0: -9, pos: new THREE.Vector3(), col: new THREE.Color(), k: 1 };
+// a blue-white burst somewhere (vaporized junk), the same flash a void gives when it evaporates
+function burst(pos, k = 0.4) { flash.t0 = clock.elapsedTime; flash.pos.copy(pos); flash.col.setRGB(0.6, 0.8, 1.0); flash.k = k; }
 const glowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
   r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.2, 'rgba(255,255,255,0.45)'); r.addColorStop(0.5, 'rgba(255,255,255,0.08)'); r.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = r; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
@@ -1199,13 +1227,15 @@ $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); s
 const hint = $('hint');
 function setHint(t, ms = 9000) { hint.textContent = t; hint.style.opacity = 1; clearTimeout(setHint.h); setHint.h = setTimeout(() => hint.style.opacity = 0, ms); }
 
-$('enter').addEventListener('click', () => {
+$('enter').addEventListener('click', () => enterGarden());
+function enterGarden() {
+  if (started) return;
   started = true; $('intro').classList.add('gone'); $('hud').classList.add('on');
   initAudio(); setSound(true); tryLock();
   // a moment more out here, with the title gone, then down through the skin and the trees to where you stand
   const arrive = () => setHint(isTouch ? 'walk through the arches · something is waiting past them' : 'walk through the arches · something is waiting past them · Esc frees the mouse');
   if (spaceOn) { flyIn = 4.4; introTimer = setTimeout(() => { introTimer = 0; setSpaceView(false, true); setTimeout(arrive, 4200); }, 2600); } else arrive();
-});
+}
 
 // ------------------------------------------------------------------ time of day
 // The garden's entrance faces south (−z), so west is +x. Latitude ≈ 42°N; longitude is
@@ -1435,7 +1465,8 @@ const SETTINGS = [
   { id: 'wallPause', tab: 'wall', label: 'Put this stint away', kind: 'action', set: () => walling.pause() },
   { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
   { id: 'junkInfo', tab: 'wall', group: 'Junk from the Shred Hole', label: '', kind: 'info', get: () => `${junk.count} pieces on the junk heap, from ${junk.drops} flush${junk.drops === 1 ? '' : 'es'} · it comes through the wormhole in the clearing east of the wall, when someone in the Shred Hole flushes to the garden` },
-  { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 5.5, 1.65, junk.heap.z + 3.5); yaw = -1.1; pitch = 0.12; } },
+  { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; } },
+  { id: 'junkClear', tab: 'wall', label: 'Vaporize the whole junk heap', kind: 'action', set: () => { if (confirm(`Vaporize all ${junk.count} pieces on the junk heap? What you have built with stays.`)) { const n = junk.vaporizeAll(); burst(new THREE.Vector3(junk.heap.x, heightAt(junk.heap.x, junk.heap.z) + 0.6, junk.heap.z), 2.2); setHint(`${n} pieces vaporized`, 4000); drawer.sync('junkInfo'); } } },
   { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
   { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
   { id: 'fullScreen', tab: 'gfx', group: 'Screen', label: 'Full screen (Shift+F)', kind: 'toggle', get: () => !!(document.fullscreenElement || document.webkitFullscreenElement), set: v => toggleFull(v),
@@ -1449,6 +1480,7 @@ const SETTINGS = [
   { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
   { id: 'plantInfo', tab: 'garden', group: 'Planting', label: '', kind: 'info', get: () => `${planter.count} of ${garden.planting.max} planted by you · each grows to its own height and spread over its own years, on the garden's seasons` },
   { id: 'plantOpen', tab: 'garden', label: 'Open the plant menu (P)', kind: 'action', set: () => { drawer.close(); planter.setOpen(true); } },
+  { id: 'plantUndig', tab: 'garden', label: "Put back the garden's own plants you dug up", kind: 'action', set: () => { const n = planter.undig(); setHint(n ? `${n} plant${n === 1 ? '' : 's'} back where ${n === 1 ? 'it' : 'they'} stood` : 'nothing of the garden\'s has been dug up', 3500); } },
   { id: 'plantClear', tab: 'garden', label: 'Dig up everything you planted', kind: 'action', set: () => { if (confirm('Dig up every plant you have set out? This cannot be undone.')) planter.clear(); } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
@@ -1771,6 +1803,12 @@ function frame(once) {
 }
 requestAnimationFrame(frame);
 $('enter').disabled = false; $('enter').textContent = 'enter the garden'; $('intro').classList.remove('loading');
+// together: a second way in, through the lobby (name, suit, room); a link with ?room=CODE goes straight to that room
+const roomQ = (QS.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+if (multi) {
+  const eM = $('enterMp'); eM.hidden = false; if (roomQ) eM.textContent = `join room ${roomQ}`;
+  eM.addEventListener('click', e => { e.stopPropagation(); enterGarden(); multi.open(); if (roomQ) multi.join(roomQ); });
+}
 setTimeout(() => document.body.classList.add('ready'), 250);   // the first frames are drawn: let the bubble come up out of the dark behind the title
 // ------------------------------------------------------------------ the space view: step outside the bubble and watch it go
 // The camera leaves your eyes, passes out through the skin and takes up an orbit round the bubble. You stay where you were (your body is
@@ -1836,9 +1874,14 @@ function toggleFull(on = !fsEl()) {
 const bFull = document.createElement('button'); bFull.id = 'bFull'; bFull.textContent = 'full screen'; bFull.title = 'full screen (Shift+F)';
 bFull.addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
 if (fsOk) $('bSettings').before(bFull);
+const bTogether = document.createElement('button'); bTogether.id = 'bTogether'; bTogether.title = 'together: up to six of you, with voices (Shift+G)';
+bTogether.addEventListener('click', e => { e.stopPropagation(); if (multi) multi.toggle(); });
+function togetherLabel() { if (!multi) return; bTogether.textContent = multi.inRoom ? `together · ${multi.count}` : 'together'; }
+if (multi) { $('bSettings').before(bTogether); togetherLabel(); }
 const onFull = () => { const f = !!fsEl(); bFull.textContent = f ? 'exit full screen' : 'full screen'; document.body.classList.toggle('full', f); drawer && drawer.sync && drawer.sync('fullScreen'); };
 document.addEventListener('fullscreenchange', onFull); document.addEventListener('webkitfullscreenchange', onFull);
 
+const _mpAim = new THREE.Vector3();
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t);
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
@@ -1846,8 +1889,9 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0 });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
-    if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)`, 5000); } }
+    if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
     const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
     if (id !== wallPrompt) { wallPrompt = id; if (st && !isTouch) setHint(st.state === 'paused' ? `B · take up stint ${id + 1} again` : `B · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } }
@@ -1894,7 +1938,7 @@ function drawConsole() {
 // the keys, along the bottom while a stint is open
 const wallKeysEl = document.createElement('div');
 wallKeysEl.style.cssText = 'position:fixed;left:50%;top:40px;transform:translateX(-50%);font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;color:#bff6ff;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center;white-space:nowrap;z-index:5';
-wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish';
+wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish<br>free builds: J glue what it touches · Shift+J unglue';
 document.body.append(wallKeysEl);
 function wallSummary() {
   const st = walling.status(), left = walling.stints.filter(q => q.state === 'paused').length;
@@ -1905,6 +1949,7 @@ window.__umbra = { // debug handle
   walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
   startAudio() { initAudio(); return { ctx: !!A.ctx, meadow: !!A.meadow, tone: !!A.tone }; },
   uniforms: U, BROOK, junk, planter,
+  multi,
   selfie(on, ang = 2.5, dist = 3.4) { selfView = !!on; selfAng = ang; selfDist = dist; },
   /** For tests: run n frames at a fixed step, capturing the canvas every k-th (data URLs). */
   capture(n, dt = 1 / 30, every = 1, walk = null) {

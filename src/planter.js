@@ -81,13 +81,13 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
     if (!armed || open || blockedNow()) { ring.visible = false; if (armed && blockedNow()) bar.classList.remove('on'); return; }
     bar.classList.add('on');
     const g = groundAt(), f = P.flora[armed];
-    look = g ? P.near(g.x, g.z, 0.6) : null;
+    look = g ? P.nearAny(g.x, g.z, 0.6) : null;
     if (!g) { ring.visible = false; spot = null; bar.innerHTML = `<b>${f.name}</b><span class="st no">look at the ground within reach</span>`; return; }
     const c = P.check(armed, g.x, g.z); spot = { x: g.x, z: g.z, c };
     ring.visible = true; ring.position.set(g.x, heightAt(g.x, g.z) + 0.03, g.z); outer.scale.setScalar(c.r || 0.3); pot.scale.setScalar(0.115);
     ringMat.color.set(!c.ok ? 0xff7a66 : c.crowd < 0.995 ? 0xffc46b : 0x9dffb0);
     const status = !c.ok ? `<span class="st no">${c.why}</span>` : c.crowd < 0.995 ? `<span class="st warn">crowded here: it will reach ${pct(c.crowd)} of its size</span>` : `<span class="st">room to grow · ${f.meta.split(' · ').slice(1, 4).join(' · ')}</span>`;
-    const mine = look ? `<br>yours here: ${P.flora[look.k].name} · ${look.age < 0.1 ? 'just planted' : look.age.toFixed(1) + ' years'} · ${pct(look.size)} of full size${look.crowd < 0.995 ? ' (crowded)' : ''} · X digs it up` : '';
+    const mine = !look ? '' : look.garden ? `<br>here: ${nameOf(look.k)}, the garden's own · X digs it up (and frees the spot)` : `<br>yours here: ${nameOf(look.k)} · ${look.age < 0.1 ? 'just planted' : look.age.toFixed(1) + ' years'} · ${pct(look.size)} of full size${look.crowd < 0.995 ? ' (crowded)' : ''} · X digs it up`;
     bar.innerHTML = `<b>${f.name}</b>${status}${mine}<br>${isTouch ? 'tap the ground to plant' : 'click plants · P menu · Q done'}`;
   }
   function plantHere(s = spot) {
@@ -100,7 +100,8 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
   function click() { if (!armed || open || blockedNow()) return false; return plantHere(); }
   /** A tap at a point of the screen (touch): plant where the tap falls. */
   function tap(nx, ny) { if (!armed || open || blockedNow()) return false; const g = groundAt(nx, ny); if (!g) return true; return plantHere({ x: g.x, z: g.z, c: P.check(armed, g.x, g.z) }); }
-  function dig() { if (!look) return false; const name = P.flora[look.k].name; if (P.digUp(look.id)) { dirty = true; saveAt = performance.now() + 1500; hint(`${name} dug up`, 2500); } return true; }
+  const nameOf = k => (P.flora[k] && P.flora[k].name) || String(k).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  function dig() { if (!look) return false; const name = nameOf(look.k); if (P.digUp(look.id)) { dirty = true; saveAt = performance.now() + 1500; hint(`${name} dug up`, 2500); } return true; }
   function onKey(code) {
     if (blockedNow()) return false;
     if (code === 'KeyP') { setOpen(!open); return true; }
@@ -110,12 +111,15 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
     return false;
   }
   // keeping
-  function save() { dirty = false; try { localStorage.setItem(KEY, JSON.stringify({ v: 1, plants: P.list() })); } catch (e) { hint('this browser would not save your planting', 5000); } }
+  function save() { dirty = false; try { localStorage.setItem(KEY, JSON.stringify({ v: 1, plants: P.list(), dug: P.dugList() })); } catch (e) { hint('this browser would not save your planting', 5000); } }
   function tick(now) { if (dirty && now > saveAt) save(); else if (P.count && now > saveAt + 30000) { saveAt = now; save(); } }   // ages move on, so save now and then
-  try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && Array.isArray(d.plants)) { let n = 0; for (const [k, x, z, age] of d.plants) if (P.plant(k, x, z, age || 0, true) != null) n++; if (n) P.refresh(); } } catch (e) {}
-  addEventListener('pagehide', () => { if (P.count || dirty) save(); });
+  try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && Array.isArray(d.dug)) P.redig(d.dug);   // the garden's own you dug up, before yours go back in where they stood
+    if (d && Array.isArray(d.plants)) { let n = 0; for (const [k, x, z, age] of d.plants) if (P.plant(k, x, z, age || 0, true) != null) n++; if (n) P.refresh(); } } catch (e) {}
+  addEventListener('pagehide', () => { if (P.count || P.dug || dirty) save(); });
   draw();
   return { update, tick, click, tap, onKey, setOpen, arm, save,
     get armed() { return armed; }, get open() { return open; }, get count() { return P.count; },
-    clear() { P.clear(); arm(null); save(); draw(); } };
+    clear() { P.clear(); arm(null); save(); draw(); },
+    /** Put back every one of the garden's own plants you dug up. */
+    undig() { const n = P.undigAll(); save(); return n; } };
 }

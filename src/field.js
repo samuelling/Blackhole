@@ -39,6 +39,16 @@ float fieldH(vec2 p){
 vec3 fieldN(vec2 p){ float e = 0.6; return normalize(vec3(fieldH(p - vec2(e, 0.0)) - fieldH(p + vec2(e, 0.0)), 2.0 * e, fieldH(p - vec2(0.0, e)) - fieldH(p + vec2(0.0, e)))); }
 // 0 in the garden, 1 out in the field: where mown lawn gives way to long grass (the old wall line is at |x| = 27, z = -31 and 55)
 float fieldF(vec2 p){ return smoothstep(0.6, 3.5, length(max(abs(p - vec2(0.0, 12.0)) - vec2(27.4, 43.4), 0.0))); }
+// Swaths of meadow out in the field: long sweeping bands of tall grass, with mown rides between them (0 mown, 1 meadow).
+// A few metres of mown margin are kept outside the wall line.
+float fhash(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+float fnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(fhash(i), fhash(i + vec2(1, 0)), f.x), mix(fhash(i + vec2(0, 1)), fhash(i + vec2(1, 1)), f.x), f.y); }
+float swathF(vec2 p){
+  vec2 q = p - vec2(0.0, 12.0);
+  float n = fnoise(vec2(q.x * 0.043 + 0.9 * sin(q.y * 0.031), q.y * 0.021 + 0.7 * sin(q.x * 0.027) + 3.1)) + 0.3 * fnoise(q * 0.12 + 7.0);
+  float out_ = length(max(abs(q) - vec2(27.4, 43.4), 0.0));
+  return smoothstep(0.57, 0.69, n) * smoothstep(5.0, 9.0, out_) * smoothstep(9.0, 14.0, distance(p, vec2(52.6, 5.6)));   // (the wormhole's clearing stays mown)
+}
 // where the land ends (metres from the centre, by direction): edgeR() in JS
 float landEdge(vec2 p){ vec2 d = p - vec2(${CENTRE.x.toFixed(1)}, ${CENTRE.z.toFixed(1)}); float a = atan(d.y, d.x);
   return 99.0 + 2.6 * sin(3.0 * a + 0.7) + 1.8 * sin(7.0 * a + 2.3) + 1.1 * sin(13.0 * a + 4.1) + 0.7 * sin(29.0 * a + 1.1) + 0.4 * sin(53.0 * a + 0.3); }

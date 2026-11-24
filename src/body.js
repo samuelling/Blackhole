@@ -18,6 +18,15 @@ const CEL = /* glsl */`
 {
   float cls = vColor.a; vec3 alb = vColor.rgb;
   bool isGlow = cls > 0.5 && cls < 0.7, isGloss = cls >= 0.7 && cls < 0.9, isSoft = cls <= 0.5;
+  // an outfit (outfits.js): each of the suit's own flat colours swapped for the outfit's
+  if (uOutfit > 0.5) {
+    if (cls > 0.9) {
+      if (distance(alb, vec3(0.80, 0.82, 0.86)) < 0.07) alb = uSuit;
+      else if (distance(alb, vec3(0.34, 0.37, 0.43)) < 0.07) alb = uTrim;
+      else if (distance(alb, vec3(1.0, 0.30, 0.035)) < 0.1) alb = uAccent;
+    } else if (isGloss && distance(alb, vec3(0.95, 0.56, 0.10)) < 0.1) alb = uVisor;
+    else if (isGlow && distance(alb, vec3(0.25, 0.95, 1.0)) < 0.1) alb = uGlowC;
+  }
   vec3 N = normalize(normal), V = normalize(vViewPosition);
   vec3 Nw = normalize(inverseTransformDirection(N, viewMatrix));
   vec3 light = vec3(0.0), shine = vec3(0.0);
@@ -62,7 +71,8 @@ function celMaterial(U, COMMON, own) {
       .replace('#include <project_vertex>', '#include <project_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\n' + COMMON + `
 uniform float uExhibit; uniform vec3 uDiskPos; uniform vec3 uDiskGlow; uniform vec3 uFlashPos; uniform vec3 uFlashCol;
-uniform vec3 uLampDir; uniform vec3 uLampCol; uniform vec3 uBodyFwd; uniform float uGlow; uniform float uGhost; varying vec3 vWPos;`)
+uniform vec3 uLampDir; uniform vec3 uLampCol; uniform vec3 uBodyFwd; uniform float uGlow; uniform float uGhost; varying vec3 vWPos;
+uniform float uOutfit; uniform vec3 uSuit; uniform vec3 uTrim; uniform vec3 uAccent; uniform vec3 uVisor; uniform vec3 uGlowC;`)
       .replace('#include <opaque_fragment>', CEL + '\n#include <opaque_fragment>');
   };
   m.customProgramCacheKey = () => 'cel-body';
@@ -86,7 +96,8 @@ function hullOf(geo) { let hull = geo.clone(); hull.deleteAttribute('normal'); h
 export function createBody({ model, U, COMMON }) {
   const root = new THREE.Group(); root.name = 'body';
   const own = { uLampDir: { value: new THREE.Vector3(0, 1, 0) }, uLampCol: { value: new THREE.Vector3(0.05, 0.055, 0.065) }, uBodyFwd: { value: new THREE.Vector3(0, 0, 1) },
-    uGlow: { value: 0.85 }, uGhost: { value: 0 }, uInk: { value: 0.004 } };
+    uGlow: { value: 0.85 }, uGhost: { value: 0 }, uInk: { value: 0.004 },
+    uOutfit: { value: 0 }, uSuit: { value: new THREE.Vector3() }, uTrim: { value: new THREE.Vector3() }, uAccent: { value: new THREE.Vector3() }, uVisor: { value: new THREE.Vector3() }, uGlowC: { value: new THREE.Vector3() } };
   const ghost = { value: 0 }, headOwn = Object.assign({}, own, { uGhost: ghost });
   const mat = celMaterial(U, COMMON, own), headMat = celMaterial(U, COMMON, headOwn); headMat.customProgramCacheKey = () => 'cel-head';
   const ink = inkMaterial(U, COMMON, own), headInk = inkMaterial(U, COMMON, headOwn);
@@ -308,6 +319,12 @@ export function createBody({ model, U, COMMON }) {
     /** 'eye' hides the head (you are inside it); 'mirror' shows it, for any view from outside. The shadow pass always has it. */
     pass(p) { ghost.value = p === 'eye' ? 1 : 0; },
     setInk(k) { own.uInk.value = k; },
+    /** Wear an outfit (outfits.js: five linear colours), or null for the suit as built. */
+    setOutfit(o) { own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]); },
+    /** Someone talking: the suit's glow strips brighten with their voice (0..1). */
+    setTalk(v) { own.uGlow.value = 0.85 + 1.6 * Math.max(0, Math.min(1, v)); },
+    /** Free what this body made for itself (another player's body, when they leave). The suit's own geometry is shared and stays. */
+    dispose(shared) { root.traverse(o => { if (o.isMesh) { if (!shared || !shared.has(o.geometry)) o.geometry.dispose(); } }); for (const m of [mat, headMat, ink, headInk]) m.dispose(); ctex.dispose(); },
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },

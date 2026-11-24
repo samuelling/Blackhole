@@ -12,6 +12,10 @@
 // set there stays as you set it. Stone can be drawn from three places: the pile the suit brings (N for more), the four fieldstone
 // heaps, and the junk heap under the wormhole (junk.js), whose pieces are the Shred Hole's own debris. A piece taken from a heap and
 // not used goes back to it.
+//
+// Glue, for free builds (as Tears of the Kingdom's Ultrahand has it): press a piece against others and J welds it to everything it
+// touches, a fixed joint at each seam, marked by a green blob. Glued pieces move as one: lift any of them and the whole assembly comes
+// too, weightless in the suit's beam while it is held. Shift+J unglues the piece you hold or look at. A dry stone wall takes no glue.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { STONE_TYPES, SIZE_CLASSES, generateStone, makeStoneMaterial, hooks, perf } from './drystack/stones.js';
@@ -159,7 +163,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     let rec = built.get(s.id); if (rec) { rec.dead = true; root.remove(rec.group); rec.group.traverse(o => o.geometry && o.geometry.dispose()); }
     rec = { s, group: frameOf(s), far: null, near: null, type, list, wantNear: false }; root.add(rec.group); built.set(s.id, rec);
     queueBuilt(s, rec, 'far', type, list);
-    if (s.free) { blockFree(); return; }
+    if (s.free) { for (const g of s.glue || []) glueBlob(rec.group, new THREE.Vector3(g[2], g[3], g[4])); blockFree(); return; }
     for (let d = -s.L / 2; d <= s.L / 2 + 0.01; d += 0.25) garden.block(s.x + Math.cos(s.yaw) * d, s.z - Math.sin(s.yaw) * d, 0.42);   // a wall you built is a wall you walk round
   }
   // what you have built freely is in your way too: every stone bigger than a fist, by the metre square
@@ -272,7 +276,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     const q = opts.q || new THREE.Quaternion().setFromEuler(new THREE.Euler(opts.tilt || 0, yaw, opts.roll || 0, 'YXZ'));
     let y = opts.y;
     if (y == null) { let minY = Infinity; const v = new THREE.Vector3(), hp = data.hullPoints; for (let i = 0; i < hp.length; i += 3) { v.set(hp[i], hp[i + 1], hp[i + 2]).applyQuaternion(q); minY = Math.min(minY, v.y); } y = -minY + 0.006 + (opts.lift || 0); }
-    const stone = { ...data, mesh, cls, seed, type, src };
+    const stone = { ...data, mesh, cls, seed, type, src, gi: opts.gi };
     A.physics.addStone(stone, x, y, z, { x: q.x, y: q.y, z: q.z, w: q.w }, jd ? jd.friction : STONE_TYPES[type].friction);
     mesh.userData.stone = stone; mesh.position.set(x, y, z); mesh.quaternion.copy(q); A.stones.push(stone); return stone;
   }
@@ -306,9 +310,14 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     const physics = new Physics(), gr = groundFor(group); physics.addHeightfield(gr.Hf, gr.N, gr.N, gr.SIZE, gr.SIZE);
     const spec = s.free ? null : new WallSpec({ length: s.L, base: BASE, top: TOP, height: HEIGHT, heightFn: () => 0 });
     const guides = s.free ? null : new Guides(group, spec, {});
-    A = { s, group, inv: new THREE.Matrix4().copy(group.matrixWorld).invert(), physics, spec, guides, stones: [], type, queue: [], seedNext: 0, notes: null, heaps: s.free ? [[0, -2.6]] : [[0, 4]], t0: performance.now() };
-    const restore = list => list.map(([ci, seed, x, y, z, qx, qy, qz, qw, src]) => [CLS[ci], seed, x, z, 0, { y, q: new THREE.Quaternion(qx, qy, qz, qw), src }]);
+    A = { s, group, inv: new THREE.Matrix4().copy(group.matrixWorld).invert(), physics, spec, guides, stones: [], glue: [], type, queue: [], seedNext: 0, notes: null, heaps: s.free ? [[0, -2.6]] : [[0, 4]], t0: performance.now() };
+    const restore = list => list.map(([ci, seed, x, y, z, qx, qy, qz, qw, src], gi) => [CLS[ci], seed, x, z, 0, { y, q: new THREE.Quaternion(qx, qy, qz, qw), src, gi }]);
     if (saved) { A.queue = restore(saved.stones); A.seedNext = saved.seedNext || 9e5; if (!s.free) delete store.paused[s.id]; }
+    if (saved && s.free) {   // a free build comes back as it was left, at once, so what was glued is glued again before anything can fall
+      while (A.queue.length) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); }
+      const byGi = new Map(A.stones.map(st => [st.gi, st]));
+      for (const [i, j, px, py, pz] of saved.glue || []) { const a = byGi.get(i), b = byGi.get(j); if (a && b) joinStones(a, b, { x: px, y: py, z: pz }); }
+    }
     else if (s.free) { A.queue = []; A.seedNext = 5e6 + free.seq * 1e5; }
     else { const pl = planPile(s, type); A.queue = pl.plan; A.seedNext = pl.seedNext; A.heaps = pl.heaps; }
     if (s.free) U.uWork.value.set(s.x, s.z, Math.cos(s.yaw), Math.sin(s.yaw)); else U.uWork.value.set(s.x, s.z, Math.cos(s.yaw), Math.sin(s.yaw));
@@ -351,7 +360,55 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   function saveFree(s, list) {
     s.stones = list; s.seedNext = A ? A.seedNext : s.seedNext; let r = free.sites.find(f => f.id === s.id);
-    if (!r) free.sites.push(r = {}); Object.assign(r, { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type: s.type || A.type, stones: list, seedNext: s.seedNext }); persist();
+    if (A && A.s === s) s.glue = A.glue.map(g => [A.stones.indexOf(g.a), A.stones.indexOf(g.b), ...g.p.map(v => Math.round(v * 1000) / 1000)]).filter(g => g[0] >= 0 && g[1] >= 0);
+    if (!r) free.sites.push(r = {}); Object.assign(r, { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type: s.type || A.type, stones: list, seedNext: s.seedNext, glue: s.glue || [] }); persist();
+  }
+  // ---------------------------------------------------------------- glue (free builds)
+  const glueGeo = new THREE.SphereGeometry(1, 12, 8), glueMat = new THREE.MeshBasicMaterial({ color: 0x8dff5a, toneMapped: false });
+  function glueBlob(parent, p) { const m = new THREE.Mesh(glueGeo, glueMat); m.scale.set(0.034, 0.026, 0.034); m.position.copy(p); parent.add(m); return m; }
+  /** Weld a to b with a fixed joint at P (the site's frame), as they lie now. */
+  function joinStones(a, b, P) {
+    if (!A || a === b || A.glue.some(g => (g.a === a && g.b === b) || (g.a === b && g.b === a))) return false;
+    const ta = a.body.translation(), ra = a.body.rotation(), tb = b.body.translation(), rb = b.body.rotation();
+    const qa = new THREE.Quaternion(ra.x, ra.y, ra.z, ra.w), qb = new THREE.Quaternion(rb.x, rb.y, rb.z, rb.w), ia = qa.clone().invert(), ib = qb.clone().invert();
+    const la = new THREE.Vector3(P.x - ta.x, P.y - ta.y, P.z - ta.z).applyQuaternion(ia), lb = new THREE.Vector3(P.x - tb.x, P.y - tb.y, P.z - tb.z).applyQuaternion(ib);
+    const params = RAPIER.JointData.fixed({ x: la.x, y: la.y, z: la.z }, { x: ia.x, y: ia.y, z: ia.z, w: ia.w }, { x: lb.x, y: lb.y, z: lb.z }, { x: ib.x, y: ib.y, z: ib.z, w: ib.w });
+    const joint = A.physics.world.createImpulseJoint(params, a.body, b.body, true);
+    A.glue.push({ a, b, joint, blob: glueBlob(a.mesh, la), p: [P.x, P.y, P.z] });
+    return true;
+  }
+  /** The pieces st is pressed against, each with a point where they meet (the site's frame). */
+  function touchingStones(st) {
+    const w = A.physics.world, out = [];
+    w.contactPairsWith(st.collider, other => {
+      const o = A.physics.bodies.get(other.handle); if (!o || o === st) return;
+      let P = null; w.contactPair(st.collider, other, m => { if (!P && m.numSolverContacts() > 0) { const c = m.solverContactPoint(0); P = { x: c.x, y: c.y, z: c.z }; } });
+      if (P) out.push([o, P]);
+    });
+    return out;
+  }
+  function unglue(st) {
+    let n = 0;
+    for (const g of A.glue.slice()) if (g.a === st || g.b === st) { try { A.physics.world.removeImpulseJoint(g.joint, true); } catch (e) {} g.blob.parent && g.blob.parent.remove(g.blob); A.glue.splice(A.glue.indexOf(g), 1); n++; }
+    return n;
+  }
+  /** Everything glued to st, through any chain of seams (st included). */
+  function groupOf(st) {
+    const seen = new Set([st]), q = [st];
+    while (q.length) { const x = q.pop(); for (const g of A.glue) { const o = g.a === x ? g.b : g.b === x ? g.a : null; if (o && !seen.has(o)) { seen.add(o); q.push(o); } } }
+    return seen;
+  }
+  function glueKey(shift) {
+    if (!A) return;
+    if (!A.s.free) { hint('a dry stone wall takes no glue · glue is for free builds (B away from the wall line)', 4000); return; }
+    const st = held || (hover && !hover.ext && A.stones.includes(hover) ? hover : null);
+    if (!st) { hint('hold a piece against another, or look at one, and J glues them', 3500); return; }
+    if (shift) { const n = unglue(st); if (held === st) for (const x of A.stones) if (x !== st) x.body.setGravityScale(1, true); hint(n ? `unglued from ${n} piece${n === 1 ? '' : 's'}` : 'nothing is glued to it', 2200); onChange(); return; }
+    const parts = touchingStones(st);
+    if (!parts.length) { hint('press it against another piece first, then J glues them', 3200); return; }
+    let n = 0; for (const [o, P] of parts) if (joinStones(st, o, P)) n++;
+    if (held === st) drop(true);   // it holds by its glue now
+    hint(n ? `glued to ${n} piece${n === 1 ? '' : 's'} · lift any one and the rest come too · Shift+J unglues` : 'already glued there', 3500); onChange();
   }
   function dropFree(s) { free.sites = free.sites.filter(f => f.id !== s.id); const i = freeSites.indexOf(s); if (i >= 0) freeSites.splice(i, 1); persist(); }
   function giveBack(st) {   // a stone taken from a heap goes back to its place there
@@ -429,6 +486,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift();
     held = st; placing = false; effort = 0; ghosted = false; press = false;
     const b = st.body; b.setGravityScale(0, true); b.wakeUp();
+    for (const x of groupOf(st)) { x.body.setGravityScale(0, true); x.body.wakeUp(); }   // glued to it: they come too
     const r = b.rotation(), t = b.translation(); targetQ.set(r.x, r.y, r.z, r.w); smooth.set(t.x, t.y + 0.06, t.z); target.copy(smooth); landing = null;
     look(st, true); ring.visible = true; onChange();
   }
@@ -436,6 +494,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     const st = held; if (!st) return;
     if (!force && !placing) { const t = st.body.translation(); placing = true; placeT = 0; placeXZ = { x: t.x, z: t.z }; placeY = t.y; return; }
     placing = false; const b = st.body; b.setGravityScale(1, true); b.setLinvel({ x: 0, y: 0, z: 0 }, true); b.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (A) for (const x of groupOf(st)) { x.body.setGravityScale(1, true); x.body.setLinvel({ x: 0, y: 0, z: 0 }, true); x.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }
     if (ghosted) { st.collider.setCollisionGroups(0xffffffff); ghosted = false; }
     look(st, false); held = null; ring.visible = false; notesAt = 0; onChange();
   }
@@ -535,7 +594,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   /** Where the suit is reaching, world space (the stone held or pointed at), or null. */
   function aim(out) { if (!A) return null; if (!held && hover && hover.ext) return out.copy(ghost.position); const tgt = held || hover; if (!tgt) return null; return out.copy(tgt.mesh.position).applyMatrix4(A.group.matrixWorld); }
-  function hoverInfo(h) { if (h.ext === 'heap') { const e = heaps[h.hi].list[h.idx]; return { cls: CLS[e[0]], kg: null, heap: true }; } if (h.ext === 'junk') { const d = junk.stoneData(h.id); return d ? { cls: d.cls, kg: d.massKg, name: d.name } : null; } return { cls: h.cls, kg: h.mass, name: h.name || null }; }
+  function hoverInfo(h) { if (h.ext === 'heap') { const e = heaps[h.hi].list[h.idx]; return { cls: CLS[e[0]], kg: null, heap: true }; } if (h.ext === 'junk') { const d = junk.stoneData(h.id); return d ? { cls: d.cls, kg: d.massKg, name: d.name, junk: h.id } : null; } return { cls: h.cls, kg: h.mass, name: h.name || null }; }
 
   // ---------------------------------------------------------------- input (main.js hands these on while the pointer is locked)
   function onDown(button) {
@@ -551,6 +610,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (code === 'Space') { press = down && !!held; return !!held; }
     if (code === 'KeyG') { if (held && down !== ghosted) { ghosted = down; held.collider.setCollisionGroups(down ? 0 : 0xffffffff); } return !!held; }
     if (!down) return false;
+    if (code === 'KeyJ') { glueKey(shift); return true; }
     const fine = shift ? Math.PI / 12 : Math.PI / 2;
     camera.getWorldDirection(_v).transformDirection(A.inv); _v.y = 0; _v.normalize(); _n.crossVectors(_v, UP).normalize();
     switch (code) {
@@ -611,7 +671,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     set idle(v) { idleOn = !!v; if (!idleOn && idleHover) { idleHover = null; showGhost(null); } }, get idleHover() { return idleHover ? hoverInfo(idleHover) : null; },
     get freeCount() { return freeSites.filter(f => f.stones && f.stones.length).length; },
     get _a() { return A; },   // for tests
-    _t: { pickExt, pluck, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
+    _t: { pickExt, pluck, touching: st => touchingStones(st), join: (a, b, P) => joinStones(a, b, P), groupOf: st => groupOf(st), get glue() { return A ? A.glue : []; }, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
     get active() { return A ? A.s : null; }, get holding() { return !!held; }, get busy() { return !!A; },
     /** What the hands should be doing: for the body's gestures. */
     get gesture() { return { held: !!held, effort, hover: !!hover, press: press && !!held, placing, ghost: ghosted, kg: held ? held.mass : 0 }; },
