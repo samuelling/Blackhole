@@ -10,6 +10,7 @@ import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { createHelp } from './help.js';
 import { loadMotion, EMOTES } from './motion.js';
+import { createGamepad } from './gamepad.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
 import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
@@ -30,7 +31,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · 1-9, 0 gestures · C stroll · ? every control';
+  : 'WASD / arrows walk · Shift runs · mouse looks · click a void to evaporate it<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · 1-9, 0 gestures · a controller works too · ? every control';
 
 let renderer;
 try {
@@ -1048,7 +1049,9 @@ let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
 if (/[?&]at=wormhole\b/.test(location.search)) { player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; }   // from the Shred Hole: start by the junk heap, looking at the wormhole
 // The page opens out in space, watching the bubble go by: that is the title screen. Entering holds the view a moment, then flies in to your eyes.
 let spaceOn = true, spaceT = 1, titleK = 1, flyIn = 2.6, introTimer = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 340, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
-const keys = new Set(); let stroll = false;   // C: a strolling pace, to walk and not jog
+const keys = new Set();
+const WALK = 1.6, RUN = 5.6;   // m/s: the ordinary pace is a walk, Shift is a run; a stick (or a thumb on a phone) goes anywhere between
+const paceFor = m => m <= 0.55 ? WALK * m / 0.55 : WALK + (RUN - WALK) * Math.pow((m - 0.55) / 0.45, 1.3);   // how hard the stick is pushed (0..1) to a speed: half way is the walk
 const grav = new THREE.Vector3();
 addEventListener('keydown', e => {
   keys.add(e.code);
@@ -1072,13 +1075,12 @@ const wallKey = (e, down) => {
 addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyup', e => wallKey(e, false), true);
 addEventListener('keydown', e => { if (multi && multi.key(e, true)) e.preventDefault(); }); addEventListener('keyup', e => { if (multi && multi.key(e, false)) e.preventDefault(); });
 addEventListener('keydown', e => { if (started && multi && e.code === 'KeyG' && e.shiftKey && !e.metaKey && !e.ctrlKey) multi.toggle(); });
-// gestures on the number keys (motion.js), and C for a strolling pace
+// gestures on the number keys (motion.js)
 loadMotion();
 addEventListener('keydown', e => {
   if (!started || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !body) return; const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
   const d = /^Digit(\d)$/.exec(e.code);
   if (d) { const em = EMOTES[(+d[1] + 9) % 10]; if (em && body.emote(em[0])) setHint(em[1], 1500); return; }
-  if (e.code === 'KeyC' && !walling.busy) { stroll = !stroll; setHint(stroll ? 'strolling · C again for the ordinary pace' : 'the ordinary pace', 2500); }
 });
 // X, looking at a piece of junk (not planting): vaporize it, for good
 addEventListener('keydown', e => {
@@ -1097,8 +1099,17 @@ function beginStint() {
   walling.begin(player.x, player.z, yaw);   // at a pegged-out stint: that stint; anywhere else: a free build where you stand
 }
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(e.button)) return; if (!walling.busy && e.button === 0 && walling.idleHover && !isTouch) { walling.pluckIdle(player.x, player.z, yaw); return; } if (e.button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); } });
-document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas));
+/** What a click does where you are looking (the mouse's button, or the controller's trigger). */
+function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(button)) return; if (!walling.busy && button === 0 && walling.idleHover && !isTouch) { walling.pluckIdle(player.x, player.z, yaw); return; } if (button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); }
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) act(e.button); });
+// a controller (gamepad.js): its buttons arrive as the keys and the click they stand for
+let padAim = false, lastPace = 0;
+const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000),
+  context: () => spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk',
+  key: (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true })),
+  click: () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); },
+  help: () => { if (help) help.toggle(); } });
+document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas || padAim));
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
@@ -1646,11 +1657,22 @@ function update(dt, t) {
     if (keys.has('KeyS') || keys.has('ArrowDown')) mz -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
     if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
-    for (const o of touches.values()) if (o.type === 'move') { mx += (o.x - o.x0) / 70; mz -= (o.y - o.y0) / 70; }
   }
-  const ml = Math.hypot(mx, mz); if (ml > 1) { mx /= ml; mz /= ml; }
-  const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 6.2 : stroll ? 1.5 : 3.2;
-  const move = f.clone().multiplyScalar(mz * speed).addScaledVector(r, mx * speed);
+  const byKey = mx !== 0 || mz !== 0, pd = pad.poll(dt, t);
+  if (started && !spaceOn) {
+    for (const o of touches.values()) if (o.type === 'move') { mx += (o.x - o.x0) / 110; mz -= (o.y - o.y0) / 110; }
+    if (pd.mag > 0 && !(help && help.isOpen)) { mx += pd.mx * pd.mag; mz += pd.mz * pd.mag; }
+  }
+  // the controller's right stick looks (and turns the space view; its triggers bring that nearer and farther)
+  if (started && (pd.lx || pd.ly || pd.zoom) && !(help && help.isOpen)) {
+    if (spaceOn) { orbitBy(pd.lx * 430 * dt, pd.ly * 430 * dt); if (pd.zoom) { orbit.dist = Math.max(150, Math.min(620, orbit.dist * Math.exp(-pd.zoom * 1.2 * dt))); orbit.idle = 0; } }
+    else { yaw -= pd.lx * 2.9 * dt; pitch = Math.max(-1.45, Math.min(1.35, pitch - pd.ly * 2.1 * dt)); }
+  }
+  if (pd.on !== padAim) { padAim = pd.on; if (padAim) $('aim').classList.add('on'); }   // a controller has no pointer to lock: the aim point shows once it is in use
+  // keys walk, and run with Shift; a stick or a thumb goes at whatever pace it is pushed to
+  const ml = Math.hypot(mx, mz); if (ml > 0) { mx /= ml; mz /= ml; }
+  const speed = byKey ? ((keys.has('ShiftLeft') || keys.has('ShiftRight')) ? RUN : WALK) : paceFor(Math.min(1, ml));
+  const move = f.clone().multiplyScalar(mz * speed).addScaledVector(r, mx * speed); lastPace = ml > 0 ? speed : 0;
 
   // voids: wake, drift, pull
   grav.set(0, 0, 0);
@@ -1904,7 +1926,7 @@ const bFull = document.createElement('button'); bFull.id = 'bFull'; bFull.textCo
 bFull.addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
 if (fsOk) $('bSettings').before(bFull);
 // every control on one sheet (help.js): ? opens it on what you are doing now
-help = createHelp({ isTouch, ready: () => started,
+help = createHelp({ isTouch, ready: () => started, pad: () => pad.connected ? pad : null,
   context: () => { const c = new Set(); if (spaceOn) c.add('space'); else if (walling.busy) c.add(walling.active && walling.active.free ? 'free' : 'wall'); else if (planter.open || planter.armed) c.add('plant'); else { c.add('walk'); c.add('gesture'); c.add('voids'); }
     if (multi && multi.inRoom) c.add('room'); return c; } });
 const bHelp = document.createElement('button'); bHelp.id = 'bHelp'; bHelp.textContent = 'controls'; bHelp.title = 'every control (?)';
@@ -1989,6 +2011,9 @@ window.__umbra = { // debug handle
   multi,
   selfie(on, ang = 2.5, dist = 3.4) { selfView = !!on; selfAng = ang; selfDist = dist; },
   /** For tests: run n frames at a fixed step, capturing the canvas every k-th (data URLs). */
+  get pace() { return lastPace; }, get padContext() { return spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk'; },
+  /** Tests: n steps of the garden with nothing drawn (keys held as in capture). */
+  step(n, dt = 1 / 30, walk = null) { const held = walk ? [].concat(walk) : []; for (const k of held) keys.add(k); try { for (let i = 0; i < n; i++) { clock.elapsedTime += dt; update(dt, clock.elapsedTime); } } finally { for (const k of held) keys.delete(k); clock.getDelta(); } return [player.x, player.z, yaw, pitch]; },
   capture(n, dt = 1 / 30, every = 1, walk = null) {
     holdLoop = true; FIXED_DT = dt; const out = [];
     const held = walk ? [].concat(walk) : []; for (const k of held) keys.add(k);   // a key, or several ('KeyW' walks, ['KeyW','ShiftLeft'] runs)

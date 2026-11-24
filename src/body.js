@@ -141,6 +141,15 @@ export function createBody({ model, U, COMMON }) {
       const im = new THREE.Mesh(hullOf(geo), isHead ? headInk : ink); im.userData.skin = true; g.add(im);
     }
     for (const n in B) rest[n] = B[n].position.clone();
+    { // the collar, closed: your own head is never drawn for you, and looking down there was a hole where it joins. A seal sits in the neck
+      // of the suit, as wide as the bottom of this helmet (under the helmet, nobody else sees it).
+      // It is as wide as the suit's own collar (the torso's rim at neck height) and sits a little down inside it, so what you see is the rim with a floor in it.
+      const tg = meshes.find(o => o.name === 'torso').geometry.attributes.position, hx = rest.head.x, hy = rest.head.y, hz = rest.head.z; let r = 0;
+      for (let i = 0; i < tg.count; i++) { const y = tg.getY(i) - hy; if (y > -0.05 && y < 0.03) r = Math.max(r, Math.hypot(tg.getX(i) - hx, tg.getZ(i) - hz)); }
+      r = Math.max(0.07, Math.min(0.135, (r || 0.11) * 0.96));
+      const sg = tint(new THREE.CylinderGeometry(r, r, 0.012, 24), TRIM_C);   // in the suit's trim colour: a neck ring, not a dark patch that would still read as a hole
+      const seal = new THREE.Mesh(sg, mat); seal.position.copy(rest.head); seal.position.y -= 0.04; seal.userData.skin = true; seal.castShadow = false; B.torso.add(seal);
+    }
     L1 = joint.shin_L.distanceTo(joint.thigh_L); L2 = joint.foot_L.distanceTo(joint.shin_L); ANKLE = joint.foot_L.y;
     hipRest.L.copy(joint.thigh_L).sub(joint.pelvis); hipRest.R.copy(joint.thigh_R).sub(joint.pelvis);
     armLen.u = joint.armL_L.distanceTo(joint.armU_L); armLen.l = joint.hand_L.distanceTo(joint.armL_L);
@@ -315,7 +324,7 @@ export function createBody({ model, U, COMMON }) {
     headQ.set(f[11], f[12], f[13], f[14]);
     return true;
   }
-  const headQ = new THREE.Quaternion(); let capOn = false;
+  const headQ = new THREE.Quaternion(), hp = new THREE.Vector3(), UPY = new THREE.Vector3(0, 1, 0); let capOn = false, capYaw = 0;
 
   /** Pose the body under the camera. s = { x, z, yaw, pitch, t }. Returns the eye's bob for this frame. */
   function update(dt, s) {
@@ -328,7 +337,7 @@ export function createBody({ model, U, COMMON }) {
     const sp = Math.min(8, Math.hypot(vx, vz)); speed += (sp - speed) * Math.min(1, dt * 9);
     move += ((speed > 0.25 ? 1 : 0) - move) * Math.min(1, dt * (speed > 0.25 ? 9 : 6));
     if (sp > 0.3) { const f = (vx * fx + vz * fz) / sp, r = (vx * fz * -1 + vz * fx) / sp, k = Math.min(1, dt * 10); vf += (f - vf) * k; vr += (r - vr) * k; const n = Math.hypot(vf, vr) || 1; vf /= n; vr /= n; }
-    const run = sstep(2.7, 5.2, speed),   // the ordinary 3.2 m/s pace is a brisk walk; Shift is a run
+    const run = sstep(2.7, 5.2, speed),   // (by the rules) the ordinary pace is a walk; Shift is a run
           sprint = sstep(3.6, 6.2, speed);
     const stepLen = (0.5 + 0.19 * speed) * strideK, duty = lerp(0.6, 0.4, run), travel = Math.min(0.86, duty * 2 * stepLen), lift = (lerp(0.06, 0.2, run) + 0.06 * sprint) * (0.9 + 0.2 * hash(stride * 3.1));
     capOn = capStride(dt); if (!capOn) cyc = (cyc + speed * dt / (2 * stepLen)) % 1;
@@ -438,6 +447,18 @@ export function createBody({ model, U, COMMON }) {
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
     if (capOn) { B.head.quaternion.identity().slerp(headQ, neck); B.head.quaternion.multiply(qA.setFromEuler(eul.set(-s.pitch * 0.55 * neck, 0, 0))); }
     else B.head.rotation.set((-s.pitch * 0.55 - tor.rotation.x * 0.5) * neck, 0, 0);
+    // You are where your head is. A lean, a stoop or a run carries the neck away from where it stands at rest, and looking down you would
+    // see the collar slide out from under you; so the body is hung from its neck: the same amount is taken back off the whole of it.
+    // (Up to a point: a deep bow still bows away from you.)
+    // And you face the way your chest does: a recorded way of standing has the chest turned off to one side of the hips, which from
+    // inside is your own chest sitting askew under your gaze. What stays of that turn (slowly followed, so the feet do not swivel) is taken out.
+    if (capOn) { hp.set(0, 0, 1).applyQuaternion(tor.quaternion).applyQuaternion(pel.quaternion); const yc = Math.atan2(hp.x, hp.z) * (1 - move) * (1 - Math.max(0, cap.emote.w)); capYaw += (yc - capYaw) * Math.min(1, dt * 0.9); }
+    else capYaw *= Math.exp(-dt * 3);
+    root.rotation.y -= 0.85 * capYaw;
+    hp.copy(rest.head).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(pel.quaternion).add(pel.position);
+    hp.x -= rest.pelvis.x + rest.torso.x + rest.head.x; hp.z -= rest.pelvis.z + rest.torso.z + rest.head.z; hp.y = 0;
+    const hl = hp.length(), HL = 0.24; if (hl > HL) hp.multiplyScalar(HL / hl);
+    hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
     return bob;
   }
 

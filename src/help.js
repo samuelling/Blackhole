@@ -6,7 +6,7 @@
 const K = (...k) => k;   // a row: [keys..., what it does]; a key written 'a|b' is drawn as two caps that do the same thing
 const SECTIONS = [
   { id: 'walk', title: 'Walking and looking', rows: [
-    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'hurry'), K('C', 'stroll: a walking pace (C again for the ordinary one)'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
+    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'run'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
     K('Shift+V', 'see yourself from outside'), K('Z', 'the space view: the whole bubble from outside'), K('Shift+F', 'full screen'),
     K('O', 'settings'), K('M', 'sound on / off'), K('F', 'frame rate'), K('?', 'this sheet') ] },
   { id: 'gesture', title: 'Gestures and bearing', rows: [
@@ -39,7 +39,7 @@ const SECTIONS = [
     K('B', 'at a place someone else is building: join them') ] },
 ];
 const TOUCH = [
-  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk'), K('drag right', 'look'), K('buttons', 'the bar: space view, plant, together, settings, sound')] },
+  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('buttons', 'the bar: space view, plant, together, settings, sound')] },
   { id: 'voids', title: 'Voids', rows: [K('double-tap', 'open a void ahead of you'), K('tap', 'on a void: evaporate it')] },
   { id: 'plant', title: 'Planting', rows: [K('plant', 'the button: choose a plant'), K('tap', 'the ground: plant it there')] },
   { id: 'space', title: 'The space view', rows: [K('one finger', 'turn the view round the bubble'), K('pinch', 'nearer / farther')] },
@@ -66,7 +66,7 @@ const CSS = `
 #help .hw { color:#cfcabf; flex:1; }
 `;
 
-/** o: { isTouch, context(): Set of section ids that are 'now', onToggle(open) } */
+/** o: { isTouch, context(): Set of section ids that are 'now', pad(): the connected controller (gamepad.js) or null, onToggle(open) } */
 export function createHelp(o) {
   const st = document.createElement('style'); st.textContent = CSS; document.head.append(st);
   const el = document.createElement('div'); el.id = 'help'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'controls'); document.body.append(el);
@@ -74,9 +74,17 @@ export function createHelp(o) {
   const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const caps = k => k.split('|').map(x => `<kbd>${esc(x)}</kbd>`).join('');
   function render() {
-    const now = o.context ? o.context() : new Set(), list = (o.isTouch ? TOUCH : SECTIONS).slice();
+    const now = o.context ? o.context() : new Set(), pd = o.pad ? o.pad() : null; let list = (o.isTouch ? TOUCH : SECTIONS).slice();
+    if (pd) {   // a controller is connected: its buttons, from the same table it is read by (gamepad.js)
+      const N = pd.names(), M = pd.MAP, rows = k => M[k].map(r => K(N[r[0]] || 'button ' + r[0], r[2]));
+      const pads = [{ id: 'pad', title: 'Controller', note: 'Its buttons do what the keys do, by what you are doing.', rows: [K('left stick', 'walk · a lean strolls, half way is the ordinary walk, all the way runs'), K('right stick', 'look'), ...rows('any')], now: true },
+        { id: 'pad-walk', title: 'Controller: walking', rows: rows('walk'), now: now.has('walk') }, { id: 'pad-build', title: 'Controller: building', rows: rows('build'), now: now.has('wall') || now.has('free') },
+        { id: 'pad-plant', title: 'Controller: planting', rows: rows('plant'), now: now.has('plant') }, { id: 'pad-space', title: 'Controller: the space view', rows: [K('right stick', 'turn the view round the bubble'), K(N[6], N[7], 'farther / nearer'), ...rows('space')], now: now.has('space') }];
+      for (const q of pads) if (q.now) now.add(q.id);
+      list = pd.used ? pads.concat(list) : list.concat(pads);
+    }
     list.sort((a, b) => (now.has(b.id) ? 1 : 0) - (now.has(a.id) ? 1 : 0));   // what you are doing first; the rest in their own order
-    el.innerHTML = `<div class="sheet"><div class="top"><h2>Controls</h2><span>${o.isTouch ? 'touch' : 'keys and mouse'} · what you are doing now comes first</span><button class="x" data-x>close · Esc</button></div><div class="cols">`
+    el.innerHTML = `<div class="sheet"><div class="top"><h2>Controls</h2><span>${o.isTouch ? 'touch' : pd ? 'keys, mouse and controller' : 'keys and mouse'} · what you are doing now comes first</span><button class="x" data-x>close · Esc</button></div><div class="cols">`
       + list.map(s => `<section class="${now.has(s.id) ? 'now' : ''}"><h3>${esc(s.title)}</h3>${s.note ? `<p class="note">${esc(s.note)}</p>` : ''}`
         + s.rows.map(r => `<div class="hr"><span class="hk">${r.slice(0, -1).map(caps).join('')}</span><span class="hw">${esc(r[r.length - 1])}</span></div>`).join('') + '</section>').join('')
       + '</div></div>';
