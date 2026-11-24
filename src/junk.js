@@ -57,12 +57,15 @@ function shapeOf(rec) {
   return { geo, hull, vol: Math.max(Math.abs(vol), 1e-6), size, r: geo.boundingSphere.radius };
 }
 
-export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArrive = () => {}, hint = () => {} }) {
+export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArrive = () => {}, hint = () => {}, mailbox = true }) {
   const group = new THREE.Group(); group.name = 'junk'; scene.add(group);
   let store = { since: 0, pieces: {}, heap: [], seq: 0, drops: 0, recipes: {} };   // a whole thing's piece has w: the key of its recipe
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.pieces) store = Object.assign(store, s); } catch (e) {}
   if (!store.recipes) store.recipes = {};
-  let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { hint('this browser would not keep the junk heap (storage full or blocked)', 6000); } }, 800); };
+  // in a room (multi.js) the heap is the room's: whoever has been there longest fetches from the mailbox and tells the rest what came
+  // out and where it landed; taking, putting back and vaporizing are told too. A guest's own heap is set aside and comes back on leaving.
+  let net = null, guestJ = false, ownStore = null, outbox = [];
+  let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { if (guestJ) return; try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { hint('this browser would not keep the junk heap (storage full or blocked)', 6000); } }, 800); };
   const shapes = new Map(); const shape = id => { let s = shapes.get(id); const rec = store.pieces[id];
     if (!s && rec) { s = rec.w ? (store.recipes[rec.w] && wholeShape(store.recipes[rec.w])) : shapeOf({ ...rec, id }); if (s) shapes.set(id, s); } return s; };
   const isWhole = id => !!(store.pieces[id] && store.pieces[id].w);
@@ -157,12 +160,14 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     const x = HEAP.x + Math.cos(a) * rr, z = HEAP.z + Math.sin(a) * rr * 0.85;
     return { q, x, z, y: restOn(sh, q, x, z, 0.02) };
   }
-  function launch(id) {
+  function launch(id, to) {   // to: where it is to land, when the room's keeper has already said
     const sh = shape(id); if (!sh) return;
     let q1 = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28));
     const spread = 0.6 + 0.05 * Math.sqrt(store.heap.length);
     let x = HEAP.x + gauss() * spread, z = HEAP.z + gauss() * spread * 0.85, y;
-    if (sh.whole) { const w = wholePlace(sh); q1 = w.q; x = w.x; z = w.z; y = w.y; } else y = restOn(sh, q1, x, z);
+    if (to) { x = to[1]; y = to[2]; z = to[3]; q1.set(to[4], to[5], to[6], to[7]); }
+    else if (sh.whole) { const w = wholePlace(sh); q1 = w.q; x = w.x; z = w.z; y = w.y; } else y = restOn(sh, q1, x, z);
+    if (!to && net) { const pc = store.pieces[id]; outbox.push({ id, p: pc, r: pc.w ? store.recipes[pc.w] : undefined, e: [id, +x.toFixed(3), +y.toFixed(3), +z.toFixed(3), +q1.x.toFixed(4), +q1.y.toFixed(4), +q1.z.toFixed(4), +q1.w.toFixed(4)] }); }
     const dir = new THREE.Vector3(x - holeC.x, 0, z - holeC.z).normalize(), p0 = holeC.clone().addScaledVector(dir, HOLE.r * 0.7).add(new THREE.Vector3(gauss() * 0.3, gauss() * 0.3 - 0.3, gauss() * 0.3));
     const T = 0.9 + Math.random() * 0.6, v0 = new THREE.Vector3(x - p0.x, y - p0.y + 4.9 * T * T, z - p0.z).divideScalar(T);
     const mesh = new THREE.Mesh(sh.geo, mat); mesh.castShadow = true; mesh.position.copy(p0); group.add(mesh);
@@ -202,14 +207,17 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     });
     if (!ids.length) return;
     store.drops++; queue.push(...ids); flare = Math.max(flare, 0.4);
-    onArrive({ name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length - whole, whole });
+    const info = { name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length - whole, whole };
+    onArrive(info); if (net) net.send({ j: 'arr', info });
     trim(); save();
   }
   function trim() {   // the heap keeps the newest pieces; what is built into a wall is never thrown away
     const inUse = new Set(store.heap.map(e => e[0]).concat(queue, flying.map(f => f.id))), used = usedElsewhere();   // (what is still in the air counts: trimming it left nothing to land)
     let n = Object.keys(store.pieces).length;
     if (n <= MAXP) return;
-    for (const e of store.heap.slice()) { if (n <= MAXP) break; if (used.has(e[0])) continue; take(e[0]); delete store.pieces[e[0]]; shapes.delete(e[0]); n--; }
+    const gone = [];
+    for (const e of store.heap.slice()) { if (n <= MAXP) break; if (used.has(e[0])) continue; take(e[0], true); delete store.pieces[e[0]]; shapes.delete(e[0]); gone.push(e[0]); n--; }
+    if (net && gone.length) for (let i = 0; i < gone.length; i += 300) net.send({ j: 'vap', ids: gone.slice(i, i + 300) });
     for (const id of Object.keys(store.pieces)) if (!inUse.has(id) && !used.has(id) && n > MAXP) { delete store.pieces[id]; shapes.delete(id); n--; }
     const live = new Set(Object.values(store.pieces).map(p => p.w).filter(Boolean)); for (const k of Object.keys(store.recipes)) if (!live.has(k)) delete store.recipes[k];
   }
@@ -218,7 +226,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   // ---------------------------------------------------------------- the mailbox
   let polling = false, lastPoll = -1e9, failed = 0;
   async function poll() {
-    if (polling) return; polling = true;
+    if (polling || !mailbox || (net && !net.host())) return; polling = true;   // in a room, one of you fetches for all
     try {
       const since = store.since || Date.now() - FIRST_LOOK;
       const r = await fetch(`${RELAY}?since=${since}`, { cache: 'no-store' });
@@ -233,10 +241,13 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
 
   // ---------------------------------------------------------------- each frame
   let rebuildAt = 0;
+  /** Tell the room where the pieces just thrown are to land. */
+  function flush() { if (outbox.length && net) { for (let i = 0; i < outbox.length; i += 30) net.send({ j: 'fly', a: outbox.slice(i, i + 30), since: store.since }); } outbox.length = 0; }
   function update(dt, t) {
-    if (document.hidden) { if (queue.length || flying.length) finish(); return; }   // nobody watching: no need to throw them one by one
+    if (document.hidden) { if (queue.length || flying.length) finish(); flush(); return; }   // nobody watching: no need to throw them one by one
     if (t - lastPoll > (failed ? Math.min(300, 30 * failed) : 25)) { lastPoll = t; poll(); }
     // out they come, a few at a time
+    flush();
     if (queue.length) { flare = Math.min(1, flare + dt * 2); const n = Math.min(queue.length, Math.max(1, Math.ceil(dt * (lite ? 30 : 50)))); for (let i = 0; i < n; i++) launch(queue.shift()); }
     else flare = Math.max(0, flare - dt * 0.4);
     holeU.uFlare.value = flare; hole.scale.setScalar(HOLE.r * (1 + 0.05 * flare + 0.015 * Math.sin(t * 1.3)));
@@ -265,33 +276,70 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     return best ? { id: best[0], t: bt } : null;
   }
   /** Lift a piece out of the heap: its pose (world) and its shape. */
-  function take(id) {
+  function take(id, quiet) {
     const e = where.get(id); if (!e) return null;
+    if (!quiet && net) net.send({ j: 'take', id });
     where.delete(id); e.c.ids.delete(id); e.c.dirty = true; store.heap = store.heap.filter(x => x !== e); dirtySave = true;
     return { pos: new THREE.Vector3(e[1], e[2], e[3]), q: new THREE.Quaternion(e[4], e[5], e[6], e[7]) };
   }
   /** Put a piece back on the heap (a stint was finished without it). */
-  function giveBack(id) {
+  function giveBack(id, to) {
     const sh = shape(id); if (!sh || where.has(id)) return;
     let q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28)), x = HEAP.x + gauss() * 1.4, z = HEAP.z + gauss() * 1.2, y;
-    if (sh.whole) ({ q, x, z, y } = wholePlace(sh)); else y = restOn(sh, q, x, z);
+    if (to) { x = to[1]; y = to[2]; z = to[3]; q.set(to[4], to[5], to[6], to[7]); }
+    else if (sh.whole) ({ q, x, z, y } = wholePlace(sh)); else y = restOn(sh, q, x, z);
     const e = [id, +x.toFixed(3), +y.toFixed(3), +z.toFixed(3), +q.x.toFixed(4), +q.y.toFixed(4), +q.z.toFixed(4), +q.w.toFixed(4)];
+    if (!to && net) net.send({ j: 'back', e });
     settle(sh, q, x, y, z); store.heap.push(e); addToHeap(e); dirtySave = true;
   }
   /** Vaporize a piece on the heap: gone for good. Returns where it was, for the flash, or null. */
-  function vaporize(id) {
-    const w = take(id); if (!w) return null;
+  function vaporize(id, quiet) {
+    const w = take(id, true); if (!w) return null;
+    if (!quiet && net) net.send({ j: 'vap', ids: [id] });
     delete store.pieces[id]; shapes.delete(id); dirtySave = true;
     const live = new Set(Object.values(store.pieces).map(p => p.w).filter(Boolean)); for (const k of Object.keys(store.recipes)) if (!live.has(k)) delete store.recipes[k];
     return w.pos;
   }
   /** Vaporize the whole heap (what is built into walls stays). Returns how many pieces went. */
-  function vaporizeAll() {
+  function vaporizeAll(quiet) {
     finish(); let n = 0;
-    for (const e of store.heap.slice()) if (vaporize(e[0])) n++;
+    if (!quiet && net) net.send({ j: 'vap', all: 1 });
+    for (const e of store.heap.slice()) if (vaporize(e[0], true)) n++;
     for (let j = 0; j < GN; j++) for (let i = 0; i < GN; i++) under[j * GN + i] = grid[j * GN + i] = heightAt(gx0 + (i + 0.5) * GC, gz0 + (j + 0.5) * GC);   // back to bare ground
     return n;
   }
+  // ---------------------------------------------------------------- the room's heap
+  function resetHeap() {   // everything drawn and stacked, again, from the store
+    for (const f of flying.splice(0)) group.remove(f.mesh); queue.length = 0; outbox.length = 0;
+    for (const c of chunks) if (c.mesh) { group.remove(c.mesh); c.mesh.geometry.dispose(); } chunks.length = 0; where.clear();
+    for (const sh of shapes.values()) sh.geo.dispose(); shapes.clear();
+    for (let j = 0; j < GN; j++) for (let i = 0; i < GN; i++) under[j * GN + i] = grid[j * GN + i] = heightAt(gx0 + (i + 0.5) * GC, gz0 + (j + 0.5) * GC);
+    const heap = store.heap; store.heap = [];
+    for (const e of heap) { const sh = shape(e[0]); if (!sh) continue; store.heap.push(e); addToHeap(e); settle(sh, _q.set(e[4], e[5], e[6], e[7]), e[1], e[2], e[3]); }
+  }
+  const okE = e => Array.isArray(e) && e.length >= 8 && typeof e[0] === 'string' && e.slice(1, 8).every(v => typeof v === 'number' && isFinite(v));
+  const okP = p => p && typeof p === 'object' && (typeof p.w === 'string' || typeof p.b === 'string');
+  const netApi = {
+    attach(n) { net = n; }, get guest() { return guestJ; },
+    snapshot() { finish(); return { pieces: store.pieces, heap: store.heap, recipes: store.recipes, seq: store.seq, since: store.since }; },
+    /** Take on the room's heap; mine: it is this browser's own garden (kept). */
+    adopt(w, mine) {
+      if (!w || typeof w !== 'object') return;
+      if (!ownStore) ownStore = store; guestJ = !mine;
+      const pieces = {}; let n = 0; for (const [id, pc] of Object.entries(w.pieces || {})) if (okP(pc) && n++ < 4000) pieces[id] = pc;
+      store = { since: +w.since || 0, pieces, heap: (Array.isArray(w.heap) ? w.heap : []).filter(e => okE(e) && pieces[e[0]]).slice(0, 4000), seq: w.seq | 0, drops: ownStore.drops, recipes: w.recipes && typeof w.recipes === 'object' ? w.recipes : {} };
+      resetHeap(); if (mine) { ownStore = null; save(); }
+    },
+    release() { net = null; outbox.length = 0; if (guestJ && ownStore) { store = ownStore; guestJ = false; ownStore = null; resetHeap(); } else { ownStore = null; guestJ = false; save(); } },
+    onMsg(m) {
+      if (!m || typeof m !== 'object') return;
+      if (m.j === 'fly') { for (const a of Array.isArray(m.a) ? m.a.slice(0, 60) : []) { if (!a || !okE(a.e) || !okP(a.p) || a.e[0] !== a.id || where.has(a.id)) continue; store.pieces[a.id] = a.p; if (a.p.w && a.r) { const r = keepRecipe(a.r); if (r) store.recipes[a.p.w] = r; } shapes.delete(a.id); launch(a.id, a.e); } if (+m.since > (store.since || 0)) store.since = +m.since; flare = Math.max(flare, 0.4); save(); }
+      else if (m.j === 'arr') { if (m.info && typeof m.info === 'object') onArrive({ name: String(m.info.name || 'something').slice(0, 80), icon: String(m.info.icon || '').slice(0, 4), pieces: m.info.pieces | 0, whole: m.info.whole | 0 }); }
+      else if (m.j === 'take') take(String(m.id), true);
+      else if (m.j === 'back') { if (okE(m.e)) giveBack(m.e[0], m.e); }
+      else if (m.j === 'vap') { if (m.all) vaporizeAll(true); else for (const id of Array.isArray(m.ids) ? m.ids.slice(0, 400) : []) { if (!vaporize(String(id), true) && store.pieces[id]) { delete store.pieces[id]; shapes.delete(id); } } }
+    },
+  };
   /** What walling.js needs to build with a piece. */
   function stoneData(id) {
     const sh = shape(id), rec = store.pieces[id]; if (!sh || !rec) return null;
@@ -304,7 +352,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   function topAt(x, z) { const i = Math.floor((x - gx0) / GC), j = Math.floor((z - gz0) / GC); if (i < 0 || j < 0 || i >= GN || j >= GN) return -Infinity; const g = under[j * GN + i]; return g > heightAt(x, z) + 0.05 ? g - 0.06 : -Infinity; }
   /** Land everything at once (for tests, and for a page coming back from the background). */
   function finish() { while (queue.length) launch(queue.shift()); for (const f of flying.splice(0)) land(f); for (const c of chunks) if (c.dirty) rebuild(c); save(); }
-  return { group, update, pick, take, giveBack, stoneData, vaporize, vaporizeAll, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id), isWhole,
+  return { net: netApi, group, update, pick, take, giveBack, stoneData, vaporize, vaporizeAll, material: mat, shape, poll, receive, topAt, finish, where: id => where.get(id), isWhole,
     set usedElsewhere(fn) { usedElsewhere = fn; },
     get count() { return store.heap.length; }, get drops() { return store.drops; }, get flying() { return flying.length + queue.length; },
     hole: holeC, heap: HEAP, throat: HOLE.r, get flare() { return flare; } };

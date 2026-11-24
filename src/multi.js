@@ -12,10 +12,15 @@
 //   nearer is louder, and you can tell where they are with your eyes shut. "Everyone close" plays every voice at full level instead.
 //   While someone talks, their name tag shows it and their suit's glow strips pulse with their voice.
 // - The sky. The garden's clock and calendar follow whoever has been in the room longest, so everyone sees the same sun or stars.
-// - What isn't shared yet: the walls, the planting and the junk heap are still each player's own.
+// - One garden. Everyone in a room builds, plants and digs in the same garden: that of whoever was in the room first. Someone coming
+//   in is handed it as it stands (walls, free builds, glue, the stone and junk heaps, the planting), their own is set aside untouched,
+//   and it comes back when they leave. Only the browser the garden belongs to saves it. What each module sends is its own business
+//   (walling.js, junk.js, planter.js); this file carries it: reliably and in order, in pieces when it is large (a whole garden can be
+//   a megabyte), held back until the garden itself has arrived. The stone in each astronaut's beam rides with their body's stream.
+// - The voids each of you opens are still your own.
 import * as THREE from 'three';
 import { Room } from './room.js';
-import { PRESETS, SUITS, VISORS, cleanOutfit, fromPreset, loadOutfit, saveOutfit, css } from './outfits.js';
+import { PRESETS, SUITS, VISORS, GLOWS, TOPS, cleanOutfit, fromPreset, loadOutfit, saveOutfit, css } from './outfits.js';
 
 const MAX = 6;
 const SERVER = () => new URLSearchParams(location.search).get('server') || window.MP_SERVER || 'wss://crush-commando-mp.samuelling.workers.dev';
@@ -32,6 +37,7 @@ export function createMulti(o) {
   const { scene, camera, model, U, COMMON, createBody, selfBody } = o;
   const shared = new Set(); model.traverse(m => { if (m.isMesh) shared.add(m.geometry); });
   let room = null, code = '', name = '', outfit = loadOutfit(), hearAll = false, followSky = true, sendT = 0, skyT = 0, status = '';
+  let gardenOf = null, synced = false, openedAt = 0, asked = null, askedAt = 0, joinedAt = 0, bigSeq = 0; const pendingW = [], bigIn = new Map(); let W = null;
   try { name = clean(localStorage.getItem('gd.name')) || ''; hearAll = localStorage.getItem('gd.hearAll') === '1'; } catch (e) {}
   const others = new Map();     // jammer id -> { id, n, name, outfit, body, tag, snaps, off, voice, level, muted }
   if (selfBody) selfBody.setOutfit(outfit);
@@ -54,6 +60,9 @@ export function createMulti(o) {
   #mp .sw { display:flex; flex-wrap:wrap; gap:6px; }
   #mp .sw button { width:22px; height:22px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35); }
   #mp .sw button[aria-pressed=true] { border-color:var(--ink,#e9e4da); }
+  #mp .tops { display:flex; flex-wrap:wrap; gap:5px; }
+  #mp .tops button { background:rgba(255,255,255,.04); border:1px solid rgba(233,228,218,.14); border-radius:999px; padding:5px 9px; color:var(--dim,#9a958c); font:inherit; font-size:9px; letter-spacing:.08em; cursor:pointer; }
+  #mp .tops button[aria-pressed=true] { border-color:var(--ink,#e9e4da); color:var(--ink,#e9e4da); }
   #mp .row { display:flex; gap:8px; align-items:center; margin-top:8px; }
   #mp .act { background:rgba(255,255,255,.06); border:1px solid rgba(233,228,218,.28); border-radius:999px; color:inherit; font:inherit; font-size:10px;
     letter-spacing:.18em; text-transform:uppercase; padding:9px 14px; cursor:pointer; white-space:nowrap; }
@@ -88,7 +97,7 @@ export function createMulti(o) {
     if (!inRoom) rm = `<h3>Room</h3>
       <div class="row"><button class="act big" data-a="new">start a new room</button></div>
       <div class="row"><input type="text" id="mpCode" maxlength="8" placeholder="or a friend's code" value="${q ? clean(q).toUpperCase() : ''}" autocomplete="off" spellcheck="false"><button class="act" data-a="join">join</button></div>`;
-    else rm = `<h3>Room ${code}</h3>
+    else rm = `<h3>Room ${code}${synced && gardenOf ? ` · ${gardenOf === 'yours' ? 'your garden' : esc(gardenOf) + ' garden'}` : room.id && !synced ? ' · the garden is arriving…' : ''}</h3>
       <div class="row"><input type="text" readonly value="${HOME}?room=${code}" id="mpLink"><button class="act" data-a="copy">copy</button></div>
       <h3>Here (${others.size + 1} of ${MAX})</h3><ul class="who">
         <li><i style="background:${css(outfit.suit)}"></i><span>${esc(name || 'you')} <small>(you)</small></span></li>
@@ -102,7 +111,11 @@ export function createMulti(o) {
       <h3>Your name</h3><input type="text" id="mpName" maxlength="16" placeholder="astronaut" value="${esc(name)}" autocomplete="off" spellcheck="false">
       <h3>Your suit</h3><div class="pre">${pre}</div>
       <h3>Suit colour</h3><div class="sw">${sw(SUITS, 'suit')}</div>
+      <h3>Trim (joints, belt, boots)</h3><div class="sw">${sw(SUITS, 'trim')}</div>
+      <h3>Patches</h3><div class="sw">${sw(SUITS, 'accent')}</div>
       <h3>Visor</h3><div class="sw">${sw(VISORS, 'visor')}</div>
+      <h3>Glow</h3><div class="sw">${sw(GLOWS, 'glow')}</div>
+      <h3>On the helmet</h3><div class="tops">${TOPS.map(t => `<button data-top="${t[0]}" aria-pressed="${(outfit.top || 'none') === t[0]}">${t[1]}</button>`).join('')}</div>
       ${rm}<div class="st">${esc(status)}</div>`;
   }
   const esc = s => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -116,8 +129,9 @@ export function createMulti(o) {
   });
   el.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.p) { outfit = fromPreset(b.dataset.p); wear(); }
-    else if (b.dataset.k) { const list = b.dataset.k === 'suit' ? SUITS : VISORS; outfit[b.dataset.k] = list[+b.dataset.i].slice(); wear(); }
+    if (b.dataset.p) { outfit = fromPreset(b.dataset.p, outfit); wear(); }
+    else if (b.dataset.top) { outfit.top = b.dataset.top; wear(); }
+    else if (b.dataset.k) { const list = b.dataset.k === 'visor' ? VISORS : b.dataset.k === 'glow' ? GLOWS : SUITS; outfit[b.dataset.k] = list[+b.dataset.i].slice(); wear(); }
     else if (b.dataset.mute) { const p = others.get(b.dataset.mute); if (p) { p.muted = !p.muted; if (p.voice) p.voice.gain.gain.value = p.muted ? 0 : 1.2; render(); } }
     else if (b.dataset.a === 'new') join(code4());
     else if (b.dataset.a === 'join') { const c = clean(el.querySelector('#mpCode').value).toUpperCase().replace(/[^A-Z0-9]/g, ''); if (c) join(c); else setStatus('Type the code your friend gave you.'); }
@@ -136,21 +150,26 @@ export function createMulti(o) {
     leave(true);
     code = c; o.initAudio && o.initAudio();
     room = new Room({ server: SERVER(), maxPeers: MAX - 1, prefix: 'gd-', handlers: {
-      status: (kind, text) => { setStatus(kind === 'in' ? `In room ${code}. ${text}` : text); if (kind === 'error') { room && room.leave(); room = null; render(); } o.onRoom && o.onRoom(); },
+      status: (kind, text) => { if (kind === 'in') { joinedAt = performance.now(); if (room.alone) { synced = true; gardenOf = 'yours'; o.hint && o.hint('this is your garden: friends who come in build in it with you', 5000); } }
+        setStatus(kind === 'in' ? `In room ${code}. ${text}` : text); if (kind === 'error') { room && room.leave(); room = null; render(); } o.onRoom && o.onRoom(); },
       roster: () => { syncPeers(); if (isOpen) render(); o.onRoom && o.onRoom(); },
-      peerOpen: p => { sendWho(p.id); syncPeers(); if (isOpen) render(); },
-      peerLeft: p => { const x = others.get(p.id); if (x) { o.hint && o.hint(`${x.name || 'someone'} left the garden`, 4000); drop(x); } if (isOpen) render(); o.onRoom && o.onRoom(); },
+      peerOpen: p => { if (!openedAt) openedAt = performance.now(); sendWho(p.id); syncPeers(); askWorld(); if (isOpen) render(); },
+      peerLeft: p => { if (W) W.peerGone(p.id); if (asked === p.id) asked = null; for (const k of [...bigIn.keys()]) if (k.startsWith(p.id + ':')) bigIn.delete(k);
+        const x = others.get(p.id); if (x) { o.hint && o.hint(`${x.name || 'someone'} left the garden`, 4000); drop(x); } if (isOpen) render(); o.onRoom && o.onRoom(); },
       message: (p, m) => onMessage(p, m),
       binary: () => {},
       track: (p, track, stream) => onTrack(p, track, stream),
     } });
+    synced = false; gardenOf = null; openedAt = 0; asked = null; pendingW.length = 0; bigIn.clear(); W = o.world || null;
+    if (W) W.attach({ send: (m, to) => sendBig({ k: 'w', m }, to), get id() { return room ? room.id || '' : ''; }, host: () => !!room && isHost(room.id), ready: () => synced });
     room.join(code, name || 'astronaut');
     try { const u = new URL(location.href); u.searchParams.set('room', code); history.replaceState(null, '', u); } catch (_) {}
     if (micStream) room.addTrack(micTrack, micStream);
     talkB.classList.add('on'); document.body.classList.add('mpIn'); render();
   }
   function leave(quiet) {
-    if (room) { room.leave(); room = null; }
+    if (room) { if (W) { try { W.release(); } catch (e) { console.warn('[together] leaving', e); } } room.leave(); room = null; }   // (what is in hand is put by and told before the links close)
+    synced = false; pendingW.length = 0; bigIn.clear();
     for (const p of others.values()) drop(p);
     talkB.classList.remove('on'); document.body.classList.remove('mpIn'); setTalk(false);
     if (!quiet) { setStatus('Left the room.'); try { const u = new URL(location.href); u.searchParams.delete('room'); history.replaceState(null, '', u); } catch (_) {} render(); o.onRoom && o.onRoom(); }
@@ -168,9 +187,45 @@ export function createMulti(o) {
     others.delete(p.id);
   }
   function sendWho(id) { if (room) room.send({ k: 'who', name: name || 'astronaut', outfit }, id); }
+  // ---------------------------------------------------------------- the one garden
+  // a message of any size: whole if small, else in pieces put together again at the far end
+  function sendBig(m, to) {
+    if (!room) return; const s = JSON.stringify(m);
+    if (s.length <= 14000) { room.send(m, to); return; }
+    const t = (bigSeq++).toString(36) + Math.random().toString(36).slice(2, 6), n = Math.ceil(s.length / 12000);
+    for (let i = 0; i < n; i++) room.send({ k: 'big', t, i, n, d: s.slice(i * 12000, (i + 1) * 12000) }, to);
+  }
+  // coming in: ask whoever has been here longest for the garden; if they don't answer, the next
+  function askWorld() {
+    if (!room || !W || synced || (asked && performance.now() - askedAt < 6000)) return;
+    // over a direct link if there is one (the whole garden, junk heap and all); over the relay only if none comes up in a few seconds
+    const direct = p => !!(p.dc && p.dc.readyState === 'open'), wait = performance.now() - joinedAt < 8000;
+    const open = [...room.peers.values()].filter(p => p.opened && p.id !== asked && (direct(p) || !wait)).sort((a, b) => (direct(b) - direct(a)) || ((a.n || 1e9) - (b.n || 1e9)));
+    const pick = open[0] || (asked && !wait && room.peers.get(asked)); if (!pick) return;
+    asked = pick.id; askedAt = performance.now(); room.send({ k: 'world?' }, pick.id);
+  }
+  function gotWorld(pr, w) {
+    if (synced || !W) return;
+    let mine = false; try { mine = W.adopt(w); gardenOf = mine ? 'yours' : null; } catch (e) { console.warn('[together] the garden did not arrive whole', e); }
+    synced = true;
+    const host = others.get(pr.id), who = host && host.name ? host.name + "'s" : 'the room\'s'; if (!mine) gardenOf = who;
+    o.hint && o.hint(mine ? 'your garden, as the room has kept it' : `you are in ${who} garden: build, plant and dig here together · your own is kept, and comes back when you leave`, 8000);
+    for (const [id, m] of pendingW.splice(0)) { try { W.onMsg(id, m); } catch (e) { console.warn(e); } }
+    if (isOpen) render();
+  }
 
   function onMessage(pr, m) {
     let p = others.get(pr.id); if (!p) { syncPeers(); p = others.get(pr.id); if (!p) return; }
+    if (m.k === 'big') {   // a piece of something large
+      if (typeof m.t !== 'string' || !(m.n > 0 && m.n <= 600) || !(m.i >= 0 && m.i < m.n) || typeof m.d !== 'string') return;
+      const key = pr.id + ':' + m.t; let b = bigIn.get(key); if (!b) { if (bigIn.size > 8) return; bigIn.set(key, b = { parts: new Array(m.n), got: 0 }); }
+      if (b.parts.length !== m.n || b.parts[m.i] != null) return; b.parts[m.i] = m.d; b.got++;
+      if (b.got === m.n) { bigIn.delete(key); let whole = null; try { whole = JSON.parse(b.parts.join('')); } catch (e) { return; } if (whole && whole.k !== 'big') onMessage(pr, whole); }
+      return;
+    }
+    if (m.k === 'world?') { if (synced && W) sendBig({ k: 'world', w: W.snapshot(pr.path === 'relay') }, pr.id); return; }
+    if (m.k === 'world') { gotWorld(pr, m.w); return; }
+    if (m.k === 'w') { if (!W) return; if (!synced) { if (pendingW.length < 4000) pendingW.push([pr.id, m.m]); return; } try { W.onMsg(pr.id, m.m); } catch (e) { console.warn('[together]', e); } return; }
     if (m.k === 'who') {
       const was = p.name; p.name = clean(m.name) || 'astronaut'; p.outfit = cleanOutfit(m.outfit);
       ensureBody(p); p.body.setOutfit(p.outfit); drawTag(p);
@@ -182,6 +237,7 @@ export function createMulti(o) {
       p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0 });
       if (p.snaps.length > 30) p.snaps.splice(0, p.snaps.length - 30);
       ensureBody(p);
+      if (W && synced) { try { W.remoteHold(pr.id, Array.isArray(m.h) ? m.h : null); } catch (e) {} }   // the stone in their beam
     } else if (m.k === 'sky') {
       if (followSky && isHost(pr.id) && o.setSky) o.setSky(m);
     }
@@ -297,6 +353,7 @@ export function createMulti(o) {
       if (self.work) { m.w = 1; if (self.aim) m.a = [r3(self.aim.x), r3(self.aim.y), r3(self.aim.z)]; }
       if (self.gesture) { const g = self.gesture, c = {}; for (const k of ['held', 'effort', 'hover', 'press', 'placing', 'ghost']) if (g[k]) c[k] = typeof g[k] === 'number' ? r3(g[k]) : 1; if (Object.keys(c).length) m.g = c; }
       if (self.point > 0.02) m.pn = r3(self.point);
+      if (self.hold) m.h = self.hold;
       const s = JSON.stringify(m);
       for (const pr of room.peers.values()) {
         if (pr.fast && pr.fast.readyState === 'open') { try { pr.fast.send(s); } catch (_) {} }
@@ -305,6 +362,15 @@ export function createMulti(o) {
       }
     }
     // the keeper of the clock tells the others every few seconds
+    if (!synced && room.id) {
+      askWorld(); const now = performance.now();
+      if (!room.alone && !openedAt && now - joinedAt > 40000) {   // the room lists others but none can be reached (gone without saying, most likely): carry on as its first
+        synced = true; gardenOf = 'yours'; o.hint && o.hint('nobody else in the room can be reached yet: this is your garden', 6000); if (isOpen) render();
+      } else if (openedAt && now - openedAt > 45000) {   // they are there, but the garden never came (a link can take twenty seconds to come up; a garden a while to cross a slow one)
+        synced = true; pendingW.length = 0; if (W) { try { W.release(); } catch (e) {} W = null; }   // (and nothing of the room's is written into your own)
+        o.hint && o.hint('the room\'s garden did not arrive: you can see and hear everyone, but you are building in your own (leave and join again to retry)', 9000);
+      }
+    }
     skyT -= dt;
     if (skyT <= 0) { skyT = 3; if (isHost(room.id) && room.peers.size && o.getSky) room.send({ k: 'sky', ...o.getSky() }); }
     // the listener is your head
@@ -345,8 +411,9 @@ export function createMulti(o) {
   return {
     open, close, toggle: () => (isOpen ? close() : open()), update, key, join,
     get isOpen() { return isOpen; }, get inRoom() { return !!room; }, get code() { return code; }, get count() { return room ? others.size + 1 : 0; },
-    get outfit() { return outfit; }, _others: others,
+    get outfit() { return outfit; }, get synced() { return synced; }, _others: others,
     _talk: on => setTalk(on),
+    _dbg: () => ({ synced, gardenOf, asked, pending: pendingW.length, big: [...bigIn.values()].map(b => b.got + '/' + b.parts.length), alone: room && room.alone, id: room && room.id, host: !!room && isHost(room.id), peers: room ? [...room.peers.values()].map(p => [p.path, !!p.opened, p.dc && p.dc.readyState, p.n]) : [] }),
     _stats: async () => { const out = { ctx: o.audio && o.audio().ctx ? o.audio().ctx.state : null, links: [] };
       if (room) for (const p of room.peers.values()) if (p.pc) { const r = await p.pc.getStats(); r.forEach(x => { if (x.type === 'inbound-rtp' && x.kind === 'audio') out.links.push({ inBytes: x.bytesReceived, level: x.audioLevel, energy: x.totalAudioEnergy }); if (x.type === 'outbound-rtp' && x.kind === 'audio') out.links.push({ outBytes: x.bytesSent }); }); }
       const v = [...others.values()].find(p => p.voice); if (v) { const b = v.voice.buf; v.voice.an.getFloatTimeDomainData(b); let m = 0; for (const x of b) m = Math.max(m, Math.abs(x)); out.raw = m; }

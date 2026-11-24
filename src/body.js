@@ -93,6 +93,24 @@ void main(){ if (uGhost > 0.5) discard;
 }
 
 function hullOf(geo) { let hull = geo.clone(); hull.deleteAttribute('normal'); hull = mergeVertices(hull, 2e-4); hull.computeVertexNormals(); return hull; }
+// What a helmet can wear on top (outfits.js TOPS): small shapes painted in the suit's own five colours, so an outfit repaints them too.
+const SUIT_C = [0.80, 0.82, 0.86, 1], TRIM_C = [0.34, 0.37, 0.43, 1], ACC_C = [1.0, 0.30, 0.035, 1], GLOW_C = [0.25, 0.95, 1.0, 0.6];
+function tint(geo, c) { const n = geo.attributes.position.count, a = new Float32Array(n * 4); for (let i = 0; i < n; i++) a.set(c, i * 4); geo.setAttribute('color', new THREE.BufferAttribute(a, 4)); return geo; }
+function topperParts(kind, R) {   // [geometry, colour, x, y, z, rx, rz, spins?] in the helmet's frame: y up from its crown, x across, R its radius
+  const cyl = (r0, r1, h, n = 12) => new THREE.CylinderGeometry(r0, r1, h, n).translate(0, h / 2, 0), ball = r => new THREE.SphereGeometry(r, 14, 10), cone = (r, h, n = 14) => new THREE.ConeGeometry(r, h, n).translate(0, h / 2, 0);
+  const P = [];
+  if (kind === 'antenna') { P.push([cyl(0.006, 0.009, 0.2), TRIM_C, R * 0.35, -0.02, 0, 0, -0.12], [ball(0.022), GLOW_C, R * 0.35 + 0.024, 0.178, 0, 0, 0]); }
+  else if (kind === 'fin') { const s = new THREE.Shape(); s.moveTo(-R * 0.75, -0.03); s.quadraticCurveTo(-R * 0.2, 0.15, R * 0.55, 0.11); s.quadraticCurveTo(R * 0.8, 0.02, R * 0.7, -0.05); s.lineTo(-R * 0.75, -0.03);
+    const g = new THREE.ExtrudeGeometry(s, { depth: 0.018, bevelEnabled: false }).translate(0, 0, -0.009).rotateY(Math.PI / 2); P.push([g, ACC_C, 0, -0.01, 0, 0, 0]); }
+  else if (kind === 'cat') for (const sx of [-1, 1]) { P.push([cone(0.05, 0.1, 4).rotateY(Math.PI / 4).scale(1, 1, 0.45), SUIT_C, sx * R * 0.55, -0.045, 0, 0, -sx * 0.5], [cone(0.03, 0.06, 4).rotateY(Math.PI / 4).scale(1, 1, 0.3), ACC_C, sx * R * 0.56, -0.03, 0.014, 0, -sx * 0.5]); }
+  else if (kind === 'bunny') for (const sx of [-1, 1]) { P.push([new THREE.CapsuleGeometry(0.026, 0.17, 4, 10).translate(0, 0.1, 0).scale(1, 1, 0.5), SUIT_C, sx * R * 0.34, -0.04, 0, -0.12, -sx * 0.2], [new THREE.CapsuleGeometry(0.013, 0.13, 4, 8).translate(0, 0.1, 0).scale(1, 1, 0.4), ACC_C, sx * R * 0.34, -0.035, 0.012, -0.12, -sx * 0.2]); }
+  else if (kind === 'halo') P.push([new THREE.TorusGeometry(R * 0.62, 0.012, 8, 36).rotateX(Math.PI / 2), GLOW_C, 0, 0.075, 0, 0.12, 0]);
+  else if (kind === 'horns') for (const sx of [-1, 1]) P.push([cone(0.028, 0.12, 10), TRIM_C, sx * R * 0.6, -0.06, 0, 0, -sx * 0.75], [cone(0.012, 0.04, 8), ACC_C, sx * (R * 0.6 + 0.078), 0.02, 0, 0, -sx * 0.25]);
+  else if (kind === 'prop') { P.push([cyl(0.008, 0.012, 0.07), TRIM_C, 0, -0.01, 0, 0, 0], [ball(0.016), ACC_C, 0, 0.062, 0, 0, 0]); for (const a of [0, Math.PI]) P.push([new THREE.BoxGeometry(0.13, 0.004, 0.032).translate(0.07, 0, 0).rotateX(0.35).rotateY(a), ACC_C, 0, 0.062, 0, 0, 0, true]); }
+  else if (kind === 'crown') { P.push([new THREE.CylinderGeometry(R * 0.5, R * 0.56, 0.03, 20, 1, true), ACC_C, 0, -0.012, 0, 0, 0]); for (let i = 0; i < 6; i++) { const a = i / 6 * 6.2832; P.push([cone(0.022, 0.06, 4), ACC_C, Math.cos(a) * R * 0.5, 0.0, Math.sin(a) * R * 0.5, 0, 0], [ball(0.009), GLOW_C, Math.cos(a) * R * 0.5, 0.064, Math.sin(a) * R * 0.5, 0, 0]); } }
+  else if (kind === 'flower') { P.push([cyl(0.006, 0.007, 0.09), TRIM_C, 0, -0.01, 0, 0, 0], [ball(0.02), GLOW_C, 0, 0.09, 0, 0, 0]); for (let i = 0; i < 6; i++) { const a = i / 6 * 6.2832; P.push([ball(0.021).scale(1, 0.35, 0.7), ACC_C, Math.cos(a) * 0.034, 0.088, Math.sin(a) * 0.034, 0, 0, false, -a]); } }
+  return P;
+}
 export function createBody({ model, U, COMMON }) {
   const root = new THREE.Group(); root.name = 'body';
   const own = { uLampDir: { value: new THREE.Vector3(0, 1, 0) }, uLampCol: { value: new THREE.Vector3(0.05, 0.055, 0.065) }, uBodyFwd: { value: new THREE.Vector3(0, 0, 1) },
@@ -111,6 +129,21 @@ export function createBody({ model, U, COMMON }) {
     const geo = o.geometry;
     const m = new THREE.Mesh(geo, isHead ? headMat : mat); m.castShadow = true; m.receiveShadow = true; g.add(m);
     const im = new THREE.Mesh(hullOf(geo), isHead ? headInk : ink); g.add(im);
+  }
+  // the helmet's topper: built on its crown, drawn and inked with the head (so it hides with it in first person)
+  let topKind = 'none', topGroup = null, topSpin = [];
+  function setTop(kind) {
+    kind = kind || 'none'; if (kind === topKind || !B.head) return; topKind = kind;
+    if (topGroup) { B.head.remove(topGroup); topGroup.traverse(o => o.geometry && o.geometry.dispose()); topGroup = null; topSpin = []; }
+    if (kind === 'none') return;
+    const hm = B.head.children.find(c => c.isMesh); hm.geometry.computeBoundingBox(); const bb = hm.geometry.boundingBox, R = Math.max(0.08, (bb.max.x - bb.min.x) / 2);
+    topGroup = new THREE.Group(); topGroup.position.set((bb.min.x + bb.max.x) / 2, bb.max.y, (bb.min.z + bb.max.z) / 2); B.head.add(topGroup);
+    for (const [geo, c, x, y, z, rx, rz, spins, ry] of topperParts(kind, R)) {
+      const g = tint(geo.toNonIndexed ? (geo.index ? geo.toNonIndexed() : geo) : geo, c); g.computeVertexNormals();
+      const m = new THREE.Mesh(g, headMat); m.castShadow = true; m.position.set(x, y, z); m.rotation.set(rx || 0, ry || 0, rz || 0); topGroup.add(m);
+      try { const im = new THREE.Mesh(hullOf(g), headInk); m.add(im); } catch (e) { /* no outline for this one */ }
+      if (spins) topSpin.push(m);
+    }
   }
   // the gloves get jointed fingers (hands.js)
   const hands = createHands({ B, mat, ink, hullOf });
@@ -197,6 +230,7 @@ export function createBody({ model, U, COMMON }) {
 
   /** Pose the body under the camera. s = { x, z, yaw, pitch, t }. Returns the eye's bob for this frame. */
   function update(dt, s) {
+    for (const m of topSpin) m.rotation.y += dt * 11;
     // how fast, and which way relative to the body, from where you actually went (hedges and voids included)
     const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw);
     let vx = 0, vz = 0;
@@ -320,7 +354,7 @@ export function createBody({ model, U, COMMON }) {
     pass(p) { ghost.value = p === 'eye' ? 1 : 0; },
     setInk(k) { own.uInk.value = k; },
     /** Wear an outfit (outfits.js: five linear colours), or null for the suit as built. */
-    setOutfit(o) { own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]); },
+    setOutfit(o) { setTop(o && o.top); own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]); },
     /** Someone talking: the suit's glow strips brighten with their voice (0..1). */
     setTalk(v) { own.uGlow.value = 0.85 + 1.6 * Math.max(0, Math.min(1, v)); },
     /** Free what this body made for itself (another player's body, when they leave). The suit's own geometry is shared and stays. */

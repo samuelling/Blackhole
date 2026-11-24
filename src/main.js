@@ -605,11 +605,25 @@ const multi = assets.models.astronaut ? createMulti({ scene, camera, model: asse
     if (on) { if (document.pointerLockElement === canvas) document.exitPointerLock(); if (lobbyView === null) { lobbyView = { on: selfView, ang: selfAng, dist: selfDist }; selfView = true; selfAng = 0.4; selfDist = 3.1; } }
     else if (lobbyView) { selfView = lobbyView.on; selfAng = lobbyView.ang; selfDist = lobbyView.dist; lobbyView = null; }
   },
-  onRoom: () => togetherLabel() }) : null;
+  onRoom: () => togetherLabel(),
+  // the one garden of a room: what the wall, the junk heap and the planting each hand over, take on and tell (their own .net)
+  world: {
+    attach(net) { walling.net.attach(net); junk.net.attach({ send: m => net.send(m), host: net.host }); planter.net.attach({ send: m => net.send(m) }); },
+    snapshot(light) { return { wall: walling.net.snapshot(), junk: light ? null : junk.net.snapshot(), plants: planter.net.snapshot() }; },   // light: over the relay, without the junk heap
+    adopt(w) {
+      if (!w || !w.wall) return false; const mine = walling.net.isMine(w.wall);
+      if (w.junk || !mine) junk.net.adopt(w.junk || {}, mine);   // (the heap first: junk built into walls is drawn from it)
+      walling.net.adopt(w.wall); if (w.plants) planter.net.adopt(w.plants, mine);
+      if (drawer && drawer.sync) drawer.sync('junkInfo'); return mine;
+    },
+    release() { walling.net.release(); junk.net.release(); planter.net.release(); },
+    onMsg(from, m) { if (!m) return; if (m.b) walling.net.onMsg(from, m); else if (m.j) junk.net.onMsg(m); else if (m.p) planter.net.onMsg(m); },
+    peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
+  } }) : null;
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
-const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o) });
+const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), mailbox: !QS.has('nomail') });   // ?nomail: tests keep off the live mailbox
 const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; }, onTurn: sg => { if (body) body.turn(sg); } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1469,9 +1483,9 @@ const SETTINGS = [
   { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
   { id: 'junkInfo', tab: 'wall', group: 'Junk from the Shred Hole', label: '', kind: 'info', get: () => `${junk.count} pieces on the junk heap, from ${junk.drops} flush${junk.drops === 1 ? '' : 'es'} · it comes through the wormhole in the clearing east of the wall, when someone in the Shred Hole flushes to the garden` },
   { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; } },
-  { id: 'junkClear', tab: 'wall', label: 'Vaporize the whole junk heap', kind: 'action', set: () => { if (confirm(`Vaporize all ${junk.count} pieces on the junk heap? What you have built with stays.`)) { const n = junk.vaporizeAll(); burst(new THREE.Vector3(junk.heap.x, heightAt(junk.heap.x, junk.heap.z) + 0.6, junk.heap.z), 2.2); setHint(`${n} pieces vaporized`, 4000); drawer.sync('junkInfo'); } } },
-  { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
-  { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
+  { id: 'junkClear', tab: 'wall', label: 'Vaporize the whole junk heap', kind: 'action', set: () => { if (guestHere()) return;  if (confirm(`Vaporize all ${junk.count} pieces on the junk heap? What you have built with stays.`)) { const n = junk.vaporizeAll(); burst(new THREE.Vector3(junk.heap.x, heightAt(junk.heap.x, junk.heap.z) + 0.6, junk.heap.z), 2.2); setHint(`${n} pieces vaporized`, 4000); drawer.sync('junkInfo'); } } },
+  { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (guestHere()) return;  if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
+  { id: 'wallReset', tab: 'wall', label: 'Pull the whole wall down', kind: 'action', set: () => { if (guestHere()) return;  if (confirm('Pull down every stint you have built? This cannot be undone.')) { walling.reset(); garden.clearWall(); } } },
   { id: 'fullScreen', tab: 'gfx', group: 'Screen', label: 'Full screen (Shift+F)', kind: 'toggle', get: () => !!(document.fullscreenElement || document.webkitFullscreenElement), set: v => toggleFull(v),
     note: (document.fullscreenEnabled || document.webkitFullscreenEnabled) ? 'Esc leaves it (the first Esc frees the mouse, the second leaves full screen)' : 'not available in this browser or frame: on an iPhone, Share → Add to Home Screen opens the garden without the browser around it' },
   { id: 'spaceView', tab: 'garden', group: 'You', label: 'Space view', kind: 'toggle', hands: true, get: () => spaceOn, set: v => { if (v) drawer.close(); setSpaceView(v); },
@@ -1483,8 +1497,8 @@ const SETTINGS = [
   { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
   { id: 'plantInfo', tab: 'garden', group: 'Planting', label: '', kind: 'info', get: () => `${planter.count} of ${garden.planting.max} planted by you · each grows to its own height and spread over its own years, on the garden's seasons` },
   { id: 'plantOpen', tab: 'garden', label: 'Open the plant menu (P)', kind: 'action', set: () => { drawer.close(); planter.setOpen(true); } },
-  { id: 'plantUndig', tab: 'garden', label: "Put back the garden's own plants you dug up", kind: 'action', set: () => { const n = planter.undig(); setHint(n ? `${n} plant${n === 1 ? '' : 's'} back where ${n === 1 ? 'it' : 'they'} stood` : 'nothing of the garden\'s has been dug up', 3500); } },
-  { id: 'plantClear', tab: 'garden', label: 'Dig up everything you planted', kind: 'action', set: () => { if (confirm('Dig up every plant you have set out? This cannot be undone.')) planter.clear(); } },
+  { id: 'plantUndig', tab: 'garden', label: "Put back the garden's own plants you dug up", kind: 'action', set: () => { if (guestHere()) return;  const n = planter.undig(); setHint(n ? `${n} plant${n === 1 ? '' : 's'} back where ${n === 1 ? 'it' : 'they'} stood` : 'nothing of the garden\'s has been dug up', 3500); } },
+  { id: 'plantClear', tab: 'garden', label: 'Dig up everything you planted', kind: 'action', set: () => { if (guestHere()) return;  if (confirm('Dig up every plant you have set out? This cannot be undone.')) planter.clear(); } },
   { id: 'body', tab: 'garden', group: 'You', label: 'Astronaut body', kind: 'toggle', get: () => S.body, set: v => { S.body = v; save(); if (body) body.setEnabled(v); },
     note: 'look down to see yourself; your shadow comes with it' },
   { id: 'gfxInfo', tab: 'gfx', group: 'This machine', label: '', kind: 'info', get: gfxSummary },
@@ -1885,6 +1899,8 @@ const onFull = () => { const f = !!fsEl(); bFull.textContent = f ? 'exit full sc
 document.addEventListener('fullscreenchange', onFull); document.addEventListener('webkitfullscreenchange', onFull);
 
 const _mpAim = new THREE.Vector3();
+// in somebody else's garden (a room you came into) the clear-everything actions are not yours to use
+function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint('this is not your garden: only its owner can clear things wholesale', 4500); return true; } return false; }
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t);
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
@@ -1892,7 +1908,7 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0 });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState() });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;

@@ -119,6 +119,7 @@ export class Room {
       // someone whose state hasn't reached the relay yet (both of us reconnecting at once) is met when it arrives: met
       // now, they'd be filed under their relay address, as a second, phantom bandmate
       for (const o of others) { if (o.st && o.st.jid) this.meet(o.id, o.st, o, true); else this.holdJoin(o.id, { ...o, initiator: true }); }
+      if (first) this.alone = !others.length;   // nobody here before us: the room is ours to open
       if (first) this.h.status('in', others.length ? 'Connecting to the other astronauts…' : 'In the garden. Waiting for friends…');
       else this.h.status('relay-back', '');
       this.h.roster();

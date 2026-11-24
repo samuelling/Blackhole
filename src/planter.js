@@ -95,6 +95,7 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
     if (!armed || !s) return false;
     if (!s.c.ok) { hint(s.c.why, 2500); return true; }
     const id = P.plant(armed, s.x, s.z, 0); if (id == null) return true;
+    if (net) net.send({ p: 'plant', k: armed, x: Math.round(s.x * 100) / 100, z: Math.round(s.z * 100) / 100 });
     dirty = true; saveAt = performance.now() + 1500; return true;
   }
   /** A click with the trowel in hand. Returns true if the click was the planter's. */
@@ -102,7 +103,7 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
   /** A tap at a point of the screen (touch): plant where the tap falls. */
   function tap(nx, ny) { if (!armed || open || blockedNow()) return false; const g = groundAt(nx, ny); if (!g) return true; return plantHere({ x: g.x, z: g.z, c: P.check(armed, g.x, g.z) }); }
   const nameOf = k => (P.flora[k] && P.flora[k].name) || String(k).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
-  function dig() { if (!look) return false; const name = nameOf(look.k); if (P.digUp(look.id)) { dirty = true; saveAt = performance.now() + 1500; hint(`${name} dug up`, 2500); } return true; }
+  function dig() { if (!look) return false; const name = nameOf(look.k); const lk = look; if (P.digUp(look.id)) { if (net) net.send(lk.garden ? { p: 'gdig', d: [lk.id, lk.k, Math.round(lk.x * 100) / 100, Math.round(lk.z * 100) / 100] } : { p: 'dig', x: lk.x, z: lk.z }); dirty = true; saveAt = performance.now() + 1500; hint(`${name} dug up`, 2500); } return true; }
   function onKey(code) {
     if (blockedNow()) return false;
     if (code === 'KeyP') { setOpen(!open); return true; }
@@ -112,15 +113,34 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
     return false;
   }
   // keeping
-  function save() { dirty = false; try { localStorage.setItem(KEY, JSON.stringify({ v: 1, plants: P.list(), dug: P.dugList() })); } catch (e) { hint('this browser would not save your planting', 5000); } }
+  // in a room (multi.js) the planting is the room's: what anyone plants or digs is told to all; a guest's own comes back on leaving
+  let net = null, guestP = false;
+  function save() { dirty = false; if (guestP) return; try { localStorage.setItem(KEY, JSON.stringify({ v: 1, plants: P.list(), dug: P.dugList() })); } catch (e) { hint('this browser would not save your planting', 5000); } }
   function tick(now) { if (dirty && now > saveAt) save(); else if (P.count && now > saveAt + 30000) { saveAt = now; save(); } }   // ages move on, so save now and then
-  try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); if (d && Array.isArray(d.dug)) P.redig(d.dug);   // the garden's own you dug up, before yours go back in where they stood
-    if (d && Array.isArray(d.plants)) { let n = 0; for (const [k, x, z, age] of d.plants) if (P.plant(k, x, z, age || 0, true) != null) n++; if (n) P.refresh(); } } catch (e) {}
+  function setAll(d) {   // the garden's own you dug up first, then yours back in where they stood
+    if (d && Array.isArray(d.dug)) P.redig(d.dug.slice(0, 4000));
+    if (d && Array.isArray(d.plants)) { let n = 0; for (const r of d.plants.slice(0, P.max)) if (Array.isArray(r) && P.flora[r[0]] && isFinite(r[1]) && isFinite(r[2]) && P.plant(r[0], +r[1], +r[2], +r[3] || 0, true) != null) n++; if (n) P.refresh(); }
+  }
+  const loadOwn = () => { try { setAll(JSON.parse(localStorage.getItem(KEY) || 'null')); } catch (e) {} };
+  loadOwn();
+  const netApi = {
+    attach(n) { net = n; }, snapshot: () => ({ plants: P.list(), dug: P.dugList() }),
+    adopt(w, mine) { if (!guestP && !mine) save(); guestP = !mine; P.clear(); P.undigAll(); setAll(w); if (mine) save(); draw(); },
+    release() { net = null; if (guestP) { guestP = false; P.clear(); P.undigAll(); loadOwn(); draw(); } else save(); },
+    onMsg(m) {
+      if (!m || typeof m !== 'object') return;
+      if (m.p === 'plant') { if (P.flora[m.k] && isFinite(m.x) && isFinite(m.z) && P.plant(m.k, +m.x, +m.z, 0, true) != null) P.refresh(); }
+      else if (m.p === 'dig') { const n = isFinite(m.x) && isFinite(m.z) ? P.near(+m.x, +m.z, 0.08) : null; if (n) P.digUp(n.id); }
+      else if (m.p === 'gdig') { if (Array.isArray(m.d)) P.redig([m.d]); }
+      else if (m.p === 'clear') P.clear(); else if (m.p === 'undig') P.undigAll();
+      dirty = true; saveAt = performance.now() + 1500; draw();
+    },
+  };
   addEventListener('pagehide', () => { if (P.count || P.dug || dirty) save(); });
   draw();
-  return { update, tick, click, tap, onKey, setOpen, arm, save,
+  return { net: netApi, update, tick, click, tap, onKey, setOpen, arm, save,
     get armed() { return armed; }, get open() { return open; }, get count() { return P.count; },
-    clear() { P.clear(); arm(null); save(); draw(); },
+    clear() { P.clear(); if (net) net.send({ p: 'clear' }); arm(null); save(); draw(); },
     /** Put back every one of the garden's own plants you dug up. */
-    undig() { const n = P.undigAll(); save(); return n; } };
+    undig() { const n = P.undigAll(); if (net) net.send({ p: 'undig' }); save(); return n; } };
 }

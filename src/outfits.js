@@ -18,6 +18,9 @@ export const PRESETS = [
 // the suit colours and visors to pick from, after a preset
 export const SUITS = [[0.80, 0.82, 0.86], [1.00, 0.30, 0.04], [0.52, 0.11, 0.045], [1.00, 0.80, 0.08], [0.22, 0.72, 0.56], [0.05, 0.16, 0.70],
   [0.40, 0.08, 0.60], [1.00, 0.52, 0.62], [0.58, 0.60, 0.64], [0.20, 0.26, 0.10], [0.42, 0.30, 0.18], [0.03, 0.032, 0.04]];
+export const GLOWS = [[0.25, 0.95, 1.00], [1.00, 0.62, 0.12], [1.00, 0.36, 0.14], [0.70, 0.30, 1.00], [1.00, 0.55, 0.85], [0.30, 1.00, 0.70], [1.00, 0.95, 0.40], [0.95, 0.97, 1.00]];
+// what the helmet wears on top (body.js builds them)
+export const TOPS = [['none', '—'], ['antenna', 'antenna'], ['fin', 'fin'], ['cat', 'cat ears'], ['bunny', 'bunny ears'], ['halo', 'halo'], ['horns', 'horns'], ['prop', 'propeller'], ['crown', 'crown'], ['flower', 'flower']];
 export const VISORS = [[0.95, 0.56, 0.10], [0.30, 0.34, 0.42], [0.08, 0.45, 0.90], [0.15, 0.75, 0.55], [0.45, 0.12, 0.95], [0.95, 0.70, 0.82], [0.90, 0.10, 0.08]];
 
 const KEY = 'gd.outfit';
@@ -27,9 +30,10 @@ const col3 = c => Array.isArray(c) && c.length === 3 ? c.map(v => Math.round(cla
 export function cleanOutfit(o) {
   const base = PRESETS.find(p => o && p.id === o.p) || PRESETS[0], out = { p: base.id };
   for (const k of ['suit', 'trim', 'accent', 'visor', 'glow']) out[k] = (o && col3(o[k])) || base[k].slice();
+  out.top = o && TOPS.some(t => t[0] === o.top) ? o.top : 'none';
   return out;
 }
-export function fromPreset(id) { return cleanOutfit({ p: id }); }
+export function fromPreset(id, keep) { return cleanOutfit({ p: id, top: keep && keep.top }); }   // a new suit keeps what was on the helmet
 export function loadOutfit() { try { return cleanOutfit(JSON.parse(localStorage.getItem(KEY) || 'null')); } catch (e) { return cleanOutfit(null); } }
 export function saveOutfit(o) { try { localStorage.setItem(KEY, JSON.stringify(cleanOutfit(o))); } catch (e) { /* storage blocked */ } }
 /** A linear colour as CSS, for the swatches. */

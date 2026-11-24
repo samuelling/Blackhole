@@ -16,6 +16,12 @@
 // Glue, for free builds (as Tears of the Kingdom's Ultrahand has it): press a piece against others and J welds it to everything it
 // touches, a fixed joint at each seam, marked by a green blob. Glued pieces move as one: lift any of them and the whole assembly comes
 // too, weightless in the suit's beam while it is held. Shift+J unglues the piece you hold or look at. A dry stone wall takes no glue.
+//
+// Building together (multi.js): in a room everyone builds in one garden, that of whoever was there first. A site somebody else is
+// working is shown here as a mirror: one mesh a stone, following what they send. Start work at the same site and you both simulate
+// it: each sends the stones it adds, the stone it is holding (15 times a second, with the body's own stream), and where stones come
+// to rest after what it did; the other sets its own copies there. So the two simulations agree wherever stone lies still, which is
+// almost everywhere almost always. See "building together" below.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { STONE_TYPES, SIZE_CLASSES, generateStone, makeStoneMaterial, hooks, perf } from './drystack/stones.js';
@@ -79,17 +85,34 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   };
   const stints = makeStints();
   let A = null;                                          // active: { s, group, inv, physics, spec, guides, stones[], type, seedNext, queue[], notes }
+  let net = null, guest = false, own = null;             // in a room: { send(m, to?), id, ready() }; in someone else's garden nothing is written to this browser's own
+  const mirrors = new Map();                             // sites others are working: key -> { s, group, type, byUid: uid -> { e, mesh, p, q }, todo[], glue[], seedNext }
+  const present = new Map(), rholds = new Map();         // who is at work where (site key -> their ids); what each of them holds
+  const at = key => { let S = present.get(key); if (!S) present.set(key, S = new Set()); return S; };
+  const netSend = (m, to) => { if (net && net.ready()) { try { net.send(m, to); } catch (e) { /* the room has gone */ } } };   // (nothing is told until the room's garden has arrived: what you were at before is your own garden's business)
+  let nowT = 0;                                          // the garden's clock, seconds (from update)
+  const act = () => { if (A) A.actT = nowT; };   // you did something: for a few seconds, where stones come to rest is yours to tell
+  const uidOf = e => e[9] && e[9].j ? 'j' + e[9].j : e[9] && e[9].h ? 'h' + e[9].h[0] + ':' + e[9].h[1] : 's' + e[1];
+  const siteInfo = s => s.free ? { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type: s.type } : undefined;
   U.uWork = { value: new THREE.Vector4(0, 0, 1, 0) }; U.uWorkOn = { value: 0 };   // the trodden yard beside the stint in hand (field.js)
   let store = { stone: 'newengland', done: {}, paused: {}, heapTaken: {} };
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.done) store = Object.assign(store, s); } catch (e) {}
   if (!store.heapTaken) store.heapTaken = {};
+  if (!store.wid) store.wid = Math.random().toString(36).slice(2, 12);   // which garden this is: a room's garden is saved only by the browser it belongs to
   let free = { sites: [], seq: 0 };                     // free builds: { id, x, y, z, yaw, type, stones, seedNext }
   try { const s = JSON.parse(localStorage.getItem(FREE_KEY) || 'null'); if (s && Array.isArray(s.sites)) free = s; } catch (e) {}
-  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); localStorage.setItem(FREE_KEY, JSON.stringify(free)); } catch (e) { hint('this browser would not save the wall (storage full or blocked)', 6000); } };
-  const freeSites = free.sites.map(f => ({ ...f, free: true, L: 6, state: 'paused' }));
-  for (const s of stints) s.state = store.done[s.id] ? 'done' : store.paused[s.id] ? 'paused' : 'todo';
+  const persist = () => { if (guest) return; try { localStorage.setItem(KEY, JSON.stringify(store)); localStorage.setItem(FREE_KEY, JSON.stringify(free)); } catch (e) { hint('this browser would not save the wall (storage full or blocked)', 6000); } };
+  const freeSites = [];
+  function loadSites() {
+    freeSites.length = 0; for (const f of free.sites) freeSites.push({ ...f, free: true, L: 6, state: 'paused' });
+    for (const s of stints) s.state = store.done[s.id] ? 'done' : store.paused[s.id] ? 'paused' : 'todo';
+  }
+  loadSites();
 
   const root = new THREE.Group(); root.name = 'walling'; scene.add(root);
+  // a seam of glue (free builds): a green blob. (Declared up here: built free builds are drawn, glue and all, as the garden loads.)
+  const glueGeo = new THREE.SphereGeometry(1, 12, 8), glueMat = new THREE.MeshBasicMaterial({ color: 0x8dff5a, toneMapped: false });
+  function glueBlob(parent, p) { const m = new THREE.Mesh(glueGeo, glueMat); m.scale.set(0.034, 0.026, 0.034); m.position.copy(p); parent.add(m); return m; }
   const mats = {}, matOf = (type, merged) => mats[type + (merged ? 'm' : '')] || (mats[type + (merged ? 'm' : '')] = makeStoneMaterial(type, merged));
   const glowMat = {};                                   // a stone you are pointing at or holding: its own material instance, lit up
   const hotMat = type => { if (!glowMat[type]) { const m = makeStoneMaterial(type); m.userData.uniforms.uHighlight.value = 1; glowMat[type] = m; } return glowMat[type]; };
@@ -236,8 +259,9 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     }
     return best;
   }
-  function hideHeapStone(hi, idx, hide) {
-    const h = heaps[hi]; if (hide) h.taken.add(idx); else h.taken.delete(idx); store.heapTaken[hi] = [...h.taken];
+  function hideHeapStone(hi, idx, hide, silent) {
+    const h = heaps[hi]; if (!h) return; if (hide) h.taken.add(idx); else h.taken.delete(idx); store.heapTaken[hi] = [...h.taken];
+    if (!silent) netSend({ b: 'heap', hi, idx, hide: hide ? 1 : 0 });
     const r = h.ranges && h.ranges[idx], m = h.mesh; if (!r || !m) return;
     const P = m.geometry.attributes.position, a = P.array; if (hide) a.fill(0, r[0] * 3, (r[0] + r[1]) * 3); else a.set(h.orig.subarray(r[0] * 3, (r[0] + r[1]) * 3), r[0] * 3);
     P.needsUpdate = true;
@@ -276,7 +300,8 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     const q = opts.q || new THREE.Quaternion().setFromEuler(new THREE.Euler(opts.tilt || 0, yaw, opts.roll || 0, 'YXZ'));
     let y = opts.y;
     if (y == null) { let minY = Infinity; const v = new THREE.Vector3(), hp = data.hullPoints; for (let i = 0; i < hp.length; i += 3) { v.set(hp[i], hp[i + 1], hp[i + 2]).applyQuaternion(q); minY = Math.min(minY, v.y); } y = -minY + 0.006 + (opts.lift || 0); }
-    const stone = { ...data, mesh, cls, seed, type, src, gi: opts.gi };
+    const stone = { ...data, mesh, cls, seed, type, src, gi: opts.gi, uid: src && src.j ? 'j' + src.j : src && src.h ? 'h' + src.h[0] + ':' + src.h[1] : 's' + seed };
+    A.byUid.set(stone.uid, stone);
     A.physics.addStone(stone, x, y, z, { x: q.x, y: q.y, z: q.z, w: q.w }, jd ? jd.friction : STONE_TYPES[type].friction);
     mesh.userData.stone = stone; mesh.position.set(x, y, z); mesh.quaternion.copy(q); A.stones.push(stone); return stone;
   }
@@ -302,26 +327,34 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   async function start(s, stoneType) {
     if (A && A.s === s) return true;
+    if (net && !net.ready()) { hint('one moment: the room\'s garden is still arriving', 3500); return false; }
     if (!(await loadPhysics())) { hint(`the stone-handling physics could not start here (${physFail}); walking still works`, 9000); return false; }
     if (A) pause();
-    const saved = s.free ? (s.stones && s.stones.length ? s : null) : store.paused[s.id], type = saved ? saved.type : (stoneType || store.stone);
+    if (A && A.s === s) return true;                      // (begun twice while the physics loaded)
+    const mir = mirrors.get(s.id);                         // somebody is at work here already: carry on from how it stands for them
+    const saved = mir ? mirrorRecord(mir) : s.free ? (s.stones && s.stones.length ? s : null) : store.paused[s.id], type = saved ? saved.type : (stoneType || store.stone);
+    if (mir) closeMirror(s.id);
     const rec = built.get(s.id); if (rec) { rec.dead = true; root.remove(rec.group); rec.group.traverse(o => o.geometry && o.geometry.dispose()); built.delete(s.id); }
     const group = frameOf(s); root.add(group); group.add(ring);
     const physics = new Physics(), gr = groundFor(group); physics.addHeightfield(gr.Hf, gr.N, gr.N, gr.SIZE, gr.SIZE);
     const spec = s.free ? null : new WallSpec({ length: s.L, base: BASE, top: TOP, height: HEIGHT, heightFn: () => 0 });
     const guides = s.free ? null : new Guides(group, spec, {});
-    A = { s, group, inv: new THREE.Matrix4().copy(group.matrixWorld).invert(), physics, spec, guides, stones: [], glue: [], type, queue: [], seedNext: 0, notes: null, heaps: s.free ? [[0, -2.6]] : [[0, 4]], t0: performance.now() };
+    A = { s, group, inv: new THREE.Matrix4().copy(group.matrixWorld).invert(), physics, spec, guides, stones: [], glue: [], byUid: new Map(), sent: new Map(), actT: nowT, type, queue: [], seedNext: 0, notes: null, heaps: s.free ? [[0, -2.6]] : [[0, 4]], t0: performance.now() };
     const restore = list => list.map(([ci, seed, x, y, z, qx, qy, qz, qw, src], gi) => [CLS[ci], seed, x, z, 0, { y, q: new THREE.Quaternion(qx, qy, qz, qw), src, gi }]);
-    if (saved) { A.queue = restore(saved.stones); A.seedNext = saved.seedNext || 9e5; if (!s.free) delete store.paused[s.id]; }
-    if (saved && s.free) {   // a free build comes back as it was left, at once, so what was glued is glued again before anything can fall
-      while (A.queue.length) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); }
-      const byGi = new Map(A.stones.map(st => [st.gi, st]));
-      for (const [i, j, px, py, pz] of saved.glue || []) { const a = byGi.get(i), b = byGi.get(j); if (a && b) joinStones(a, b, { x: px, y: py, z: pz }); }
+    if (saved) {
+      A.queue = restore(saved.stones); A.seedNext = saved.seedNext || 9e5; if (!s.free) delete store.paused[s.id];
+      for (const e of saved.stones) A.sent.set(uidOf(e), e.slice(2, 9));   // the room has these as they lie: only what changes is sent
+      if (s.free || mir) {   // a free build (or a site somebody is working) comes back as it stands, at once, so what was glued is glued again before anything can fall
+        while (A.queue.length) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); }
+        const byGi = new Map(A.stones.map(st => [st.gi, st]));
+        for (const [i, j, px, py, pz] of saved.glue || []) { const a = byGi.get(i), b = byGi.get(j); if (a && b) joinStones(a, b, { x: px, y: py, z: pz }); }
+      }
     }
     else if (s.free) { A.queue = []; A.seedNext = 5e6 + free.seq * 1e5; }
     else { const pl = planPile(s, type); A.queue = pl.plan; A.seedNext = pl.seedNext; A.heaps = pl.heaps; }
     if (s.free) U.uWork.value.set(s.x, s.z, Math.cos(s.yaw), Math.sin(s.yaw)); else U.uWork.value.set(s.x, s.z, Math.cos(s.yaw), Math.sin(s.yaw));
     A.total = Math.max(1, A.queue.length); s.state = 'active'; drawMarkers(); blockFree(); onChange();
+    netSend({ b: 'open', s: s.id, site: siteInfo(s), type });
     if (s.free) hint(saved ? 'back at your free build · lift from the heaps, the junk, or N for a pile of stone' : 'a free build, here · point at any stone in a heap or the junk and click to lift it · N brings a pile of stone · P puts it away', 7000);
     else hint(`stint ${s.id + 1} of ${stints.length} · ${STONE_TYPES[type].name} · your suit is bringing stone from the heaps`, 6000);
     return true;
@@ -332,14 +365,16 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     let f = null, fd = 1e9; for (const s of freeSites) { const d = Math.hypot(s.x - px, s.z - pz); if (d < fd && d < 9) { fd = d; f = s; } }
     if (!f) {
       if (Math.hypot(px, pz - 12) > 90) { hint('too near the edge of the land to build', 4000); return false; }
-      const rec = { id: 'f' + (free.seq++), x: +px.toFixed(2), y: +heightAt(px, pz).toFixed(3), z: +pz.toFixed(2), yaw: +yaw.toFixed(4), type: store.stone, stones: [], seedNext: 0 };
+      const rec = { id: 'f' + (net ? String(net.id).slice(0, 5) + '-' : '') + (free.seq++), x: +px.toFixed(2), y: +heightAt(px, pz).toFixed(3), z: +pz.toFixed(2), yaw: +yaw.toFixed(4), type: store.stone, stones: [], seedNext: 0 };
       f = { ...rec, free: true, L: 6, state: 'todo' }; freeSites.push(f);
     }
     return start(f);
   }
+  const r3 = v => Math.round(v * 1000) / 1000, r4 = v => Math.round(v * 10000) / 10000;
+  function entryOf(st) { const t = st.body.translation(), r = st.body.rotation(), e = [CLS.indexOf(st.cls), st.seed, r3(t.x), r3(t.y), r3(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w)]; if (st.src) e.push(st.src); return e; }
   function snapshot(all) {
-    const list = [], r3 = v => Math.round(v * 1000) / 1000, r4 = v => Math.round(v * 10000) / 10000;
-    for (const st of all) { const t = st.body.translation(), r = st.body.rotation(), e = [CLS.indexOf(st.cls), st.seed, r3(t.x), r3(t.y), r3(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w)]; if (st.src) e.push(st.src); list.push(e); }
+    const list = [];
+    for (const st of all) list.push(entryOf(st));
     return list;
   }
   function dispose() {
@@ -354,9 +389,16 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (!A) return; const s = A.s; if (held) drop(true);
     while (A.queue.length) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); }
     const list = snapshot(A.stones), type = A.type;
-    if (s.free) { saveFree(s, list); dispose(); if (list.length) { s.state = 'paused'; showBuilt(s, type, list); } else dropFree(s); blockFree(); drawMarkers(); onChange(); return; }
+    if (s.free) {
+      saveFree(s, list); dispose();
+      netSend({ b: 'rec', s: s.id, site: siteInfo(s), state: list.length || at(s.id).size ? 'paused' : 'gone', rec: { type, stones: list, seedNext: s.seedNext, glue: s.glue || [] } });
+      if (list.length) { s.state = 'paused'; showBuilt(s, type, list); } else if (!at(s.id).size) dropFree(s);
+      if (at(s.id).size && freeSites.includes(s)) ensureMirror(s, type);   // others are still at it
+      blockFree(); drawMarkers(); onChange(); return;
+    }
     store.paused[s.id] = { type, stones: list, seedNext: A.seedNext }; persist();
-    dispose(); s.state = 'paused'; showBuilt(s, type, list); drawMarkers(); onChange();
+    netSend({ b: 'rec', s: s.id, state: 'paused', rec: store.paused[s.id] });
+    dispose(); s.state = 'paused'; showBuilt(s, type, list); if (at(s.id).size) ensureMirror(s, type); drawMarkers(); onChange();
   }
   function saveFree(s, list) {
     s.stones = list; s.seedNext = A ? A.seedNext : s.seedNext; let r = free.sites.find(f => f.id === s.id);
@@ -364,8 +406,6 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (!r) free.sites.push(r = {}); Object.assign(r, { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type: s.type || A.type, stones: list, seedNext: s.seedNext, glue: s.glue || [] }); persist();
   }
   // ---------------------------------------------------------------- glue (free builds)
-  const glueGeo = new THREE.SphereGeometry(1, 12, 8), glueMat = new THREE.MeshBasicMaterial({ color: 0x8dff5a, toneMapped: false });
-  function glueBlob(parent, p) { const m = new THREE.Mesh(glueGeo, glueMat); m.scale.set(0.034, 0.026, 0.034); m.position.copy(p); parent.add(m); return m; }
   /** Weld a to b with a fixed joint at P (the site's frame), as they lie now. */
   function joinStones(a, b, P) {
     if (!A || a === b || A.glue.some(g => (g.a === a && g.b === b) || (g.a === b && g.b === a))) return false;
@@ -403,10 +443,11 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (!A.s.free) { hint('a dry stone wall takes no glue · glue is for free builds (B away from the wall line)', 4000); return; }
     const st = held || (hover && !hover.ext && A.stones.includes(hover) ? hover : null);
     if (!st) { hint('hold a piece against another, or look at one, and J glues them', 3500); return; }
-    if (shift) { const n = unglue(st); if (held === st) for (const x of A.stones) if (x !== st) x.body.setGravityScale(1, true); hint(n ? `unglued from ${n} piece${n === 1 ? '' : 's'}` : 'nothing is glued to it', 2200); onChange(); return; }
+    act();
+    if (shift) { const n = unglue(st); if (n) netSend({ b: 'ug', s: A.s.id, u: st.uid }); if (held === st) for (const x of A.stones) if (x !== st) x.body.setGravityScale(1, true); hint(n ? `unglued from ${n} piece${n === 1 ? '' : 's'}` : 'nothing is glued to it', 2200); onChange(); return; }
     const parts = touchingStones(st);
     if (!parts.length) { hint('press it against another piece first, then J glues them', 3200); return; }
-    let n = 0; for (const [o, P] of parts) if (joinStones(st, o, P)) n++;
+    let n = 0; for (const [o, P] of parts) if (joinStones(st, o, P)) { n++; netSend({ b: 'gl', s: A.s.id, a: st.uid, c: o.uid, p: [r3(P.x), r3(P.y), r3(P.z)] }); }
     if (held === st) drop(true);   // it holds by its glue now
     hint(n ? `glued to ${n} piece${n === 1 ? '' : 's'} · lift any one and the rest come too · Shift+J unglues` : 'already glued there', 3500); onChange();
   }
@@ -424,6 +465,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (inWall.length < 8) { hint('nothing much stands in the wall yet · Backspace on a held stone undoes, P puts the stint away for later', 6000); return false; }
     for (const st of A.stones) if (!inWall.includes(st)) giveBack(st);
     const list = snapshot(inWall), type = A.type; store.done[s.id] = { type, stones: list, height: Math.round(res.height * 100) / 100, t: Date.now() }; delete store.paused[s.id]; persist();
+    netSend({ b: 'rec', s: s.id, state: 'done', rec: store.done[s.id] }); at(s.id).clear();
     dispose(); s.state = 'done'; showBuilt(s, type, list); drawMarkers(); onChange();
     const n = stints.filter(x => x.state === 'done').length;
     hint(`stint finished: ${n} of ${stints.length} standing, ${Math.round(stints.filter(x => x.state === 'done').reduce((a, x) => a + x.L, 0))} m of wall`, 8000);
@@ -483,7 +525,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     return true;
   }
   function pick(st) {
-    undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift();
+    undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift(); act();
     held = st; placing = false; effort = 0; ghosted = false; press = false;
     const b = st.body; b.setGravityScale(0, true); b.wakeUp();
     for (const x of groupOf(st)) { x.body.setGravityScale(0, true); x.body.wakeUp(); }   // glued to it: they come too
@@ -496,7 +538,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     placing = false; const b = st.body; b.setGravityScale(1, true); b.setLinvel({ x: 0, y: 0, z: 0 }, true); b.setAngvel({ x: 0, y: 0, z: 0 }, true);
     if (A) for (const x of groupOf(st)) { x.body.setGravityScale(1, true); x.body.setLinvel({ x: 0, y: 0, z: 0 }, true); x.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }
     if (ghosted) { st.collider.setCollisionGroups(0xffffffff); ghosted = false; }
-    look(st, false); held = null; ring.visible = false; notesAt = 0; onChange();
+    look(st, false); held = null; ring.visible = false; notesAt = 0; act(); onChange();
   }
   function rotateWorld(axis, ang) { targetQ.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang)).normalize(); onTurn(Math.sign(ang) * Math.min(1, Math.abs(ang) / 0.5 + 0.3)); }
   // the stone's long axis laid across the wall: length into the wall, as wallers set them
@@ -510,11 +552,11 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (!A) return; const hit = cast(held ? held.body : null); if (!hit || hit.air) return;
     const loose = A.stones.filter(s => s.cls === 'hearting' && s !== held && (Math.abs(s.body.translation().z) > 1.2 || Math.abs(s.body.translation().x) > A.s.L / 2 + 0.3)).slice(0, 7);
     if (!loose.length) { hint('the hearting heap is empty', 3000); return; }
-    undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift();
+    undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift(); act();
     loose.forEach((s, i) => { s.body.setTranslation({ x: hit.point.x + (Math.random() - 0.5) * 0.12, y: hit.point.y + 0.2 + i * 0.06, z: hit.point.z + (Math.random() - 0.5) * 0.08 }, true); s.body.setLinvel({ x: 0, y: -0.2, z: 0 }, true); });
   }
   function undoLast() {
-    const snap = undo.pop(); if (!snap || !A) return; if (held) drop(true);
+    const snap = undo.pop(); if (!snap || !A) return; if (held) drop(true); act();
     snap.forEach((r, i) => { const st = A.stones[i]; if (!st) return; st.body.setTranslation({ x: r[2], y: r[3], z: r[4] }, true); st.body.setRotation({ x: r[5], y: r[6], z: r[7], w: r[8] }, true); st.body.setLinvel({ x: 0, y: 0, z: 0 }, true); st.body.setAngvel({ x: 0, y: 0, z: 0 }, true); });
     hint('taken back', 1500);
   }
@@ -554,16 +596,254 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     smooth.lerp(target, 1 - Math.exp(-dt * (14 / Math.pow(Math.max(1, st.mass / 8), 0.6))));
   }
 
+
+  // ---------------------------------------------------------------- building together
+  // A stone's name within its site (uid) says where it came from: the site's own pile (its seed), a fieldstone heap (heap and place),
+  // or the junk heap (the piece). Everyone derives the same stone from the same name, so only names and poses travel.
+  const okEntry = e => Array.isArray(e) && e.length >= 9 && CLS[e[0]] && e.slice(1, 9).every(v => typeof v === 'number' && isFinite(v));
+  const kill = rec => { rec.dead = true; root.remove(rec.group); rec.group.traverse(o => o.geometry && o.geometry.dispose()); };
+  function siteFor(key, site) {
+    if (typeof key === 'number') return stints[key] || null;
+    if (typeof key !== 'string' || key.length > 40) return null;
+    let f = freeSites.find(x => x.id === key);
+    if (!f && site && [site.x, site.y, site.z, site.yaw].every(v => typeof v === 'number' && isFinite(v)) && freeSites.length < 400) {
+      f = { id: key, x: site.x, y: site.y, z: site.z, yaw: site.yaw, type: STONE_TYPES[site.type] ? site.type : store.stone, stones: [], seedNext: 0, free: true, L: 6, state: 'remote' }; freeSites.push(f);
+    }
+    return f || null;
+  }
+  // ---- mirrors: a site somebody else is working, shown as they have it
+  function ensureMirror(s, type) {
+    let mir = mirrors.get(s.id); if (mir) return mir;
+    const old = built.get(s.id); if (old) { kill(old); built.delete(s.id); }
+    const saved = s.free ? (s.stones && s.stones.length ? s : null) : store.paused[s.id];
+    mir = { s, group: frameOf(s), type: (saved && saved.type) || (STONE_TYPES[type] ? type : store.stone), byUid: new Map(), todo: [], glue: [], seedNext: (saved && saved.seedNext) || 0 };
+    root.add(mir.group); mirrors.set(s.id, mir);
+    if (saved) { for (const e of saved.stones) mirrorPut(mir, e); for (const g of saved.glue || []) { const a = saved.stones[g[0]], b = saved.stones[g[1]]; if (a && b) mirrorGlue(mir, uidOf(a), uidOf(b), [g[2], g[3], g[4]]); } }
+    if (s.state !== 'active') s.state = 'remote'; drawMarkers(); blockFree();
+    return mir;
+  }
+  function mirrorPut(mir, e) {
+    const uid = uidOf(e); let it = mir.byUid.get(uid);
+    if (!it) { if (mir.byUid.size >= 900) return null; it = { e: e.slice(0, 10), mesh: null, p: new THREE.Vector3(e[2], e[3], e[4]), q: new THREE.Quaternion(e[5], e[6], e[7], e[8]), moving: false }; mir.byUid.set(uid, it); mir.todo.push(it); }
+    else { it.p.set(e[2], e[3], e[4]); it.q.set(e[5], e[6], e[7], e[8]); it.moving = true; }
+    return it;
+  }
+  function mirrorGlue(mir, a, b, p) { if (mir.glue.some(g => (g[0] === a && g[1] === b) || (g[0] === b && g[1] === a))) return; const blob = glueBlob(mir.group, new THREE.Vector3(p[0], p[1], p[2])); mir.glue.push([a, b, p, blob]); }
+  function mirrorRecord(mir) {
+    const uids = [...mir.byUid.keys()], idx = new Map(uids.map((u, i) => [u, i]));
+    const stones = uids.map(u => { const it = mir.byUid.get(u), e = [it.e[0], it.e[1], r3(it.p.x), r3(it.p.y), r3(it.p.z), r4(it.q.x), r4(it.q.y), r4(it.q.z), r4(it.q.w)]; if (it.e[9]) e.push(it.e[9]); return e; });
+    return { type: mir.type, stones, seedNext: mir.seedNext, glue: mir.glue.filter(g => idx.has(g[0]) && idx.has(g[1])).map(g => [idx.get(g[0]), idx.get(g[1]), ...g[2]]) };
+  }
+  function closeMirror(key) {
+    const mir = mirrors.get(key); if (!mir) return;
+    root.remove(mir.group); for (const it of mir.byUid.values()) if (it.mesh) it.mesh.geometry.dispose();
+    mirrors.delete(key);
+  }
+  /** Nobody is at the site any more (they left without saying): it stays as it last stood. */
+  function settleMirror(key) { const mir = mirrors.get(key); if (!mir) return; const rec = mirrorRecord(mir), s = mir.s; closeMirror(key); applyRecord(s, 'paused', rec); }
+  function stepMirrors(dt) {
+    const k = 1 - Math.exp(-dt * 16);
+    for (const mir of mirrors.values()) {
+      const t0 = performance.now();
+      while (mir.todo.length && performance.now() - t0 < 4) {   // their stones, made a few at a time
+        const it = mir.todo.shift(), e = it.e, g = geomOf(e, mir.type, DETAIL.near[CLS[e[0]]] || 1); if (!g) continue;
+        it.mesh = new THREE.Mesh(g, e[9] && e[9].j ? junk.material : matOf(srcType(e, mir.type), false)); it.mesh.castShadow = it.mesh.receiveShadow = true;
+        it.mesh.position.copy(it.p); it.mesh.quaternion.copy(it.q); mir.group.add(it.mesh);
+      }
+      for (const it of mir.byUid.values()) if (it.moving && it.mesh) {
+        it.mesh.position.lerp(it.p, k); it.mesh.quaternion.slerp(it.q, k);
+        if (it.mesh.position.distanceToSquared(it.p) < 1e-7 && Math.abs(it.mesh.quaternion.dot(it.q)) > 0.99999) { it.mesh.position.copy(it.p); it.mesh.quaternion.copy(it.q); it.moving = false; }
+      }
+    }
+  }
+  /** A site as somebody left it (put away, finished, or cleared): kept, and shown as built. */
+  function applyRecord(s, state, rec) {
+    const old = built.get(s.id); if (old) { kill(old); built.delete(s.id); }
+    const stones = rec && Array.isArray(rec.stones) ? rec.stones.filter(okEntry).slice(0, 900) : [], type = rec && STONE_TYPES[rec.type] ? rec.type : store.stone;
+    if (s.free) {
+      if (state === 'gone' || !stones.length) { dropFree(s); blockFree(); onChange(); return; }
+      Object.assign(s, { type, stones, seedNext: +rec.seedNext || 0, glue: Array.isArray(rec.glue) ? rec.glue : [], state: 'paused' });
+      let r = free.sites.find(f => f.id === s.id); if (!r) free.sites.push(r = {});
+      Object.assign(r, { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type, stones, seedNext: s.seedNext, glue: s.glue });
+      showBuilt(s, type, stones);
+    } else {
+      delete store.paused[s.id]; delete store.done[s.id];
+      if (state === 'done' && stones.length) { store.done[s.id] = { type, stones, height: +rec.height || 0, t: +rec.t || Date.now() }; s.state = 'done'; showBuilt(s, type, stones); }
+      else if (state === 'paused' && stones.length) { store.paused[s.id] = { type, stones, seedNext: +rec.seedNext || 0 }; s.state = 'paused'; showBuilt(s, type, stones); }
+      else s.state = 'todo';
+    }
+    persist(); drawMarkers(); blockFree(); onChange();
+  }
+  // ---- what comes in from the room
+  function onNet(from, m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.b === 'heap') { const h = heaps[m.hi | 0]; if (h && h.list[m.idx | 0]) hideHeapStone(m.hi | 0, m.idx | 0, !!m.hide, true); return; }
+    if (m.b === 'reset') { if (m.what === 'free') resetFree(true); else reset(true); hint(m.what === 'free' ? 'the free builds were cleared' : 'the wall was cleared', 4000); return; }
+    const s = siteFor(m.s, m.site); if (!s) return;
+    const here = !!A && A.s === s;
+    if (m.b === 'open') { const knew = at(s.id).has(from); at(s.id).add(from); if (here && !knew) netSend({ b: 'open', s: s.id, site: siteInfo(s), type: A.type }, from); else ensureMirror(s, m.type); return; }
+    if (m.b === 'st') { at(s.id).add(from); if (here) applyToSim(m); else applyToMirror(ensureMirror(s, m.type), m); return; }
+    if (m.b === 'gl' || m.b === 'ug') {
+      if (here) {
+        if (m.b === 'gl') { const a = A.byUid.get(m.a), c = A.byUid.get(m.c); if (a && c && Array.isArray(m.p)) joinStones(a, c, { x: +m.p[0], y: +m.p[1], z: +m.p[2] }); }
+        else { const st = A.byUid.get(m.u); if (st) unglue(st); }
+      } else {
+        const mir = ensureMirror(s, m.type);
+        if (m.b === 'gl' && Array.isArray(m.p)) mirrorGlue(mir, String(m.a), String(m.c), m.p.slice(0, 3).map(Number));
+        else if (m.b === 'ug') mir.glue = mir.glue.filter(g => { if (g[0] !== m.u && g[1] !== m.u) return true; mir.group.remove(g[3]); return false; });
+      }
+      return;
+    }
+    if (m.b === 'rec') {
+      at(s.id).delete(from);
+      if (here) {
+        if (m.state === 'paused') return;                     // they have left it to you
+        dispose(); at(s.id).clear(); applyRecord(s, m.state, m.rec);
+        hint(m.state === 'done' ? 'the stint was finished: what stands in the wall is fixed' : 'the build here was cleared', 5000); return;
+      }
+      if (m.state === 'paused' && at(s.id).size) return;     // others are still at it: what they send stands
+      closeMirror(s.id); applyRecord(s, m.state, m.rec);
+    }
+  }
+  function teleport(st, p) {
+    st.quiet = nowT + 1.5;   // where it settles after being set there is not news (see netTick)
+    st.body.setTranslation({ x: p[0], y: p[1], z: p[2] }, true); st.body.setRotation({ x: p[3], y: p[4], z: p[5], w: p[6] }, true);
+    st.body.setLinvel({ x: 0, y: 0, z: 0 }, true); st.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  }
+  function applyToSim(m) {
+    for (const e of Array.isArray(m.add) ? m.add : []) {
+      if (!okEntry(e)) continue; const uid = uidOf(e); let st = A.byUid.get(uid);
+      if (!st) {
+        if (A.stones.length >= 900) continue;
+        const qi = A.queue.findIndex(q => (q[5] && q[5].src ? uidOf([0, q[1], 0, 0, 0, 0, 0, 0, 0, q[5].src]) : 's' + q[1]) === uid); if (qi >= 0) A.queue.splice(qi, 1);   // (it was on its way here too)
+        st = addStone(CLS[e[0]], e[1], e[2], e[4], 0, { y: e[3], q: new THREE.Quaternion(e[5], e[6], e[7], e[8]), src: e[9] && typeof e[9] === 'object' ? e[9] : undefined });
+        if (!st) continue;
+      } else if (st !== held) teleport(st, e.slice(2, 9));
+      A.sent.set(uid, e.slice(2, 9));
+    }
+    for (const u of Array.isArray(m.upd) ? m.upd : []) {
+      if (!Array.isArray(u) || u.length < 8 || !u.slice(1, 8).every(v => typeof v === 'number' && isFinite(v))) continue;
+      const st = A.byUid.get(u[0]); if (!st || st === held) continue;
+      teleport(st, u.slice(1, 8)); A.sent.set(u[0], u.slice(1, 8));
+    }
+    if (+m.sn > A.seedNext) A.seedNext = +m.sn;
+  }
+  function applyToMirror(mir, m) {
+    for (const e of Array.isArray(m.add) ? m.add : []) if (okEntry(e)) mirrorPut(mir, e);
+    for (const u of Array.isArray(m.upd) ? m.upd : []) {
+      if (!Array.isArray(u) || u.length < 8 || !u.slice(1, 8).every(v => typeof v === 'number' && isFinite(v))) continue;
+      const it = mir.byUid.get(u[0]); if (it) { it.p.set(u[1], u[2], u[3]); it.q.set(u[4], u[5], u[6], u[7]); it.moving = true; }
+    }
+    if (+m.sn > mir.seedNext) mir.seedNext = +m.sn;
+  }
+  // ---- what goes out: new stones at once; and, four times a second, where stones have come to rest since they were last told
+  let netT = 0;
+  function netTick() {
+    if (!net || !A || !net.ready()) return; const now = nowT; if (now - netT < 0.25 && now >= netT) return; netT = now;
+    const active = !at(A.s.id).size || now - A.actT < 5;   // alone here, everything that moves is yours; with others, what moves after what you did
+    const carried = held ? groupOf(held) : null; let add = [], upd = [];
+    const flush = () => { if (add.length || upd.length) netSend({ b: 'st', s: A.s.id, site: siteInfo(A.s), type: A.type, add, upd, sn: A.seedNext }); add = []; upd = []; };
+    for (const st of A.stones) {
+      const was = A.sent.get(st.uid);
+      if (!was) { const e = entryOf(st); add.push(e); A.sent.set(st.uid, e.slice(2, 9)); if (add.length >= 50) flush(); continue; }
+      if (st === held || st.rh) continue;
+      const b = st.body;
+      if (st.quiet) {   // set where somebody else has it a moment ago: let it lie, and take a small difference as agreed (or two simulations would argue over loose rubble for ever)
+        if (now < st.quiet) continue; st.quiet = 0;
+        const t = b.translation(), r = b.rotation();
+        if (Math.hypot(t.x - was[0], t.y - was[1], t.z - was[2]) < 0.05) { A.sent.set(st.uid, [r3(t.x), r3(t.y), r3(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w)]); continue; }
+      }
+      if (!active) continue;
+      if (!(carried && carried.has(st)) && !b.isSleeping()) { const v = b.linvel(), w = b.angvel(); if (Math.hypot(v.x, v.y, v.z) > 0.05 || Math.hypot(w.x, w.y, w.z) > 0.3) continue; }   // still on the move
+      const t = b.translation(), r = b.rotation();
+      if (Math.hypot(t.x - was[0], t.y - was[1], t.z - was[2]) > 0.012 || Math.abs(r.x * was[3] + r.y * was[4] + r.z * was[5] + r.w * was[6]) < 0.9998) {
+        const pz = [r3(t.x), r3(t.y), r3(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w)]; upd.push([st.uid, ...pz]); A.sent.set(st.uid, pz); if (upd.length >= 80) flush();
+      }
+    }
+    flush();
+  }
+  /** The stone in your beam, for the others: [site, stone, x, y, z, qx, qy, qz, qw] in the site's frame, or null. */
+  function holdState() { if (!A || !held) return null; const t = held.body.translation(), r = held.body.rotation(); return [A.s.id, held.uid, r3(t.x), r3(t.y), r3(t.z), r4(r.x), r4(r.y), r4(r.z), r4(r.w)]; }
+  /** The stone in somebody else's beam (from their stream), or null when they hold nothing. */
+  function remoteHold(pid, h) {
+    const was = rholds.get(pid);
+    if (was && (!h || was[0] !== h[0] || was[1] !== h[1])) {   // let go
+      rholds.delete(pid);
+      if (A && A.s.id === was[0]) { const st = A.byUid.get(was[1]); if (st && st.rh === pid) { st.rh = null; if (st !== held) { st.body.setGravityScale(1, true); st.body.wakeUp(); } } }
+    }
+    if (!h || !Array.isArray(h) || h.length < 9 || !h.slice(2, 9).every(v => typeof v === 'number' && isFinite(v))) return;
+    rholds.set(pid, [h[0], h[1]]);
+    if (A && A.s.id === h[0]) {
+      const st = A.byUid.get(h[1]); if (!st) return;
+      if (st === held) { if (net && String(pid) < String(net.id)) { drop(true); hint('somebody else has that one', 2000); } else return; }   // both took the same stone: one of you keeps it
+      st.rh = pid; st.body.setGravityScale(0, true); teleport(st, h.slice(2, 9));
+    } else { const mir = mirrors.get(h[0]), it = mir && mir.byUid.get(h[1]); if (it) { it.p.set(h[2], h[3], h[4]); it.q.set(h[5], h[6], h[7], h[8]); it.moving = true; } }
+  }
+  function peerGone(pid) {
+    remoteHold(pid, null);
+    for (const [key, S] of [...present]) if (S.delete(pid) && !S.size && mirrors.has(key)) settleMirror(key);
+  }
+  // ---- the room's garden: handed to whoever comes in, and taken on by them
+  function netSnapshot() {
+    const paused = { ...store.paused }, sites = free.sites.map(f => ({ ...f }));
+    const put = (s, rec) => {   // a site in hand, anywhere, as it stands now
+      if (!rec.stones.length) return;
+      if (s.free) { const i = sites.findIndex(f => f.id === s.id), r = { id: s.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, type: rec.type, stones: rec.stones, seedNext: rec.seedNext, glue: rec.glue || [] }; if (i >= 0) sites[i] = r; else sites.push(r); }
+      else paused[s.id] = { type: rec.type, stones: rec.stones, seedNext: rec.seedNext };
+    };
+    if (A) put(A.s, { type: A.type, stones: snapshot(A.stones), seedNext: A.seedNext, glue: A.glue.map(g => [A.stones.indexOf(g.a), A.stones.indexOf(g.b), ...g.p.map(r3)]).filter(g => g[0] >= 0 && g[1] >= 0) });
+    for (const mir of mirrors.values()) put(mir.s, mirrorRecord(mir));
+    return { wid: store.wid, stone: store.stone, done: store.done, paused, heapTaken: store.heapTaken, free: { sites, seq: free.seq } };
+  }
+  function rebuildAll() {
+    if (A) dispose();
+    for (const key of [...mirrors.keys()]) closeMirror(key);
+    for (const rec of built.values()) kill(rec); built.clear(); present.clear(); rholds.clear();
+    if (garden.clearWall) garden.clearWall();
+    loadSites();
+    heaps.forEach((h, hi) => { const want = new Set(store.heapTaken[hi] || []); for (const i of [...h.taken]) if (!want.has(i)) hideHeapStone(hi, i, false, true); for (const i of want) if (!h.taken.has(i) && h.list[i]) hideHeapStone(hi, i, true, true); });
+    for (const s of stints) { const d = store.done[s.id] || store.paused[s.id]; if (d) showBuilt(s, d.type, d.stones); }
+    for (const f of freeSites) if (f.stones && f.stones.length) showBuilt(f, f.type, f.stones);
+    drawMarkers(); blockFree(); onChange();
+  }
+  /** Take on the room's garden. Returns true when it is this browser's own (which then keeps what was built while it was away). */
+  function adopt(w) {
+    if (!w || typeof w !== 'object') return false;
+    if (A) pause();
+    const mine = !!w.wid && w.wid === (own ? own.store.wid : store.wid);
+    if (!own) own = { store, free };
+    guest = !mine;
+    const clean = o => { const out = {}; for (const [k, d] of Object.entries(o && typeof o === 'object' ? o : {})) if (d && Array.isArray(d.stones) && stints[+k]) out[k] = { ...d, type: STONE_TYPES[d.type] ? d.type : 'newengland', stones: d.stones.filter(okEntry).slice(0, 900) }; return out; };
+    store = { stone: own.store.stone, wid: String(w.wid || ''), done: clean(w.done), paused: clean(w.paused), heapTaken: w.heapTaken && typeof w.heapTaken === 'object' ? w.heapTaken : {} };
+    const fs = w.free && Array.isArray(w.free.sites) ? w.free.sites : [];
+    free = { sites: fs.filter(f => f && typeof f.id === 'string' && [f.x, f.y, f.z, f.yaw].every(v => typeof v === 'number' && isFinite(v)) && Array.isArray(f.stones)).slice(0, 400)
+      .map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z, yaw: f.yaw, type: STONE_TYPES[f.type] ? f.type : 'newengland', stones: f.stones.filter(okEntry).slice(0, 900), seedNext: +f.seedNext || 0, glue: Array.isArray(f.glue) ? f.glue : [] })), seq: (w.free && w.free.seq) | 0 };
+    rebuildAll();
+    if (mine) { own = null; persist(); }
+    return mine;
+  }
+  /** Leaving the room: what is in hand is put by; a guest gets their own garden back. */
+  function release() {
+    if (A) pause();
+    for (const key of [...mirrors.keys()]) settleMirror(key);
+    const was = guest; net = null;
+    if (guest && own) { store = own.store; free = own.free; }
+    own = null; guest = false; present.clear(); rholds.clear();
+    if (was) rebuildAll(); else persist();
+  }
+
   // ---------------------------------------------------------------- each frame
-  function nearest(px, pz, states = ['todo', 'paused']) {
+  function nearest(px, pz, states = ['todo', 'paused', 'remote']) {
     let best = null, bd = 1e9; for (const s of stints) { if (!states.includes(s.state)) continue; const d = Math.hypot(s.x - px, s.z - pz); if (d < bd) { bd = d; best = s; } }
     return best && bd < 5.5 ? best : null;
   }
   const _w = new THREE.Vector3();
   function update(dt, t, px, pz) {
+    nowT = t;
     // built stints: a few milliseconds of geometry each frame; nearer ones get their finer mesh
     if (jobs.length) { if (jobs[0].step()) jobs.shift(); }
     U.uWorkOn.value += ((A ? 1 : 0) - U.uWorkOn.value) * Math.min(1, dt * 1.5);
+    if (mirrors.size) stepMirrors(dt);
     for (const h of heaps) if (h.heap && !h.heap.visible) h.heap.visible = true;
     for (const [id, rec] of built) {
       const s = rec.s, d = Math.hypot(s.x - px, s.z - pz), near = d < NEAR;
@@ -576,8 +856,9 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
       return;
     }
     // delivery: a few stones a frame until the pile is all there
-    if (A.queue.length) { const t0 = performance.now(); while (A.queue.length && performance.now() - t0 < 7) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); } if (!A.queue.length) { onChange(); hint('the pile is here · point at a stone and click to lift it', 6000); } }
+    if (A.queue.length) { act(); const t0 = performance.now(); while (A.queue.length && performance.now() - t0 < 7) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); } if (!A.queue.length) { onChange(); hint('the pile is here · point at a stone and click to lift it', 6000); } }
     A.physics.step(dt, h => steer(h));
+    netTick();
     for (const st of A.stones) { if (st !== held && st.body.isSleeping()) continue; const p = st.body.translation(), r = st.body.rotation(); st.mesh.position.set(p.x, p.y, p.z); st.mesh.quaternion.set(r.x, r.y, r.z, r.w); if (p.y < -3) { st.body.setTranslation({ x: 0, y: 0.5, z: 3 }, true); st.body.setLinvel({ x: 0, y: 0, z: 0 }, true); } }
     if (held) carry(dt);
     else {
@@ -629,7 +910,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     return false;
   }
   function moreStone() {
-    if (!A || A.queue.length) return; const s = A.s, rng = mulberry(A.seedNext), half = s.L / 2;
+    if (!A || A.queue.length) return; act(); const s = A.s, rng = mulberry(A.seedNext), half = s.L / 2;
     if (s.free) {   // in front of where the site was begun: builders in a row, a few big ones, a heap of hearting
       for (let i = 0; i < 12; i++) A.queue.push(['builder', A.seedNext++, -2 + (i % 6) * 0.68 + (rng() - 0.5) * 0.08, -2.0 - Math.floor(i / 6) * 0.42, rng() * 6.28, {}]);
       for (let i = 0; i < 4; i++) A.queue.push(['foundation', A.seedNext++, -1.6 + i * 1.05, -3.2, rng() * 6.28, {}]);
@@ -654,23 +935,25 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     return o;
   }
   function sourcesIn(list) { return (list || []).filter(e => e[9]).map(e => ({ src: e[9] })); }
-  function resetFree() {
-    if (A && A.s.free) dispose();
+  function resetFree(silent) {
+    if (silent !== true) netSend({ b: 'reset', what: 'free' });
+    if (A && A.s.free) dispose(); for (const key of [...mirrors.keys()]) if (typeof key === 'string') closeMirror(key);
     for (const f of freeSites) { for (const st of sourcesIn(f.stones)) giveBack(st); const rec = built.get(f.id); if (rec) { rec.dead = true; root.remove(rec.group); rec.group.traverse(o => o.geometry && o.geometry.dispose()); built.delete(f.id); } }
     freeSites.length = 0; free.sites = []; persist(); blockFree(); onChange();
   }
-  function reset() { if (A && !A.s.free) dispose(); for (const d of Object.values(store.done).concat(Object.values(store.paused))) for (const st of sourcesIn(d.stones)) giveBack(st);
+  function reset(silent) { if (silent !== true) netSend({ b: 'reset', what: 'wall' }); if (A && !A.s.free) dispose(); for (const key of [...mirrors.keys()]) if (typeof key === 'number') closeMirror(key); if (garden.clearWall) garden.clearWall(); for (const d of Object.values(store.done).concat(Object.values(store.paused))) for (const st of sourcesIn(d.stones)) giveBack(st);
     for (const [id, rec] of [...built]) if (typeof id === 'string') continue; else { rec.dead = true; root.remove(rec.group); rec.group.traverse(o => o.geometry && o.geometry.dispose()); built.delete(id); }
     store.done = {}; store.paused = {}; persist(); for (const s of stints) s.state = 'todo'; drawMarkers(); onChange(); }
   addEventListener('pagehide', () => { if (A) { const s = A.s; while (A.queue.length) { const [cls, seed, x, z, yaw, o] = A.queue.shift(); addStone(cls, seed, x, z, yaw, o); }
     if (s.free) saveFree(s, snapshot(A.stones)); else { store.paused[s.id] = { type: A.type, stones: snapshot(A.stones), seedNext: A.seedNext }; persist(); } } });
   if (junk) junk.usedElsewhere = () => { const out = new Set(), add = list => { for (const e of list || []) if (e[9] && e[9].j) out.add(e[9].j); };
-    for (const d of Object.values(store.done).concat(Object.values(store.paused), freeSites)) add(d.stones); if (A) for (const st of A.stones) if (st.src && st.src.j) out.add(st.src.j); return out; };
+    for (const d of Object.values(store.done).concat(Object.values(store.paused), freeSites)) add(d.stones); if (A) for (const st of A.stones) if (st.src && st.src.j) out.add(st.src.j); for (const mir of mirrors.values()) for (const it of mir.byUid.values()) if (it.e[9] && it.e[9].j) out.add(it.e[9].j); return out; };
 
   return { stints, start, begin, pause, finish, update, nearest, aim, hand, onDown, onWheel, onKey, status, reset, resetFree, moreStone, pluckIdle, groundY, heaps,
     set idle(v) { idleOn = !!v; if (!idleOn && idleHover) { idleHover = null; showGhost(null); } }, get idleHover() { return idleHover ? hoverInfo(idleHover) : null; },
     get freeCount() { return freeSites.filter(f => f.stones && f.stones.length).length; },
     get _a() { return A; },   // for tests
+    net: { attach(n) { net = n; }, isMine: w => !!w && !!w.wid && w.wid === (own ? own.store.wid : store.wid), onMsg: onNet, snapshot: netSnapshot, adopt, release, peerGone, remoteHold, holdState, get guest() { return guest; }, get mirrors() { return mirrors; } },
     _t: { pickExt, pluck, touching: st => touchingStones(st), join: (a, b, P) => joinStones(a, b, P), groupOf: st => groupOf(st), get glue() { return A ? A.glue : []; }, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
     get active() { return A ? A.s : null; }, get holding() { return !!held; }, get busy() { return !!A; },
     /** What the hands should be doing: for the body's gestures. */
