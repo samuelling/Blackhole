@@ -1225,6 +1225,9 @@ $('bVoid').addEventListener('click', e => { e.stopPropagation(); if (started) op
 $('bSound').addEventListener('click', e => { e.stopPropagation(); initAudio(); setSound(!A.on); });
 
 const hint = $('hint');
+// the button bar wraps to more rows on narrow screens: tell the stylesheet how high it reaches, so hints sit above it
+{ const bar = $('btns'), setBar = () => document.documentElement.style.setProperty('--bar', (bar.offsetHeight + (innerWidth <= 640 ? 10 : 18)) + 'px');
+  if (window.ResizeObserver) new ResizeObserver(setBar).observe(bar); addEventListener('resize', setBar); setBar(); }
 function setHint(t, ms = 9000) { hint.textContent = t; hint.style.opacity = 1; clearTimeout(setHint.h); setHint.h = setTimeout(() => hint.style.opacity = 0, ms); }
 
 $('enter').addEventListener('click', () => enterGarden());

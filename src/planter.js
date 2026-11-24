@@ -27,12 +27,13 @@ const CSS = `
 #gdPlants .nm em { font-style:italic; font-weight:400; color:rgba(233,228,218,.5); font-size:15px; margin-left:6px; }
 #gdPlants .mt { font:10px/1.5 'IBM Plex Mono',monospace; letter-spacing:.04em; color:rgba(233,228,218,.5); }
 #gdPlants .foot { padding:10px 18px 14px; border-top:1px solid rgba(233,228,218,.1); font:10px/1.6 'IBM Plex Mono',monospace; letter-spacing:.05em; color:rgba(233,228,218,.45); }
-#gdTrowel { position:fixed; left:50%; bottom:118px; transform:translateX(-50%); z-index:6; pointer-events:none; text-align:center; opacity:0; transition:opacity .3s;
+#gdTrowel { position:fixed; left:50%; bottom:calc(var(--bar, 64px) + 56px); transform:translateX(-50%); z-index:6; pointer-events:none; text-align:center; opacity:0; transition:opacity .3s;
   font:11px/1.6 'IBM Plex Mono',monospace; letter-spacing:.06em; color:#e9e4da; text-shadow:0 1px 4px #000; white-space:nowrap; }
 #gdTrowel.on { opacity:1; }
 #gdTrowel b { font:500 20px 'Cormorant Garamond',Georgia,serif; letter-spacing:.01em; display:block; }
 #gdTrowel .st { color:#9dffb0; } #gdTrowel .st.warn { color:#ffc46b; } #gdTrowel .st.no { color:#ff8a78; }
-@media (max-width:640px){ #gdTrowel { white-space:normal; width:92%; bottom:150px; } }`;
+body.mpIn #gdTrowel { bottom:calc(var(--bar, 64px) + 102px); }
+@media (max-width:640px){ #gdTrowel { white-space:normal; width:92%; } }`;
 
 export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unlock, isTouch, blockedNow = () => false }) {
   const P = garden.planting;

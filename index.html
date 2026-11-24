@@ -43,7 +43,8 @@
   #dLabel { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); min-width:96px; text-align:center; }
   #aim { position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%; border:1px solid rgba(233,228,218,.45); opacity:0; transition:all .2s; pointer-events:none; }
   #aim.on { opacity:1; } #aim.hot { width:22px; height:22px; margin:-11px 0 0 -11px; border-color:rgba(255,226,180,.9); }
-  #hint { position:absolute; bottom:72px; left:50%; transform:translateX(-50%); font-family:'IBM Plex Mono',monospace;
+  /* --bar: how far up the button bar reaches (main.js measures it), so nothing written at the foot of the screen lands on it */
+  #hint { position:absolute; bottom:calc(var(--bar, 64px) + 14px); left:50%; transform:translateX(-50%); font-family:'IBM Plex Mono',monospace;
     font-size:11px; letter-spacing:.08em; color:var(--dim); white-space:nowrap; transition:opacity 2s; text-align:center; }
   #btns { position:absolute; right:18px; bottom:18px; display:flex; flex-wrap:wrap; justify-content:flex-end; max-width:min(1100px, 92vw); gap:8px; pointer-events:auto; }
   #btns button { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--dim);
@@ -57,7 +58,9 @@
   @media (max-width:640px){ #btns{ flex-wrap:wrap; justify-content:flex-end; } #tSlider{ width:80px; } }
   #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:20; background:#000;
     font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--dim); padding:30px; text-align:center; }
-  @media (max-width:640px){ #hint{ font-size:10px; white-space:normal; width:80%; } .sub{font-size:17px;} }
+  body.mpIn #hint { bottom:calc(var(--bar, 64px) + 60px); }   /* in a room: clear of the talk button */
+  @media (max-width:640px){ #hint{ font-size:10px; white-space:normal; width:80%; text-align:center; } .sub{font-size:17px;}
+    #btns { gap:6px; right:10px; bottom:10px; max-width:calc(100vw - 20px); } #btns button { padding:7px 10px; font-size:9px; letter-spacing:.12em; } #btns .time button { padding:7px 6px; min-width:0; } #dLabel { min-width:0; font-size:9px; } #dSlider { width:90px; } }
 </style>
 </head>
 <body>

@@ -67,7 +67,7 @@ export function createMulti(o) {
   #mp .who button { background:none; border:none; color:var(--dim,#9a958c); cursor:pointer; font-size:13px; padding:0 2px; }
   #mp label { display:flex; gap:8px; align-items:center; color:var(--dim,#9a958c); margin-top:6px; cursor:pointer; }
   #mp .x { position:absolute; right:10px; top:8px; background:none; border:none; color:var(--dim,#9a958c); font-size:18px; cursor:pointer; }
-  #mpTalk { position:fixed; left:50%; bottom:74px; transform:translateX(-50%); z-index:6; display:none; pointer-events:auto; user-select:none; -webkit-user-select:none;
+  #mpTalk { position:fixed; left:50%; bottom:calc(var(--bar, 64px) + 12px); transform:translateX(-50%); z-index:6; display:none; pointer-events:auto; user-select:none; -webkit-user-select:none;
     font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--dim,#9a958c);
     background:rgba(0,0,0,.4); border:1px solid rgba(233,228,218,.2); border-radius:999px; padding:9px 16px; cursor:pointer; touch-action:none; }
   #mpTalk.on { display:block; } #mpTalk.live { color:#0b0c0f; background:rgba(120,240,200,.92); border-color:transparent; }
@@ -147,12 +147,12 @@ export function createMulti(o) {
     room.join(code, name || 'astronaut');
     try { const u = new URL(location.href); u.searchParams.set('room', code); history.replaceState(null, '', u); } catch (_) {}
     if (micStream) room.addTrack(micTrack, micStream);
-    talkB.classList.add('on'); render();
+    talkB.classList.add('on'); document.body.classList.add('mpIn'); render();
   }
   function leave(quiet) {
     if (room) { room.leave(); room = null; }
     for (const p of others.values()) drop(p);
-    talkB.classList.remove('on'); setTalk(false);
+    talkB.classList.remove('on'); document.body.classList.remove('mpIn'); setTalk(false);
     if (!quiet) { setStatus('Left the room.'); try { const u = new URL(location.href); u.searchParams.delete('room'); history.replaceState(null, '', u); } catch (_) {} render(); o.onRoom && o.onRoom(); }
   }
   // everyone the room knows, as bodies here (a body appears once we know who they are)
