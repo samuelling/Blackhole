@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createHands } from './hands.js';
+import { loadSuit } from './suits.js';
+import { BODIES } from './outfits.js';
 
 const PARENT = { pelvis: null, torso: 'pelvis', head: 'torso', armU_L: 'torso', armL_L: 'armU_L', hand_L: 'armL_L', armU_R: 'torso', armL_R: 'armU_R', hand_R: 'armL_R',
   thigh_L: 'pelvis', shin_L: 'thigh_L', foot_L: 'shin_L', thigh_R: 'pelvis', shin_R: 'thigh_R', foot_R: 'shin_R' };
@@ -119,25 +121,44 @@ export function createBody({ model, U, COMMON }) {
   const ghost = { value: 0 }, headOwn = Object.assign({}, own, { uGhost: ghost });
   const mat = celMaterial(U, COMMON, own), headMat = celMaterial(U, COMMON, headOwn); headMat.customProgramCacheKey = () => 'cel-head';
   const ink = inkMaterial(U, COMMON, own), headInk = inkMaterial(U, COMMON, headOwn);
-  const B = {}, joint = {};
-  model.updateMatrixWorld(true);
-  const meshes = []; model.traverse(o => { if (o.isMesh && o.name in PARENT) meshes.push(o); });
-  for (const o of meshes) { joint[o.name] = o.getWorldPosition(new THREE.Vector3()); B[o.name] = new THREE.Group(); B[o.name].name = o.name; }
-  for (const o of meshes) {
-    const n = o.name, p = PARENT[n], g = B[n], isHead = n === 'head';
-    (p ? B[p] : root).add(g); g.position.copy(joint[n]); if (p) g.position.sub(joint[p]);
-    const geo = o.geometry;
-    const m = new THREE.Mesh(geo, isHead ? headMat : mat); m.castShadow = true; m.receiveShadow = true; g.add(m);
-    const im = new THREE.Mesh(hullOf(geo), isHead ? headInk : ink); g.add(im);
+  // The rig: one group per part, parent to child, always the same. What hangs on it (the suit) can be changed: wear(model).
+  const B = {}, joint = {}; for (const n in PARENT) { B[n] = new THREE.Group(); B[n].name = n; } for (const n in PARENT) (PARENT[n] ? B[PARENT[n]] : root).add(B[n]);
+  const rest = {}, hipRest = { L: new THREE.Vector3(), R: new THREE.Vector3() }, armLen = { u: 0.29, l: 0.26 }; let L1 = 0.42, L2 = 0.39, ANKLE = 0.11, hands = null, wearing = 'astro', wanted = 'astro', neck = 1;
+  /** Put a suit on the rig: a model of fifteen meshes named for their parts, each with its origin at its joint, standing at rest. */
+  function wear(m, id) {
+    m.updateMatrixWorld(true);
+    const meshes = []; m.traverse(o => { if (o.isMesh && o.name in PARENT) meshes.push(o); });
+    if (meshes.length < 15) return false;
+    if (hands) hands.dispose();
+    for (const n in B) for (const c of B[n].children.slice()) if (c.userData.skin) { B[n].remove(c); if (!c.geometry.userData.shared) c.geometry.dispose(); }
+    for (const o of meshes) joint[o.name] = o.getWorldPosition(new THREE.Vector3());
+    for (const o of meshes) {
+      const n = o.name, p = PARENT[n], g = B[n], isHead = n === 'head';
+      g.position.copy(joint[n]); if (p) g.position.sub(joint[p]); g.quaternion.identity();
+      const geo = o.geometry; geo.userData.shared = true;                 // the model's own geometry belongs to everyone wearing this suit
+      const mm = new THREE.Mesh(geo, isHead ? headMat : mat); mm.castShadow = true; mm.receiveShadow = true; mm.userData.skin = true; g.add(mm);
+      const im = new THREE.Mesh(hullOf(geo), isHead ? headInk : ink); im.userData.skin = true; g.add(im);
+    }
+    for (const n in B) rest[n] = B[n].position.clone();
+    L1 = joint.shin_L.distanceTo(joint.thigh_L); L2 = joint.foot_L.distanceTo(joint.shin_L); ANKLE = joint.foot_L.y;
+    hipRest.L.copy(joint.thigh_L).sub(joint.pelvis); hipRest.R.copy(joint.thigh_R).sub(joint.pelvis);
+    armLen.u = joint.armL_L.distanceTo(joint.armU_L); armLen.l = joint.hand_L.distanceTo(joint.armL_L);
+    hands = createHands({ B, mat, ink, hullOf });
+    for (const k in spr) delete spr[k];
+    for (const c of B.head.children.slice()) if (c.userData.topper) { c.traverse(o => o.geometry && o.geometry.dispose()); B.head.remove(c); }
+    wearing = id || 'astro'; { const meta = BODIES.find(b => b.id === wearing); neck = meta && meta.neck != null ? meta.neck : 1; } const tk = topKind; topKind = 'none'; topGroup = null; topSpin = []; setTop(tk);   // the topper again, on this helmet
+    return true;
   }
+  const spr = {};
   // the helmet's topper: built on its crown, drawn and inked with the head (so it hides with it in first person)
   let topKind = 'none', topGroup = null, topSpin = [];
   function setTop(kind) {
     kind = kind || 'none'; if (kind === topKind || !B.head) return; topKind = kind;
     if (topGroup) { B.head.remove(topGroup); topGroup.traverse(o => o.geometry && o.geometry.dispose()); topGroup = null; topSpin = []; }
+    for (const c of B.head.children.slice()) if (c.userData.topper) B.head.remove(c);
     if (kind === 'none') return;
     const hm = B.head.children.find(c => c.isMesh); hm.geometry.computeBoundingBox(); const bb = hm.geometry.boundingBox, R = Math.max(0.08, (bb.max.x - bb.min.x) / 2);
-    topGroup = new THREE.Group(); topGroup.position.set((bb.min.x + bb.max.x) / 2, bb.max.y, (bb.min.z + bb.max.z) / 2); B.head.add(topGroup);
+    topGroup = new THREE.Group(); topGroup.userData.topper = true; topGroup.position.set((bb.min.x + bb.max.x) / 2, bb.max.y, (bb.min.z + bb.max.z) / 2); B.head.add(topGroup);
     for (const [geo, c, x, y, z, rx, rz, spins, ry] of topperParts(kind, R)) {
       const g = tint(geo.toNonIndexed ? (geo.index ? geo.toNonIndexed() : geo) : geo, c); g.computeVertexNormals();
       const m = new THREE.Mesh(g, headMat); m.castShadow = true; m.position.set(x, y, z); m.rotation.set(rx || 0, ry || 0, rz || 0); topGroup.add(m);
@@ -145,19 +166,15 @@ export function createBody({ model, U, COMMON }) {
       if (spins) topSpin.push(m);
     }
   }
-  // the gloves get jointed fingers (hands.js)
-  const hands = createHands({ B, mat, ink, hullOf });
   let gesture = {}, point = 0, turnKick = 0;
-  const rest = {}; for (const n in B) rest[n] = B[n].position.clone();
-  const L1 = joint.shin_L.distanceTo(joint.thigh_L), L2 = joint.foot_L.distanceTo(joint.shin_L), ANKLE = joint.foot_L.y;
-  const hipRest = { L: joint.thigh_L.clone().sub(joint.pelvis), R: joint.thigh_R.clone().sub(joint.pelvis) };
+  wear(model, 'astro');   // the gloves get jointed fingers there (hands.js)
 
   // gait state
   const prev = new THREE.Vector3(); let has = false, speed = 0, move = 0, cyc = 0, vf = 1, vr = 0, reachT = -9, bob = 0, enabled = true;
   // what keeps it from walking like a machine: weight carried over the stance foot, the hips dropping and turning, the spine leaning into
   // starts and turns, every joint arriving a little late and a little past (springs), strides that are never quite the same twice,
   // and, standing still, a person's slow shifting from foot to foot
-  const spr = {}; const spg = (k, target, dt, stiff = 60, zeta = 0.55) => { let e = spr[k]; if (!e) e = spr[k] = [target, 0]; const c = 2 * Math.sqrt(stiff) * zeta; e[1] += (stiff * (target - e[0]) - c * e[1]) * dt; e[0] += e[1] * dt; return e[0]; };
+  const spg = (k, target, dt, stiff = 60, zeta = 0.55) => { let e = spr[k]; if (!e) e = spr[k] = [target, 0]; const c = 2 * Math.sqrt(stiff) * zeta; e[1] += (stiff * (target - e[0]) - c * e[1]) * dt; e[0] += e[1] * dt; return e[0]; };
   let prevYaw = null, turnRate = 0, accel = 0, prevSpeed = 0, stride = 0, lastCyc = 0, strideK = 1, strideW = 0, idleT = 0, idleShift = 0, idleTarget = 0, idleNext = 3;
   const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
   const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -166,7 +183,6 @@ export function createBody({ model, U, COMMON }) {
   const tune = { crane: 0.2, reach: null, work: null, paneX: 0.2 };
   // working at the wall: the left forearm comes up with its console, the right hand points at the stone the suit is lifting
   let workOn = 0, work = 0; const workAim = v3(), wAim = v3(); let hasAim = false;
-  const armLen = { u: joint.armL_L.distanceTo(joint.armU_L), l: joint.hand_L.distanceTo(joint.armL_L) };
   const qTW = new THREE.Quaternion(), S = v3(), T = v3(), E = v3(), nd = v3(), md = v3(), fw = v3(), upv = v3();
   const PHI = 0.733, CP = Math.cos(PHI), SP = Math.sin(PHI);                       // the wrist display faces 42 degrees round the forearm from its front
   // the console: a pane of light the wrist display throws up over the forearm, lettered along the arm
@@ -342,7 +358,7 @@ export function createBody({ model, U, COMMON }) {
     turnKick *= Math.exp(-dt * 5);
     hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
-    B.head.rotation.set(-s.pitch * 0.55 - tor.rotation.x * 0.5, 0, 0);
+    B.head.rotation.set((-s.pitch * 0.55 - tor.rotation.x * 0.5) * neck, 0, 0);
     return bob;
   }
 
@@ -354,17 +370,23 @@ export function createBody({ model, U, COMMON }) {
     pass(p) { ghost.value = p === 'eye' ? 1 : 0; },
     setInk(k) { own.uInk.value = k; },
     /** Wear an outfit (outfits.js: five linear colours), or null for the suit as built. */
-    setOutfit(o) { setTop(o && o.top); own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]); },
+    setOutfit(o) {
+      const b = (o && o.b) || 'astro';
+      if (b !== wanted) { wanted = b; (b === 'astro' ? Promise.resolve(model) : loadSuit(b)).then(m => { if (wanted === b && wearing !== b) wear(m, b); }, () => { if (wanted === b) wanted = wearing; }); }
+      setTop(o && o.top); own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]);
+    },
+    /** Put on another suit's model directly (tests). */
+    wear, get wearing() { return wearing; },
     /** Someone talking: the suit's glow strips brighten with their voice (0..1). */
     setTalk(v) { own.uGlow.value = 0.85 + 1.6 * Math.max(0, Math.min(1, v)); },
     /** Free what this body made for itself (another player's body, when they leave). The suit's own geometry is shared and stays. */
-    dispose(shared) { root.traverse(o => { if (o.isMesh) { if (!shared || !shared.has(o.geometry)) o.geometry.dispose(); } }); for (const m of [mat, headMat, ink, headInk]) m.dispose(); ctex.dispose(); },
+    dispose(shared) { root.traverse(o => { if (o.isMesh) { if (!o.geometry.userData.shared && (!shared || !shared.has(o.geometry))) o.geometry.dispose(); } }); for (const m of [mat, headMat, ink, headInk]) m.dispose(); ctex.dispose(); },
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
     /** What the hands are doing at the wall: { held, effort, hover, press, placing, ghost }; turn(sign) when the stone in hand is turned; point(0..1) aims a finger. */
     setGesture(g) { gesture = g || {}; }, turn(sign) { turnKick = Math.max(-0.5, Math.min(0.5, turnKick + 0.22 * sign)); }, point(v) { point += (v - point) * 0.2; },
-    hands,
+    get hands() { return hands; },
     /** The right palm, in world space: where the suit's lifting beam starts. */
     palm(out) { return B.hand_R.localToWorld(out.set(0, -0.09, 0.02)); },
     /** The console's canvas: draw on g (640 x 320), then call done(). wake() brightens it for a moment: call it when what it says has changed. */

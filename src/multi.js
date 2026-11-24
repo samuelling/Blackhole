@@ -20,7 +20,7 @@
 // - The voids each of you opens are still your own.
 import * as THREE from 'three';
 import { Room } from './room.js';
-import { PRESETS, SUITS, VISORS, GLOWS, TOPS, cleanOutfit, fromPreset, loadOutfit, saveOutfit, css } from './outfits.js';
+import { PRESETS, SUITS, VISORS, GLOWS, TOPS, BODIES, cleanOutfit, fromPreset, fromBody, loadOutfit, saveOutfit, css } from './outfits.js';
 
 const MAX = 6;
 const SERVER = () => new URLSearchParams(location.search).get('server') || window.MP_SERVER || 'wss://crush-commando-mp.samuelling.workers.dev';
@@ -109,7 +109,8 @@ export function createMulti(o) {
       <div class="row"><button class="act" data-a="leave">leave the room</button></div>`;
     el.innerHTML = `<button class="x" data-a="close" title="close">×</button><h2>Together</h2>
       <h3>Your name</h3><input type="text" id="mpName" maxlength="16" placeholder="astronaut" value="${esc(name)}" autocomplete="off" spellcheck="false">
-      <h3>Your suit</h3><div class="pre">${pre}</div>
+      <h3>Your suit</h3><div class="tops">${BODIES.filter(b => !b.soon).map(b => `<button data-body="${b.id}" aria-pressed="${(outfit.b || 'astro') === b.id}" title="${esc(b.note)}">${esc(b.name)}</button>`).join('')}</div>
+      <h3>Its colours</h3><div class="pre">${pre}</div>
       <h3>Suit colour</h3><div class="sw">${sw(SUITS, 'suit')}</div>
       <h3>Trim (joints, belt, boots)</h3><div class="sw">${sw(SUITS, 'trim')}</div>
       <h3>Patches</h3><div class="sw">${sw(SUITS, 'accent')}</div>
@@ -129,7 +130,8 @@ export function createMulti(o) {
   });
   el.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.p) { outfit = fromPreset(b.dataset.p, outfit); wear(); }
+    if (b.dataset.body) { outfit = fromBody(b.dataset.body, outfit); wear(); }
+    else if (b.dataset.p) { outfit = fromPreset(b.dataset.p, outfit); wear(); }
     else if (b.dataset.top) { outfit.top = b.dataset.top; wear(); }
     else if (b.dataset.k) { const list = b.dataset.k === 'visor' ? VISORS : b.dataset.k === 'glow' ? GLOWS : SUITS; outfit[b.dataset.k] = list[+b.dataset.i].slice(); wear(); }
     else if (b.dataset.mute) { const p = others.get(b.dataset.mute); if (p) { p.muted = !p.muted; if (p.voice) p.voice.gain.gain.value = p.muted ? 0 : 1.2; render(); } }

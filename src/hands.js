@@ -25,15 +25,15 @@ function phalanx(r0, r1, L, col) {
 }
 
 /** Strip the fixed fingers and thumb off a glove's geometry: the white shells and dark tips below the knuckles, keeping wrist, palm, guard, knuckle bar. */
-function stripGlove(geo) {
+function stripGlove(geo, s) {   // s: +1 the left glove, -1 the right (the fingers curl toward the leg, the guard is on the outside)
   const P = geo.attributes.position, C = geo.attributes.color, idx = geo.index ? geo.index.array : null, keep = [];
   const n = idx ? idx.length : P.count, at = k => idx ? idx[k] : k, cs = C.normalized ? 1 : 1;
   for (let t = 0; t < n; t += 3) {
     let cx = 0, cy = 0, cz = 0, r = 0, a = 0;
     for (let k = 0; k < 3; k++) { const i = at(t + k); cx += P.getX(i) / 3; cy += P.getY(i) / 3; cz += P.getZ(i) / 3; r += C.getX(i) * cs / 3; a += C.getW(i) * cs / 3; }
     const white = r > 0.7 && a > 0.9, dark = r < 0.1 && a < 0.5;
-    const finger = white && Math.abs(cx) < 0.016 && cy < -0.074;                 // the four fingers (the guard is out at the side)
-    const thumb = white && Math.abs(cx) < 0.016 && cz > 0.04 && cy < -0.03;       // and the thumb, forward of the palm
+    const finger = white && cx * s < 0.016 && cy < -0.074;                       // the four fingers, all the way round their curl (the guard is out at the other side)
+    const thumb = white && cx * s < 0.016 && cz > 0.04 && cy < -0.03;             // and the thumb, forward of the palm
     const tip = dark && cy < -0.062;                                             // dark tips (the wrist ball sits higher)
     if (!(finger || thumb || tip)) for (let k = 0; k < 3; k++) keep.push(at(t + k));
   }
@@ -45,7 +45,7 @@ export function createHands({ B, mat, ink, hullOf }) {
   for (const sd of ['L', 'R']) {
     const s = sd === 'L' ? 1 : -1, hd = B['hand_' + sd];
     // swap the glove's meshes for the stripped glove
-    for (const m of hd.children.slice()) if (m.isMesh) { const stripped = stripGlove(m.geometry); if (m.material === ink) { const h = hullOf(stripped); m.geometry = h; } else m.geometry = stripped; }
+    for (const m of hd.children.slice()) if (m.isMesh) { const stripped = stripGlove(m.geometry, s); if (m.material === ink) { const h = hullOf(stripped); m.geometry = h; } else m.geometry = stripped; }
     const palmN = new THREE.Vector3(-s, 0, 0);                                   // the palm faces the leg at rest
     const digits = [];
     // fingers: index (forward, beside the thumb) to little; lengths and bases from the suit's model
@@ -179,5 +179,7 @@ export function createHands({ B, mat, ink, hullOf }) {
   function pose(sd) { const h = hands[sd]; return [...h.curl, h.spread, h.opp, h.wr.x, h.wr.y, h.wr.z, 0].map(v => Math.round(v * 1000) / 1000); }
   /** Drive a hand from someone else's pose instead of from gestures (null hands it back). */
   function drive(sd, p) { const h = hands[sd]; h.target = p ? { curl: p.slice(0, 5), spread: p[5], opp: p[6], wr: [p[7], p[8], p[9]] } : null; }
-  return { update, pose, drive, hands };
+  /** Take the fingers off again (the body is changing suits; the glove's own meshes go with the suit). */
+  function dispose() { for (const sd of ['L', 'R']) for (const d of hands[sd].digits) { d.root.traverse(o => { if (o.isMesh) o.geometry.dispose(); }); hands[sd].hd.remove(d.root); } }
+  return { update, pose, drive, hands, dispose };
 }

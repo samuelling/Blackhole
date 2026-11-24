@@ -904,7 +904,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
       case 'KeyH': pour(); return true;
       case 'Backspace': undoLast(); return true;
       case 'KeyP': pause(); return true;
-      case 'KeyM': moreStone(); return true;
+      case 'KeyN': moreStone(); return true;
       case 'Enter': if (performance.now() - confirmT < 4000) { confirmT = -9; finish(); } else { confirmT = performance.now(); hint('Enter again to finish this stint: what stands in the wall is fixed, the rest of the pile goes back', 4000); } return true;
     }
     return false;

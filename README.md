@@ -39,7 +39,7 @@ The stints are the guided way. You can also build anywhere, however you like:
 
 ### The wormhole and the junk heap
 
-In a clearing in the wood about 25 m east of the wall's east side, level with the grand fountain, a wormhole hangs eleven metres up (high, so the heap has room to grow under it). It is drawn as a traversable (Ellis) wormhole is expected to look, the way Kip Thorne's group rendered one for *Interstellar*: not a glowing thing but a crystal ball made of bent light. It is done in the same post pass that lenses the black holes, ray by ray:
+In a clearing in the wood about 25 m east of the wall's east side, level with the grand fountain, a wormhole hangs twenty-two metres up, and climbs as the heap grows so that it always stays twelve metres clear of the top of the pile. It is drawn as a traversable (Ellis) wormhole is expected to look, the way Kip Thorne's group rendered one for *Interstellar*: not a glowing thing but a crystal ball made of bent light. It is done in the same post pass that lenses the black holes, ray by ray:
 
 - A ray that passes the throat (radius 1.8 m) farther out than its radius stays on this side and is bent round it, by about (π/4)(a/b)² far out and without limit as it grazes the throat. So the trees, sky and grass around it are wrapped into rings of stretched and multiplied images, and things directly behind it show round its rim.
 - A ray inside the throat goes through, and comes out at the far mouth, which opens in the Shred Hole's hall: the lamps round its walls, the hazard ring and the violet vortex portal below, the tower's yellow hoops and lit shaft overhead with the fan turning in it. The whole of that far sky is fitted into the disc, more and more compressed toward its edge.
@@ -79,15 +79,18 @@ Not in this version: touch controls for walling, the hammer and the fit light fr
 - **Network** (`src/room.js`, from MEGAjam): the Cloudflare relay `crush-commando-mp` (a Durable Object that sleeps when idle) carries only the handshake, in rooms named `gd-<code>`; after that every pair links directly by WebRTC, so walking and voices don't pass through Cloudflare. A pair whose networks won't connect directly (some strict or carrier NATs) falls back to the relay for movement at four updates a second, and can't hear each other (there's no TURN server). `?server=ws://localhost:8787` points at MEGAjam's local relay (`node server/dev.js` in that repo) for testing.
 - The microphone may be blocked when the garden is viewed inside Claude; at linglab.org it asks normally.
 
-### Other suits (not built yet)
+### Other suits
 
-Free models to work from, found Nov 2026:
+The room panel (Shift+G) has a row of suits to wear, alone or together; each is fetched the first time someone in the garden wears it (0.5 to 1.4 MB), and everyone else sees it. They are made from NASA's free models (github.com/nasa/NASA-3D-Resources, `3D Models/`: free of copyright; NASA's usage guidelines apply, so nothing here implies NASA's endorsement, and the NASA insignia and wordmark are not carried over):
 
-- **NASA 3D Resources** (github.com/nasa/NASA-3D-Resources, `3D Models/`; "free and without copyright", NASA's usage guidelines apply: no implied endorsement, and the NASA insignia has its own rules): each a `.glb` with a preview. *Advanced Crew Escape Suit* (the orange launch-and-entry suit, 0.8 MB), *Astronaut* (a plain white suit with a pack, in a T-pose, 0.7 MB), *Extravehicular Mobility Unit* (the shuttle/station spacewalk suit, 3.3 MB), *Gemini Spacesuit* (2.7 MB), *Mark III Spacesuit* (hard-shell prototype, 0.9 MB), *Mercury Spacesuit* (the slim silver one, 0.5 MB), *Z2 Spacesuit* (the bubble-helmet prototype, 16 MB).
-- **Smithsonian 3D**: the scan of Neil Armstrong's Apollo 11 A7-L suit (3d.si.edu). A scan: very heavy, and in one piece.
-- **Quaternius, Ultimate Space Kit** (CC0): stylised low-poly astronauts, already rigged.
+- **ACES**: the Shuttle's orange launch-and-entry suit. **Mark III**: the hard-shell prototype of the 1980s. **Mercury** and **Gemini**: the early pressure suits. **EVA suit**: a plain spacewalk suit with its life-support pack. **Z-2**: the planetary prototype with the bubble helmet.
+- Not converted: the *Extravehicular Mobility Unit* (the model is drawn seated in its jetpack, which shares its materials with the suit, so the two have to be parted by hand), and the Smithsonian's scan of Armstrong's Apollo 11 suit (a scan: very heavy, one piece).
+- `tools/blender/build_suits.py` makes them (bpy; `tools/undraco.mjs` first undoes the models' Draco compression). The body (`body.js`) is not a skinned mesh but fifteen rigid parts on a rig, so each model is stood up facing forward at eye height, cut into those parts (limb by limb, with joints set by eye per suit), each limb turned about its joint until it hangs straight down, the joints closed with a ball, the surface repainted in the suit's five flat colours (so any outfit repaints any suit; a textured model's faces are sorted into those colours by what the texture shows), thinned to about thirty thousand triangles, and given the first suit's gloves, whose fingers the app knows how to move. `blender/suit_<id>.blend` holds each result for working on by hand.
+- What that costs: a limb is rigid, so a sleeve does not crease at the elbow, it turns on a ball; where a model was drawn with its arms out, the shoulders keep some of that width; the gloves and their fingers are the garden suit's on every suit.
 
-What a suit needs to be worn here: the body (`body.js`) is not a skinned mesh but fifteen rigid parts (pelvis, torso, head, upper and lower arms, hands, thighs, shins, feet…), each a mesh named for its part with its origin at its joint, painted in vertex colours with the surface class in alpha; the walk, the arms and the fingers are worked out in code from the joints. So a new suit is: bring the model into Blender, stand it in the same pose, cut it at the joints into those parts, set the origins, bake its texture down to flat vertex colours, and export. `tools/blender/build_astronaut.py` is the pattern.
+### The controls sheet
+
+**?** (or the *controls* button) opens every control on one sheet, with the part for what you are doing now (walking, a stint of wall, a free build, planting, the space view, a room) first and marked. `src/help.js` holds the list.
 
 ## The pond and the brook
 

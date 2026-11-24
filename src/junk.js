@@ -15,7 +15,7 @@ import { wholeShape, recipeKey, keepRecipe, surfaceShader } from './whole.js';
 
 export const RELAY = 'https://tunnel-claude.samuelling.workers.dev/drops';
 export const HEAP = { x: 50.4, z: 6.4 };                               // where the junk piles up
-export const HOLE = { x: 55.6, z: 4.4, h: 11.0, r: 1.8 };               // the wormhole: centre, height above the ground (high, so the heap can grow under it), radius
+export const HOLE = { x: 55.6, z: 4.4, h: 22.0, r: 1.8, clear: 12.0 };  // the wormhole: centre, height above the ground, radius; and it climbs to stay this far (clear) above the top of the heap
 const KEY = 'gd.junk.v1', MAXP = 1400, CHUNK = 160, FIRST_LOOK = 14 * 86400e3;
 const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -71,6 +71,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   const isWhole = id => !!(store.pieces[id] && store.pieces[id].w);
   const mat = P.std({ vertexColors: true, roughness: 0.6, metalness: 0.15 }, { key: 'junk', extra: surfaceShader });
   const g0 = heightAt(HEAP.x, HEAP.z), holeC = new THREE.Vector3(HOLE.x, heightAt(HOLE.x, HOLE.z) + HOLE.h, HOLE.z);
+  const holeY0 = holeC.y; let holeY = holeY0, topAtT = -9;
 
   // ---------------------------------------------------------------- the heap: a height grid the pieces stack on, drawn in chunks
   const GC = 0.12, GN = 120, gx0 = HEAP.x - GN * GC / 2, gz0 = HEAP.z - GN * GC / 2, grid = new Float32Array(GN * GN), under = new Float32Array(GN * GN);   // under: the surface beneath the top layer
@@ -169,7 +170,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     else if (sh.whole) { const w = wholePlace(sh); q1 = w.q; x = w.x; z = w.z; y = w.y; } else y = restOn(sh, q1, x, z);
     if (!to && net) { const pc = store.pieces[id]; outbox.push({ id, p: pc, r: pc.w ? store.recipes[pc.w] : undefined, e: [id, +x.toFixed(3), +y.toFixed(3), +z.toFixed(3), +q1.x.toFixed(4), +q1.y.toFixed(4), +q1.z.toFixed(4), +q1.w.toFixed(4)] }); }
     const dir = new THREE.Vector3(x - holeC.x, 0, z - holeC.z).normalize(), p0 = holeC.clone().addScaledVector(dir, HOLE.r * 0.7).add(new THREE.Vector3(gauss() * 0.3, gauss() * 0.3 - 0.3, gauss() * 0.3));
-    const T = 0.9 + Math.random() * 0.6, v0 = new THREE.Vector3(x - p0.x, y - p0.y + 4.9 * T * T, z - p0.z).divideScalar(T);
+    const T = Math.sqrt(Math.max(1, p0.y - y) / 4.9) * (0.7 + 0.3 * Math.random()), v0 = new THREE.Vector3(x - p0.x, y - p0.y + 4.9 * T * T, z - p0.z).divideScalar(T);
     const mesh = new THREE.Mesh(sh.geo, mat); mesh.castShadow = true; mesh.position.copy(p0); group.add(mesh);
     flying.push({ id, mesh, p0, v0, T, t: 0, q0: new THREE.Quaternion().random(), q1, spin: new THREE.Vector3(gauss(), gauss(), gauss()).multiplyScalar(sh.whole ? 2.5 : 6), x, y, z });
   }
@@ -251,6 +252,9 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     if (queue.length) { flare = Math.min(1, flare + dt * 2); const n = Math.min(queue.length, Math.max(1, Math.ceil(dt * (lite ? 30 : 50)))); for (let i = 0; i < n; i++) launch(queue.shift()); }
     else flare = Math.max(0, flare - dt * 0.4);
     holeU.uFlare.value = flare; hole.scale.setScalar(HOLE.r * (1 + 0.05 * flare + 0.015 * Math.sin(t * 1.3)));
+    // the hole keeps well clear of the heap: as the pile grows it climbs
+    if (t - topAtT > 1.5) { topAtT = t; let m = -Infinity; for (let k = 0; k < grid.length; k++) if (grid[k] > m) m = grid[k]; holeY = Math.max(holeY0, m + HOLE.clear); }
+    if (Math.abs(holeC.y - holeY) > 1e-3) { holeC.y += (holeY - holeC.y) * Math.min(1, dt * 0.8); hole.position.copy(holeC); halo.position.copy(holeC); }
     for (let i = flying.length - 1; i >= 0; i--) {
       const f = flying[i]; f.t += dt; const s = Math.min(f.t, f.T), k = ss(0.7, 1.0, s / f.T);
       f.mesh.position.set(f.p0.x + f.v0.x * s, f.p0.y + f.v0.y * s - 4.9 * s * s, f.p0.z + f.v0.z * s);

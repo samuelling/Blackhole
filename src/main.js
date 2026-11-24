@@ -8,6 +8,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js';
 import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
+import { createHelp } from './help.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
 import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
@@ -28,7 +29,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · S season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · ? every control';
 
 let renderer;
 try {
@@ -1058,8 +1059,10 @@ addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 // at the wall: while a stint is open these keys belong to the stone in hand, and not to voids, seasons or replanting
 const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'KeyJ', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN']);
+let help = null;
 const wallKey = (e, down) => {
   if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
+  if (help && help.isOpen) return;   // the controls sheet is up: keys are for reading it
   if (down && e.code === 'KeyB' && !e.repeat) { e.stopImmediatePropagation(); beginStint(); return; }
   if (!walling.busy || !WALL_KEYS.has(e.code)) return;
   if (!(down && e.repeat && !/Key[QE]/.test(e.code))) walling.onKey(e.code, down, e.shiftKey);
@@ -1293,7 +1296,7 @@ for (const ev of ['mousedown', 'touchstart']) $('dSlider').addEventListener(ev, 
 $('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seasons.replant(); setHint('replanted · they will fill in over about three years', 6000); });
 addEventListener('keydown', e => {
   if (!started) return;
-  if (e.code === 'KeyS') $('bSpeed').click();
+  if (e.code === 'KeyY') $('bSpeed').click();   // (it was S, which is also the key for walking backwards)
   if (e.code === 'KeyR') $('bReplant').click();
 });
 
@@ -1891,6 +1894,12 @@ function toggleFull(on = !fsEl()) {
 const bFull = document.createElement('button'); bFull.id = 'bFull'; bFull.textContent = 'full screen'; bFull.title = 'full screen (Shift+F)';
 bFull.addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
 if (fsOk) $('bSettings').before(bFull);
+// every control on one sheet (help.js): ? opens it on what you are doing now
+help = createHelp({ isTouch, ready: () => started,
+  context: () => { const c = new Set(); if (spaceOn) c.add('space'); else if (walling.busy) c.add(walling.active && walling.active.free ? 'free' : 'wall'); else if (planter.open || planter.armed) c.add('plant'); else { c.add('walk'); c.add('voids'); }
+    if (multi && multi.inRoom) c.add('room'); return c; } });
+const bHelp = document.createElement('button'); bHelp.id = 'bHelp'; bHelp.textContent = 'controls'; bHelp.title = 'every control (?)';
+bHelp.addEventListener('click', e => { e.stopPropagation(); help.toggle(); }); $('bSettings').before(bHelp);
 const bTogether = document.createElement('button'); bTogether.id = 'bTogether'; bTogether.title = 'together: up to six of you, with voices (Shift+G)';
 bTogether.addEventListener('click', e => { e.stopPropagation(); if (multi) multi.toggle(); });
 function togetherLabel() { if (!multi) return; bTogether.textContent = multi.inRoom ? `together · ${multi.count}` : 'together'; }
@@ -1957,7 +1966,7 @@ function drawConsole() {
 // the keys, along the bottom while a stint is open
 const wallKeysEl = document.createElement('div');
 wallKeysEl.style.cssText = 'position:fixed;left:50%;top:40px;transform:translateX(-50%);font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;color:#bff6ff;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center;white-space:nowrap;z-index:5';
-wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish<br>free builds: J glue what it touches · Shift+J unglue';
+wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish<br>free builds: J glue what it touches · Shift+J unglue · ? every control';
 document.body.append(wallKeysEl);
 function wallSummary() {
   const st = walling.status(), left = walling.stints.filter(q => q.state === 'paused').length;
