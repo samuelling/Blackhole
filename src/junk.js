@@ -16,6 +16,7 @@ import { wholeShape, recipeKey, keepRecipe, surfaceShader } from './whole.js';
 export const RELAY = 'https://tunnel-claude.samuelling.workers.dev/drops';
 export const HEAP = { x: 50.4, z: 6.4 };                               // where the junk piles up
 export const HOLE = { x: 55.6, z: 4.4, h: 22.0, r: 1.8, clear: 12.0 };  // the wormhole: centre, height above the ground, radius; and it climbs to stay this far (clear) above the top of the heap
+const CULL = { n: 700, h: 7.0 };   // a heap of more pieces than this, or higher than this (m), is too big: pieces go from its top, at random, until it is not
 const KEY = 'gd.junk.v1', MAXP = 1400, CHUNK = 160, FIRST_LOOK = 14 * 86400e3;
 const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -57,7 +58,7 @@ function shapeOf(rec) {
   return { geo, hull, vol: Math.max(Math.abs(vol), 1e-6), size, r: geo.boundingSphere.radius };
 }
 
-export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArrive = () => {}, hint = () => {}, mailbox = true }) {
+export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArrive = () => {}, hint = () => {}, mailbox = true, onVaporize = null }) {
   const group = new THREE.Group(); group.name = 'junk'; scene.add(group);
   let store = { since: 0, pieces: {}, heap: [], seq: 0, drops: 0, recipes: {} };   // a whole thing's piece has w: the key of its recipe
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.pieces) store = Object.assign(store, s); } catch (e) {}
@@ -71,7 +72,7 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
   const isWhole = id => !!(store.pieces[id] && store.pieces[id].w);
   const mat = P.std({ vertexColors: true, roughness: 0.6, metalness: 0.15 }, { key: 'junk', extra: surfaceShader });
   const g0 = heightAt(HEAP.x, HEAP.z), holeC = new THREE.Vector3(HOLE.x, heightAt(HOLE.x, HOLE.z) + HOLE.h, HOLE.z);
-  const holeY0 = holeC.y; let holeY = holeY0, topAtT = -9;
+  const holeY0 = holeC.y; let holeY = holeY0, topAtT = -9, cullT = -9, culling = false;
 
   // ---------------------------------------------------------------- the heap: a height grid the pieces stack on, drawn in chunks
   const GC = 0.12, GN = 120, gx0 = HEAP.x - GN * GC / 2, gz0 = HEAP.z - GN * GC / 2, grid = new Float32Array(GN * GN), under = new Float32Array(GN * GN);   // under: the surface beneath the top layer
@@ -255,6 +256,19 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
     // the hole keeps well clear of the heap: as the pile grows it climbs
     if (t - topAtT > 1.5) { topAtT = t; let m = -Infinity; for (let k = 0; k < grid.length; k++) if (grid[k] > m) m = grid[k]; holeY = Math.max(holeY0, m + HOLE.clear); }
     if (Math.abs(holeC.y - holeY) > 1e-3) { holeC.y += (holeY - holeC.y) * Math.min(1, dt * 0.8); hole.position.copy(holeC); halo.position.copy(holeC); }
+    // too much: the heap is kept to a size. Pieces are vaporized off its top at random (the top, so nothing is left hanging over a gap), a few a second,
+    // until it is comfortably under the mark again. In a room, whoever fetches the mailbox does this for everyone.
+    if (!(net && !net.host()) && !queue.length && !flying.length && t - cullT > 0.16) {
+      cullT = t; const n = store.heap.length; let top = -Infinity; for (const e of store.heap) if (e[2] > top) top = e[2]; const h = top - g0;
+      if (!culling && (n > CULL.n || h > CULL.h)) { culling = true; hint && hint('the heap has grown too big · the wormhole is taking some of it back', 6000); }
+      if (culling) {
+        if (n <= CULL.n * 0.85 && h <= CULL.h * 0.8) { culling = false; resetHeap(); }
+        else {
+          const used = usedElsewhere(), cand = store.heap.filter(e => !used.has(e[0])).sort((a, b) => b[2] - a[2]), pool = cand.slice(0, Math.max(6, Math.ceil(cand.length * 0.25))), e = pool[Math.floor(Math.random() * pool.length)];
+          if (e) { const pos = vaporize(e[0]); if (pos && onVaporize) onVaporize(pos); } else { culling = false; resetHeap(); }
+        }
+      }
+    }
     for (let i = flying.length - 1; i >= 0; i--) {
       const f = flying[i]; f.t += dt; const s = Math.min(f.t, f.T), k = ss(0.7, 1.0, s / f.T);
       f.mesh.position.set(f.p0.x + f.v0.x * s, f.p0.y + f.v0.y * s - 4.9 * s * s, f.p0.z + f.v0.z * s);

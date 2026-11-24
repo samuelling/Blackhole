@@ -6,6 +6,7 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createHands } from './hands.js';
 import { loadSuit } from './suits.js';
 import { BODIES } from './outfits.js';
+import { NCH, STAND, FIDGET, motionLib, sample, blend } from './motion.js';
 
 const PARENT = { pelvis: null, torso: 'pelvis', head: 'torso', armU_L: 'torso', armL_L: 'armU_L', hand_L: 'armL_L', armU_R: 'torso', armL_R: 'armU_R', hand_R: 'armL_R',
   thigh_L: 'pelvis', shin_L: 'thigh_L', foot_L: 'shin_L', thigh_R: 'pelvis', shin_R: 'thigh_R', foot_R: 'shin_R' };
@@ -231,9 +232,14 @@ export function createBody({ model, U, COMMON }) {
     const sx = sd === 'L' ? 1 : -1, hip = hipRest[sd];
     H.copy(hip).applyQuaternion(qP).add(pelvisPos);
     A.set(sx * (0.1 + stepW * move) + vr * along * -1, ANKLE + h + 0.13 * Math.sin(Math.max(pitch, 0)), vf * along);   // model front is +z; the wearer's right is -x
+    pole.set(0, 0.25, 1); q.setFromEuler(eul.set(pitch, sx * 0.1, 0));   // toes turned out a little
+    solveLeg(sd);
+  }
+  /** Two bones from the hip (H) to the ankle (A), the knee toward pole, the foot turned to q: all in the body's own frame. */
+  function solveLeg(sd) {
     dir.subVectors(A, H); let D = dir.length(); const Dm = L1 + L2 - 0.004; if (D > Dm) { dir.multiplyScalar(Dm / D); A.addVectors(H, dir); D = Dm; }
     dir.divideScalar(D);
-    pole.set(0, 0.25, 1); kd.copy(pole).addScaledVector(dir, -pole.dot(dir)).normalize();
+    kd.copy(pole).addScaledVector(dir, -pole.dot(dir)); if (kd.lengthSq() < 1e-6) kd.set(0, 0, 1); kd.normalize();
     const ca = (L1 * L1 + D * D - L2 * L2) / (2 * L1 * D), sa = Math.sqrt(Math.max(0, 1 - ca * ca));
     K.copy(H).addScaledVector(dir, L1 * ca).addScaledVector(kd, L1 * sa);
     // thigh: -y down the bone, +z toward the knee side
@@ -241,8 +247,75 @@ export function createBody({ model, U, COMMON }) {
     qT.setFromRotationMatrix(M.makeBasis(bx, by, bz)); B['thigh_' + sd].quaternion.copy(qI.copy(qP).invert()).multiply(qT);
     by.subVectors(K, A).normalize(); bz.crossVectors(bx, by);
     qS.setFromRotationMatrix(M.makeBasis(bx, by, bz)); B['shin_' + sd].quaternion.copy(qI.copy(qT).invert()).multiply(qS);
-    q.setFromEuler(eul.set(pitch, sx * 0.1, 0)); B['foot_' + sd].quaternion.copy(qI.copy(qS).invert()).multiply(q);   // toes turned out a little
+    B['foot_' + sd].quaternion.copy(qI.copy(qS).invert()).multiply(q);
   }
+
+  // ---------------------------------------------------------------- motion capture (motion.js): a manner of walking, things done standing, gestures
+  // The stride clock, the speed and the direction of travel are the body's own, as before. What changes is where the pose comes from:
+  // one stride of somebody really walking (and one of them running), read at the clock's phase, in place of the rules above.
+  // A capture was walked at one speed. Slower than that, the steps shorten and slow together; between its walk and its run the two are
+  // mixed; faster than its run, the stride lengthens first and then quickens. The feet are not played back as angles: each frame says where
+  // the ankle is, and the leg is solved to it, so the same stride serves a longer or shorter leg and can be stretched without the foot skating.
+  const cap = { want: 'easy', gait: null, a: new Float32Array(NCH), b: new Float32Array(NCH), loco: new Float32Array(NCH), stand: new Float32Array(NCH), em: new Float32Array(NCH), out: new Float32Array(NCH),
+    ks: 1, idle: { clip: null, t: 0, prev: null, pt: 0, fade: 1, next: null, stood: 0, shotAt: 18 + Math.random() * 20 }, emote: { clip: null, id: null, t: 0, w: 0, n: 0, at: -9 } };
+  const ease = x => x * x * (3 - 2 * x), footQ = new THREE.Quaternion(), qA = new THREE.Quaternion();
+  function capGait(lib) { if (!lib || !cap.want || cap.want === 'classic') return null; if (!cap.gait || cap.gait.id !== cap.want) cap.gait = lib.gaits.find(g => g.id === cap.want) || lib.gaits[0] || null; return cap.gait; }
+  /** Advance the stride clock from the capture's own timing and read the stride there. Returns false if there is no capture to walk by. */
+  function capStride(dt) {
+    const g = capGait(motionLib()); if (!g) return false;
+    const Lr = L1 + L2, W = g.walk, R = g.run || g.walk, vw = W.v * Lr, vr2 = Math.max(vw * 1.25, R.v * Lr);
+    let wr, rate, ks, T;
+    if (speed <= vw) { const k = Math.max(0, speed / vw); wr = 0; ks = Math.sqrt(k); rate = Math.sqrt(k); T = W.T; }
+    else if (speed < vr2) { wr = (speed - vw) / (vr2 - vw); ks = 1; rate = 1; T = lerp(W.T, R.T, wr); }
+    else { const k = speed / vr2; wr = 1; ks = Math.min(Math.pow(k, 0.7), 1.9); rate = Math.min(k / ks, 1.7); T = R.T; }
+    if (speed > 0.05) cyc = (cyc + dt * rate / T) % 1;
+    sample(W, cyc * W.n, cap.a); if (wr > 0) { sample(R, cyc * R.n, cap.b); blend(cap.a, cap.b, wr, cap.loco); } else cap.loco.set(cap.a);
+    cap.ks = ks; return true;
+  }
+  /** What the body does standing: one way of standing about after another, eased into each other, and now and then a fidget. */
+  function capStand(dt, lib, quiet) {
+    const I = cap.idle, C = lib.clip; if (!I.clip) { I.clip = C[STAND[0]] || Object.values(C)[0]; I.t = Math.random() * 2; }
+    if (!I.clip) return false;
+    I.t += dt; I.stood += dt; const c = I.clip, dur = c.n / c.fps, X = 0.7;
+    if (I.t >= dur - X) {
+      let id; if (!quiet && I.stood > I.shotAt && !FIDGET.includes(c.id)) { id = FIDGET[Math.floor(Math.random() * FIDGET.length)]; I.shotAt = I.stood + 25 + Math.random() * 35; }
+      else { const o = STAND.filter(k => k !== c.id && C[k]); id = o[Math.floor(Math.random() * o.length)]; }
+      I.prev = c; I.pt = I.t; I.clip = C[id] || c; I.t = 0; I.fade = 0;
+    }
+    sample(I.clip, I.t * I.clip.fps, cap.a);
+    if (I.fade < 1 && I.prev) { I.fade = Math.min(1, I.fade + dt / X); I.pt += dt; sample(I.prev, I.pt * I.prev.fps, cap.b); blend(cap.b, cap.a, ease(I.fade), cap.stand); } else cap.stand.set(cap.a);
+    return true;
+  }
+  /** The whole pose for this frame from the capture, onto the rig: pelvis, legs, chest and arms. (The head, reaching, the wall and the hands come after, as before.) */
+  function capPose(dt, lean, bank, down) {
+    const lib = motionLib(), f = cap.out, E = cap.emote;
+    if (!capStand(dt, lib, workOn > 0 || move > 0.3)) return false;
+    if (move > 0.6) { cap.idle.stood = 0; cap.idle.shotAt = 18 + Math.random() * 20; }
+    if (E.clip) {   // a gesture: all of you if you are standing, from the waist up if you are walking
+      E.t += dt; const dur = E.clip.n / E.clip.fps; E.w = Math.min(1, E.t / 0.25, Math.max(0, (dur - E.t) / 0.4));
+      sample(E.clip, E.t * E.clip.fps, cap.em); if (E.t >= dur) { E.clip = null; E.w = 0; }
+    }
+    const w = ease(Math.max(0, E.w)); if (w > 0) blend(cap.stand, cap.em, w, cap.stand);
+    blend(cap.stand, cap.loco, ease(move), f);
+    if (w > 0 && move > 0.01) blend(f, cap.em, w, f, 7, 39);
+    const Lr = L1 + L2, pel = B.pelvis, ks = lerp(1, cap.ks, move), fz = lerp(1, vf, move), fx = -vr * move;
+    pel.position.set(rest.pelvis.x + f[0] * Lr, rest.pelvis.y + f[1] * Lr - 0.012 * down, rest.pelvis.z + f[2] * Lr);
+    q.set(f[3], f[4], f[5], f[6]); qA.setFromEuler(eul.set(lean * 0.4, 0, bank * 0.6)); pel.quaternion.copy(qA).multiply(q); qP.copy(pel.quaternion);
+    for (const [sd, c] of [['L', 39], ['R', 49]]) {
+      const a = f[c + 2] * Lr * ks;
+      H.copy(hipRest[sd]).applyQuaternion(qP).add(pel.position);
+      A.set(f[c] * Lr + fx * a, Math.max(ANKLE, ANKLE + f[c + 1] * Lr), fz * a);
+      pole.set(f[c + 7], f[c + 8], f[c + 9]); q.set(f[c + 3], f[c + 4], f[c + 5], f[c + 6]); solveLeg(sd);
+    }
+    const tor = B.torso; tor.position.copy(rest.torso); q.set(f[7], f[8], f[9], f[10]); qA.setFromEuler(eul.set(lean * 0.8 + 0.03 * down, 0, bank * 0.5)); tor.quaternion.copy(q).multiply(qA);
+    for (const [sd, c] of [['L', 15], ['R', 27]]) {
+      const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd]; up.position.copy(rest['armU_' + sd]);
+      up.quaternion.set(f[c], f[c + 1], f[c + 2], f[c + 3]); lo.quaternion.set(f[c + 4], f[c + 5], f[c + 6], f[c + 7]); hd.quaternion.set(f[c + 8], f[c + 9], f[c + 10], f[c + 11]);
+    }
+    headQ.set(f[11], f[12], f[13], f[14]);
+    return true;
+  }
+  const headQ = new THREE.Quaternion(); let capOn = false;
 
   /** Pose the body under the camera. s = { x, z, yaw, pitch, t }. Returns the eye's bob for this frame. */
   function update(dt, s) {
@@ -258,7 +331,7 @@ export function createBody({ model, U, COMMON }) {
     const run = sstep(2.7, 5.2, speed),   // the ordinary 3.2 m/s pace is a brisk walk; Shift is a run
           sprint = sstep(3.6, 6.2, speed);
     const stepLen = (0.5 + 0.19 * speed) * strideK, duty = lerp(0.6, 0.4, run), travel = Math.min(0.86, duty * 2 * stepLen), lift = (lerp(0.06, 0.2, run) + 0.06 * sprint) * (0.9 + 0.2 * hash(stride * 3.1));
-    cyc = (cyc + speed * dt / (2 * stepLen)) % 1;
+    capOn = capStride(dt); if (!capOn) cyc = (cyc + speed * dt / (2 * stepLen)) % 1;
     if (cyc < lastCyc) { stride++; strideK = 0.96 + 0.08 * hash(stride); strideW = (hash(stride * 7.3) - 0.5) * 0.03; } lastCyc = cyc;   // no two strides alike
     const psi = 2 * Math.PI * (cyc - duty / 2), two = Math.cos(2 * psi);
     // walking vaults over a stiff leg, so you are highest at mid-stance; running drops onto a bent one, so you are lowest there
@@ -281,24 +354,28 @@ export function createBody({ model, U, COMMON }) {
     const still = 1 - move, cp = Math.cos(psi);
     const swayX = (lerp(0.028, 0.012, run) * cp * move + 0.024 * idleShift * still) * (1 + 0.15 * Math.sin(s.t * 0.7));   // over the foot that carries you
     const lean = Math.max(-0.12, Math.min(0.12, accel * 0.035)), bank = Math.max(-0.16, Math.min(0.16, -turnRate * speed * 0.05));
-    const pel = B.pelvis; pel.position.copy(rest.pelvis); pel.position.y += bob * 1.2 - 0.022 - 0.04 * run * move - 0.012 * down - 0.012 * Math.abs(idleShift) * still;
+    const pel = B.pelvis, tor = B.torso;
+    if (capOn) capOn = capPose(dt, lean, bank, down);
+    if (!capOn) {
+    pel.position.copy(rest.pelvis); pel.position.y += bob * 1.2 - 0.022 - 0.04 * run * move - 0.012 * down - 0.012 * Math.abs(idleShift) * still;
     pel.position.x += spg('swayX', swayX, dt, 40, 0.5);
     // the hip drops on the side of the swinging leg, the pelvis turns with it, and the whole body banks into a turn
     pel.rotation.set(spg('pelX', 0.02 * run * move + lean * 0.4, dt, 50), -0.09 * Math.sin(psi) * move * (1 - 0.3 * run), spg('pelZ', lerp(0.05, 0.03, run) * cp * move + 0.035 * idleShift * still + bank * 0.6, dt, 60, 0.5)); qP.copy(pel.quaternion);
     legRun = run * move; stepW = strideW; leg('L', cyc, duty, travel, lift, pel.position); stepW = -strideW; leg('R', (cyc + 0.5) % 1, duty, travel, lift, pel.position);
     // the spine: shoulders turning against the hips, bending to keep the head level over the dropping hip, leaning into starts and turns, all a beat late
-    const tor = B.torso;
     tor.rotation.set(spg('torX', 0.03 + 0.1 * run * move + 0.004 * breath + 0.03 * down + lean * 0.8, dt, 45, 0.5),
       spg('torY', 0.15 * Math.sin(psi - 0.35) * move, dt, 70, 0.6),
       spg('torZ', -0.75 * pel.rotation.z + bank * 0.5 + 0.01 * Math.sin(s.t * 0.37) * still, dt, 55, 0.5));
     tor.position.copy(rest.torso); tor.position.y += 0.002 * breath;
 
+    }
     // arms: swing against the legs, loose and nearly straight walking, bent and pumping running
     const sw = lerp(0.36, 0.55, run) * move;
     const g = tune.reach != null ? tune.reach : reachT < 0 ? 0 : (() => { const a = s.t - reachT; return a < 0.14 ? sstep(0, 0.14, a) : a < 0.7 ? 1 : 1 - sstep(0.7, 1.25, a); })();
     for (const sd of ['L', 'R']) {
       const sx = sd === 'L' ? 1 : -1, ph = Math.sin(psi) * sx;
       const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd];
+      if (!capOn) {
       up.position.copy(rest['armU_' + sd]); up.position.y += 0.003 * breath + 0.006 * run * move * Math.max(0, -ph);   // the shoulder rides up a little on the back swing
       // From the shoulder, swinging further forward than back. Jogging, the elbows bend and the hands come across toward the middle of the body
       // as they swing forward and out to the side going back; the elbow closes as the arm comes forward and opens going back, a beat late.
@@ -308,6 +385,7 @@ export function createBody({ model, U, COMMON }) {
       const lX = spg('lX' + sd, -(0.28 + 0.92 * rm) - 0.34 * sw * phL - 0.06 * still * (0.5 + 0.5 * Math.sin(s.t * 0.31 + sx * 2)), dt, 28, 0.36);
       up.rotation.set(uX, spg('uY' + sd, sx * 0.12 * rm * fwd, dt, 30, 0.5), uZ); lo.rotation.set(lX, spg('lY' + sd, -sx * (0.12 + 0.3 * rm) * fwd * move, dt, 30, 0.5), -sx * 0.18 * rm);
       hd.rotation.set(spg('hX' + sd, -0.08 + 0.18 * sw * Math.sin(psi - 0.9) * sx, dt, 35, 0.35), 0, sx * 0.1);
+      }
       if (sd === 'R' && g > 0) {   // reaching out toward what you are pointing at
         aim.set(0, EYE.y + Math.sin(s.pitch) * 2, back + Math.cos(s.pitch) * 2); sh.copy(rest.armU_R).add(rest.torso).add(rest.pelvis);
         tmp.subVectors(aim, sh).normalize(); q.setFromUnitVectors(DOWN, tmp); up.quaternion.slerp(q, g);
@@ -358,7 +436,8 @@ export function createBody({ model, U, COMMON }) {
     turnKick *= Math.exp(-dt * 5);
     hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
-    B.head.rotation.set((-s.pitch * 0.55 - tor.rotation.x * 0.5) * neck, 0, 0);
+    if (capOn) { B.head.quaternion.identity().slerp(headQ, neck); B.head.quaternion.multiply(qA.setFromEuler(eul.set(-s.pitch * 0.55 * neck, 0, 0))); }
+    else B.head.rotation.set((-s.pitch * 0.55 - tor.rotation.x * 0.5) * neck, 0, 0);
     return bob;
   }
 
@@ -373,8 +452,15 @@ export function createBody({ model, U, COMMON }) {
     setOutfit(o) {
       const b = (o && o.b) || 'astro';
       if (b !== wanted) { wanted = b; (b === 'astro' ? Promise.resolve(model) : loadSuit(b)).then(m => { if (wanted === b && wearing !== b) wear(m, b); }, () => { if (wanted === b) wanted = wearing; }); }
+      if (o && o.g) cap.want = o.g;
       setTop(o && o.top); own.uOutfit.value = o ? 1 : 0; if (o) for (const [u, k] of [['uSuit', 'suit'], ['uTrim', 'trim'], ['uAccent', 'accent'], ['uVisor', 'visor'], ['uGlowC', 'glow']]) own[u].value.fromArray(o[k]);
     },
+    /** How you carry yourself: a gait from the motion library by id ('easy', 'proud', 'old'...), or 'classic' for the body's own rules. */
+    setStyle(id) { cap.want = id || 'easy'; }, get style() { return cap.want; },
+    /** Do a gesture (a clip id from the motion library). */
+    emote(id) { const lib = motionLib(), c = lib && lib.clip[id]; if (!c) return false; const E = cap.emote; E.clip = c; E.id = id; E.t = 0; E.w = 0; E.n++; E.at = nowT; return true; },
+    /** The gesture under way or lately begun, for telling the others: [id, count] or null. */
+    get emoting() { const E = cap.emote; return E.id && nowT - E.at < 2.5 ? [E.id, E.n] : null; },
     /** Put on another suit's model directly (tests). */
     wear, get wearing() { return wearing; },
     /** Someone talking: the suit's glow strips brighten with their voice (0..1). */

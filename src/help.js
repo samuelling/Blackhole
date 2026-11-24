@@ -6,9 +6,12 @@
 const K = (...k) => k;   // a row: [keys..., what it does]; a key written 'a|b' is drawn as two caps that do the same thing
 const SECTIONS = [
   { id: 'walk', title: 'Walking and looking', rows: [
-    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'hurry'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
+    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'hurry'), K('C', 'stroll: a walking pace (C again for the ordinary one)'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
     K('Shift+V', 'see yourself from outside'), K('Z', 'the space view: the whole bubble from outside'), K('Shift+F', 'full screen'),
     K('O', 'settings'), K('M', 'sound on / off'), K('F', 'frame rate'), K('?', 'this sheet') ] },
+  { id: 'gesture', title: 'Gestures and bearing', rows: [
+    K('1', 'wave'), K('2', 'bow'), K('3', 'beckon'), K('4', 'this way'), K('5', 'nod'), K('6', 'arms up'), K('7', 'laugh'), K('8', 'dance'), K('9', 'chicken dance'), K('0', 'stretch'),
+    K('Shift+G', 'the room panel: more gestures, how you carry yourself, your suit and its colours') ] },
   { id: 'voids', title: 'Voids', rows: [
     K('E', 'Space', 'open a void ahead of you'), K('click', 'on a void: evaporate it'), K('X', 'looking at a piece of junk: vaporize it for good') ] },
   { id: 'time', title: 'Time and seasons', rows: [

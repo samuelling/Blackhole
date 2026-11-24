@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import { Room } from './room.js';
 import { PRESETS, SUITS, VISORS, GLOWS, TOPS, BODIES, cleanOutfit, fromPreset, fromBody, loadOutfit, saveOutfit, css } from './outfits.js';
+import { loadMotion, motionLib, EMOTES } from './motion.js';
 
 const MAX = 6;
 const SERVER = () => new URLSearchParams(location.search).get('server') || window.MP_SERVER || 'wss://crush-commando-mp.samuelling.workers.dev';
@@ -110,6 +111,8 @@ export function createMulti(o) {
     el.innerHTML = `<button class="x" data-a="close" title="close">×</button><h2>Together</h2>
       <h3>Your name</h3><input type="text" id="mpName" maxlength="16" placeholder="astronaut" value="${esc(name)}" autocomplete="off" spellcheck="false">
       <h3>Your suit</h3><div class="tops">${BODIES.filter(b => !b.soon).map(b => `<button data-body="${b.id}" aria-pressed="${(outfit.b || 'astro') === b.id}" title="${esc(b.note)}">${esc(b.name)}</button>`).join('')}</div>
+      <h3>How you carry yourself</h3><div class="tops">${[['classic', 'by the rules']].concat((motionLib() ? motionLib().gaits : []).map(g => [g.id, g.name])).map(g => `<button data-gait="${g[0]}" aria-pressed="${(outfit.g || 'easy') === g[0]}">${esc(g[1])}</button>`).join('')}</div>
+      <h3>Gestures (keys 1-9, 0)</h3><div class="tops">${EMOTES.map(g => `<button data-emote="${g[0]}">${esc(g[1])}</button>`).join('')}</div>
       <h3>Its colours</h3><div class="pre">${pre}</div>
       <h3>Suit colour</h3><div class="sw">${sw(SUITS, 'suit')}</div>
       <h3>Trim (joints, belt, boots)</h3><div class="sw">${sw(SUITS, 'trim')}</div>
@@ -131,6 +134,8 @@ export function createMulti(o) {
   el.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.body) { outfit = fromBody(b.dataset.body, outfit); wear(); }
+    else if (b.dataset.gait) { outfit.g = b.dataset.gait; wear(); }
+    else if (b.dataset.emote) { if (selfBody) selfBody.emote(b.dataset.emote); }
     else if (b.dataset.p) { outfit = fromPreset(b.dataset.p, outfit); wear(); }
     else if (b.dataset.top) { outfit.top = b.dataset.top; wear(); }
     else if (b.dataset.k) { const list = b.dataset.k === 'visor' ? VISORS : b.dataset.k === 'glow' ? GLOWS : SUITS; outfit[b.dataset.k] = list[+b.dataset.i].slice(); wear(); }
@@ -144,6 +149,7 @@ export function createMulti(o) {
   function wear() { outfit = cleanOutfit(outfit); saveOutfit(outfit); if (selfBody) selfBody.setOutfit(outfit); sendWho(); render(); }
   function setStatus(t) { status = t || ''; const s = el.querySelector('.st'); if (s) s.textContent = status; }
   let isOpen = false;
+  loadMotion().then(() => { if (isOpen) render(); });
   function open() { isOpen = true; render(); el.classList.add('on'); o.onOpen && o.onOpen(true); }
   function close() { isOpen = false; el.classList.remove('on'); o.onOpen && o.onOpen(false); }
 
@@ -239,6 +245,7 @@ export function createMulti(o) {
       p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0 });
       if (p.snaps.length > 30) p.snaps.splice(0, p.snaps.length - 30);
       ensureBody(p);
+      if (Array.isArray(m.e) && m.e[1] !== p.emoteN) { p.emoteN = m.e[1]; if (typeof m.e[0] === 'string' && /^[a-z0-9]{2,12}$/.test(m.e[0])) p.body.emote(m.e[0]); }   // a gesture of theirs
       if (W && synced) { try { W.remoteHold(pr.id, Array.isArray(m.h) ? m.h : null); } catch (e) {} }   // the stone in their beam
     } else if (m.k === 'sky') {
       if (followSky && isHost(pr.id) && o.setSky) o.setSky(m);
@@ -356,6 +363,7 @@ export function createMulti(o) {
       if (self.gesture) { const g = self.gesture, c = {}; for (const k of ['held', 'effort', 'hover', 'press', 'placing', 'ghost']) if (g[k]) c[k] = typeof g[k] === 'number' ? r3(g[k]) : 1; if (Object.keys(c).length) m.g = c; }
       if (self.point > 0.02) m.pn = r3(self.point);
       if (self.hold) m.h = self.hold;
+      if (self.emote) m.e = self.emote;
       const s = JSON.stringify(m);
       for (const pr of room.peers.values()) {
         if (pr.fast && pr.fast.readyState === 'open') { try { pr.fast.send(s); } catch (_) {} }

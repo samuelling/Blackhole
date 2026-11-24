@@ -49,7 +49,7 @@ SUITS = {
                thigh=(0.17, 0.0, 0.84), shin=(0.17, 0.0, 0.50), foot=(0.18, 0.0, 0.14), toe=(0.19, -0.33, 0.03)),
         JR=dict(armU=(-0.25, -0.04, 1.38), armL=(-0.53, -0.27, 1.30), hand=(-0.555, -0.455, 1.065), tip=(-0.52, -0.55, 0.96)),
         R=dict(pelvis=0.3, torso=0.3, armU=0.13, armL=0.13, hand=0.14, thigh=0.13, shin=0.11, foot=0.1),
-        head_ball=(0.0, -0.03, 1.67, 0.27), head_z=1.46, foot_mats=[7, 8], crotch=0.78, arm_x=0.2, shoulder_out=0.08,
+        head_ball=(0.0, -0.03, 1.67, 0.27), head_z=1.46, foot_mats=[7, 8], crotch=0.78, arm_x=0.2, shoulder_out=0.08, drop=[(0.1, -1.0, 0.85, 0.6, -0.67, 1.3), (-0.8, -1.0, 0.85, -0.3, -0.50, 1.3)],
         force={2: 'torso', 3: 'torso', 0: 'thigh', 1: 'thigh', 13: 'pelvis', 10: 'shin'},
         roles={5: 'suit', 9: 'suit', 13: 'suit', 11: 'suit', 6: None, 2: 'trim', 3: 'trim', 1: 'trim', 0: 'metal', 4: 'visor', 7: 'dark', 8: (0.30, 0.31, 0.33, 0.4), 10: 'accent', 12: 'accent'},
         ball=dict(armU='trim', armL='suit', thigh='trim', shin='suit', foot='dark')),    # Mercury and Gemini are the same figure in different dress: one set of joints serves both
@@ -67,7 +67,7 @@ SUITS = {
                thigh=(0.105, 0.0, 0.87), shin=(0.105, 0.0, 0.475), foot=(0.115, 0.02, 0.11), toe=(0.13, -0.2, 0.03)),
         JR=dict(armU=(-0.18, -0.04, 1.41), armL=(-0.30, -0.09, 1.16), hand=(-0.40, -0.17, 0.94), tip=(-0.42, -0.23, 0.76)),
         R=dict(pelvis=0.2, torso=0.22, armU=0.11, armL=0.125, hand=0.13, thigh=0.11, shin=0.09, foot=0.09), shift=(0.02, 0.0), twist=-11, arm_med=0.075,
-        head_mats=[0, 3, 4, 13], foot_z=0.2, arm_x=0.15, drop=[(0.1, -0.7, 0.3, 0.6, -0.2, 0.62)],
+        head_mats=[0, 3, 4, 13], foot_z=0.2, arm_x=0.15, drop=[(0.1, -0.7, 0.3, 0.6, -0.2, 0.62), (0.26, -1, -1, 1, 1, 0.62), (-1, -1, -1, -0.26, 1, 0.62), (-1, -1, -1, 1, -0.32, 0.62), (-1, 0.2, -1, 1, 1, 0.62)],
         roles={10: 'suit', 15: 'trim', 5: 'accent', 4: 'accent', 7: 'accent', 14: 'accent', 3: 'visor', 0: (0.90, 0.90, 0.88, 1.0), 2: (0.62, 0.64, 0.68, 0.8), 6: 'metal', 13: 'metal',
                1: 'dark', 8: (0.60, 0.61, 0.62, 1.0), 9: (0.60, 0.61, 0.62, 1.0), 11: None, 12: None, 16: 'dark', 17: 'dark'},
         ball=dict(armU='suit', armL='suit', thigh='suit', shin='suit', foot='suit')),    'eva': dict(src='Astronaut', rot=0, visor=[1], name='EVA suit', pre=0.0269, shift=(0.0, 0.13),
@@ -81,7 +81,7 @@ SUITS = {
         J=dict(pelvis=(0, 0, 0.90), torso=(0, 0, 0.99), head=(0, 0, 1.45), armU=(0.27, -0.15, 1.37), armL=(0.33, -0.36, 1.22), hand=(0.29, -0.52, 1.10), tip=(0.27, -0.63, 1.03),
                thigh=(0.12, 0.0, 0.90), shin=(0.12, 0.0, 0.485), foot=(0.126, 0.02, 0.125), toe=(0.14, -0.22, 0.03)),
         R=dict(pelvis=0.25, torso=0.28, armU=0.13, armL=0.14, hand=0.17, thigh=0.13, shin=0.11, foot=0.1),
-        head_ball=(0.0, -0.15, 1.67, 0.25), head_z=1.45, foot_z=0.195, arm_x=0.2, crotch=0.84, shoulder_out=0.06,
+        head_ball=(0.0, -0.15, 1.67, 0.25), head_z=1.45, foot_z=0.195, arm_x=0.2, crotch=0.84, shoulder_out=0.06, drop=[(-0.6, -1.0, 0.85, 0.6, -0.57, 1.35)],
         roles={0: 'paint'}, paint=dict(visor=(0.0, -0.2, 1.67, 0.3), dark=0.012, trim=0.05),
         ball=dict(armU='suit', armL='suit', thigh='suit', shin='suit', foot='dark')),
 }
@@ -205,6 +205,33 @@ def cut(V, F, M, cfg):
         ext = V[F[m]].reshape(-1, 3);
         if (ext.max(0) - ext.min(0)).max() > 0.22: continue
         w = np.bincount(part[m], weights=area[m], minlength=len(PARTS)); part[m] = w.argmax()
+    # scraps: bits of sleeve or glove the arm's capsule missed are left with the trunk, hanging in the air where the arm was drawn.
+    # Whatever of the trunk is a small piece on its own, well out from the spine, goes (-1).
+    tr = np.where(np.isin(part, [PI['pelvis'], PI['torso']]))[0]; ft = f[tr]; par = {}
+    def fnd(x):
+        while par.setdefault(x, x) != x: par[x] = par[par[x]]; x = par[x]
+        return x
+    for a, b in np.concatenate([ft[:, [0, 1]], ft[:, [1, 2]]]):
+        ra, rb = fnd(int(a)), fnd(int(b))
+        if ra != rb: par[ra] = rb
+    cid = np.array([fnd(int(x)) for x in ft[:, 0]]); out = R['torso'] + cfg.get('scrap_out', 0.06)
+    for c in np.unique(cid):
+        m = tr[cid == c]
+        if len(m) > cfg.get('scrap', 500): continue
+        cc = C[m].mean(0)
+        if math.hypot(cc[0], cc[1] - cfg.get('spine_y', 0.0)) > out and not (cfg.get('pack_y') is not None and cc[1] > cfg['pack_y']): part[m] = -1
+    for sd in 'LR':                                                   # and the same along each limb: a small piece well clear of its bone
+        for nm, a_, b_ in (('armU', 'armU', 'armL'), ('armL', 'armL', 'hand'), ('thigh', 'thigh', 'shin'), ('shin', 'shin', 'foot')):
+            ix = np.where(part == PI[nm + '_' + sd])[0]
+            if not len(ix): continue
+            ft = f[ix]; par = {}
+            for a, b in np.concatenate([ft[:, [0, 1]], ft[:, [1, 2]]]):
+                ra, rb = fnd(int(a)), fnd(int(b))
+                if ra != rb: par[ra] = rb
+            cid = np.array([fnd(int(x)) for x in ft[:, 0]])
+            for c in np.unique(cid):
+                m = ix[cid == c]
+                if len(m) <= cfg.get('scrap', 500) and seg_dist(C[m].mean(0)[None], J[a_ + '_' + sd], J[b_ + '_' + sd])[0] > R[nm] * 1.5: part[m] = -1
     return part, J
 
 def rot_to(a, b):
@@ -335,7 +362,7 @@ def build(sid):
     for x0, y0, z0, x1, y1, z1 in cfg.get('drop', []):                 # props drawn with the suit: whatever lies in these boxes goes
         C = V[F].mean(1); keep &= ~((C[:, 0] > x0) & (C[:, 0] < x1) & (C[:, 1] > y0) & (C[:, 1] < y1) & (C[:, 2] > z0) & (C[:, 2] < z1))
     F, M, fi = F[keep], M[keep], fi[keep]
-    part, J = cut(V, F, M, cfg)
+    part, J = cut(V, F, M, cfg); ok = part >= 0; F, M, fi, part = F[ok], M[ok], fi[ok], part[ok]
     chunks, rest, T = straighten(V, F, part, J, cfg)
     if DEBUG:
         os.makedirs(DEBUG, exist_ok=True); vv, ff, pp, cc, o = [], [], [], [], 0

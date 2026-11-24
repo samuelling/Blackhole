@@ -9,6 +9,7 @@ import { makeLayout, createGarden, loadAssets, MAP, WATER_Y } from './garden.js'
 import { createDrawer, to01, from01 } from './settings.js';
 import { createBody } from './body.js';
 import { createHelp } from './help.js';
+import { loadMotion, EMOTES } from './motion.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
 import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
@@ -29,7 +30,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in win
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
   ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · ? every control';
+  : 'WASD / arrows walk · mouse looks · click a void to evaporate it · Shift hurries<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · 1-9, 0 gestures · C stroll · ? every control';
 
 let renderer;
 try {
@@ -624,7 +625,7 @@ const multi = assets.models.astronaut ? createMulti({ scene, camera, model: asse
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
-const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), mailbox: !QS.has('nomail') });   // ?nomail: tests keep off the live mailbox
+const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), mailbox: !QS.has('nomail'), onVaporize: pos => burst(pos, 0.22) });   // ?nomail: tests keep off the live mailbox
 const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; }, onTurn: sg => { if (body) body.turn(sg); } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1047,7 +1048,7 @@ let yaw = 0, pitch = 0.02, started = false, mouseDown = false, bobPhase = 0;
 if (/[?&]at=wormhole\b/.test(location.search)) { player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; }   // from the Shred Hole: start by the junk heap, looking at the wormhole
 // The page opens out in space, watching the bubble go by: that is the title screen. Entering holds the view a moment, then flies in to your eyes.
 let spaceOn = true, spaceT = 1, titleK = 1, flyIn = 2.6, introTimer = 0; const orbit = { yaw: 1.05, pitch: 0.14, dist: 340, idle: 9 }, spaceAnchor = { position: new THREE.Vector3() };
-const keys = new Set();
+const keys = new Set(); let stroll = false;   // C: a strolling pace, to walk and not jog
 const grav = new THREE.Vector3();
 addEventListener('keydown', e => {
   keys.add(e.code);
@@ -1071,6 +1072,14 @@ const wallKey = (e, down) => {
 addEventListener('keydown', e => wallKey(e, true), true); addEventListener('keyup', e => wallKey(e, false), true);
 addEventListener('keydown', e => { if (multi && multi.key(e, true)) e.preventDefault(); }); addEventListener('keyup', e => { if (multi && multi.key(e, false)) e.preventDefault(); });
 addEventListener('keydown', e => { if (started && multi && e.code === 'KeyG' && e.shiftKey && !e.metaKey && !e.ctrlKey) multi.toggle(); });
+// gestures on the number keys (motion.js), and C for a strolling pace
+loadMotion();
+addEventListener('keydown', e => {
+  if (!started || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !body) return; const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+  const d = /^Digit(\d)$/.exec(e.code);
+  if (d) { const em = EMOTES[(+d[1] + 9) % 10]; if (em && body.emote(em[0])) setHint(em[1], 1500); return; }
+  if (e.code === 'KeyC' && !walling.busy) { stroll = !stroll; setHint(stroll ? 'strolling · C again for the ordinary pace' : 'the ordinary pace', 2500); }
+});
 // X, looking at a piece of junk (not planting): vaporize it, for good
 addEventListener('keydown', e => {
   if (!started || e.code !== 'KeyX' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || planter.armed || planter.open || walling.busy) return;
@@ -1640,7 +1649,7 @@ function update(dt, t) {
     for (const o of touches.values()) if (o.type === 'move') { mx += (o.x - o.x0) / 70; mz -= (o.y - o.y0) / 70; }
   }
   const ml = Math.hypot(mx, mz); if (ml > 1) { mx /= ml; mz /= ml; }
-  const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 6.2 : 3.2;
+  const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) ? 6.2 : stroll ? 1.5 : 3.2;
   const move = f.clone().multiplyScalar(mz * speed).addScaledVector(r, mx * speed);
 
   // voids: wake, drift, pull
@@ -1896,7 +1905,7 @@ bFull.addEventListener('click', e => { e.stopPropagation(); toggleFull(); });
 if (fsOk) $('bSettings').before(bFull);
 // every control on one sheet (help.js): ? opens it on what you are doing now
 help = createHelp({ isTouch, ready: () => started,
-  context: () => { const c = new Set(); if (spaceOn) c.add('space'); else if (walling.busy) c.add(walling.active && walling.active.free ? 'free' : 'wall'); else if (planter.open || planter.armed) c.add('plant'); else { c.add('walk'); c.add('voids'); }
+  context: () => { const c = new Set(); if (spaceOn) c.add('space'); else if (walling.busy) c.add(walling.active && walling.active.free ? 'free' : 'wall'); else if (planter.open || planter.armed) c.add('plant'); else { c.add('walk'); c.add('gesture'); c.add('voids'); }
     if (multi && multi.inRoom) c.add('room'); return c; } });
 const bHelp = document.createElement('button'); bHelp.id = 'bHelp'; bHelp.textContent = 'controls'; bHelp.title = 'every control (?)';
 bHelp.addEventListener('click', e => { e.stopPropagation(); help.toggle(); }); $('bSettings').before(bHelp);
@@ -1917,7 +1926,7 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState() });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
