@@ -1,0 +1,3 @@
+{ "name": "plant-model-tools", "private": true, "type": "module",
+  "description": "Compacts the plant models written by tools/blender/build_plants.py (npm i here once).",
+  "dependencies": { "@gltf-transform/core": "^4", "@gltf-transform/extensions": "^4", "@gltf-transform/functions": "^4", "meshoptimizer": "^0.22" } }

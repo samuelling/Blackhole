@@ -4,9 +4,11 @@
 // Shortwood Meadow's PlantArt structure, with scanned leaves and true-3D showpiece flowers.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
+import { loadPlantModels, createPlantModels } from './plantmodels.js';
 import { plantState, flagsFor, lawnTint, sizeAt } from './seasons.js';
 import { FLORA_BY_KEY } from './flora.js';
 import { HEAP as JUNK_HEAP } from './junk.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
@@ -85,7 +87,7 @@ export async function loadModel(url) {
   dv.setUint32(0, 0x46546C67, true); dv.setUint32(4, 2, true); dv.setUint32(8, glb.byteLength, true);
   dv.setUint32(12, jl, true); dv.setUint32(16, 0x4E4F534A, true); u8.set(enc, 20); u8.fill(0x20, 20 + enc.length, 20 + jl);
   if (bin) { dv.setUint32(20 + jl, bl, true); dv.setUint32(24 + jl, 0x004E4942, true); u8.set(bin, 28 + jl); }
-  return new Promise((res, rej) => new GLTFLoader().parse(glb, url.slice(0, url.lastIndexOf('/') + 1), o => res(o.scene), rej));
+  return new Promise((res, rej) => new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parse(glb, url.slice(0, url.lastIndexOf('/') + 1), o => res(o.scene), rej));
 }
 export async function loadAssets(renderer, onProgress = () => {}) {
   const base = new URL('../assets/', import.meta.url).href, tl = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -105,8 +107,10 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   jobs.push(loadModel(base + 'models/props.json').then(sc => { models.props = sc; tick(); }, () => tick()));   // coping stones, lantern (build_props.py)
   jobs.push(loadModel(base + 'models/trees.json').then(sc => { models.trees = sc; tick(); }, () => tick()));
   jobs.push(loadModel(base + 'models/astronaut.json').then(sc => { models.astronaut = sc; tick(); }, () => tick()));   // your own body (build_astronaut.py); you walk as a bare camera without it
+  // plants modelled in Blender (build_plants.py), for the species that have them; ?nopm leaves every plant procedural
+  let plants = {}; if (!new URLSearchParams(location.search).has('nopm')) jobs.push(loadPlantModels(base, renderer).then(m => { plants = m; }));
   await Promise.all(jobs);
-  return { tex, models };
+  return { tex, models, plants };
 }
 const LEAF_KEYS = ['lance', 'ovate', 'serrate', 'broad', 'fuzzy', 'fleshy', 'sprig', 'trifoliate', 'palmate', 'digitate', 'round', 'thread', 'fern', 'compound', 'rose', 'sword', 'blade'];
 const LEAF_RECTS = {}; LEAF_KEYS.forEach((k, i) => { const CELL = 512, COLS = 5, ROWS = 4, PAD = 12, W = COLS * CELL, H = ROWS * CELL, x = (i % COLS) * CELL + PAD, y = Math.floor(i / COLS) * CELL + PAD; LEAF_RECTS[k] = [x / W, 1 - (y + CELL - 2 * PAD) / H, (CELL - 2 * PAD) / W, (CELL - 2 * PAD) / H]; });
@@ -149,8 +153,11 @@ float gBase = 0.0;
   #else
   float gs = PS.x, gpos = PS.x; vSen = PS.z;
   #endif
-  if (PA.w > 1.5) gpos = 1.0;                       // trees keep their twigs; only the leaves come and go
+  if (mod(PA.w, 8.0) > 1.5) gpos = 1.0;            // trees keep their twigs; only the leaves come and go
   else gBase = PA.y;                                // a plant on a slope bends from its own foot, not from sea level
+  #ifndef MODEL
+  if (PA.w > 7.5) { gs = 0.0; gpos = 0.0; }         // this plant is drawn from its Blender model just now (plantmodels.js): fold its procedural parts away
+  #endif
   wp.xyz = PA.xyz + (org0 - PA.xyz) * gpos + (wp.xyz - org0) * gs;
   #ifdef PUFF
   // canopy shading: lean every leaf's normal toward "outward from the crown", so the tree lights as one rounded mass
@@ -255,8 +262,8 @@ diffuseColor.rgb *= tcol.rgb * mix(1.0, tarm.r, 0.85);
   function patch(m, o = {}) {
     const a2c = m.alphaToCoverage === true && m.alphaTest > 0;
     m.defines = Object.assign(m.defines || {}, o.grow ? { GROW: '' } : {}, o.part === 'flower' ? { PART_FLOWER: '' } : {}, o.part === 'stem' ? { PART_STEM: '' } : {}, o.atlas ? { ATLAS: '' } : {}, o.disc ? { DISC: '' } : {},
-      o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.tri ? { TRIPLANAR: '' } : {}, a2c ? { A2C: '' } : {}, o.puff && !o.depth ? { PUFF: '' } : {});
-    const key = ['g', o.grow ? 'G' + (o.part || 'leaf') : '', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.tri ? 'T' : '', a2c ? 'A' : '', o.puff ? 'P' : '', o.key || ''].join('|');
+      o.floret ? { FLORET: '' } : {}, o.bell ? { BELL: '' } : {}, o.translucent ? { TRANSLUCENT: '' } : {}, o.tri ? { TRIPLANAR: '' } : {}, a2c ? { A2C: '' } : {}, o.puff && !o.depth ? { PUFF: '' } : {}, o.model ? { MODEL: '' } : {});
+    const key = ['g', o.grow ? 'G' + (o.part || 'leaf') : '', o.sway || 0, o.swayH || 0.9, o.atlas ? 'a' : '', o.disc ? 'd' : '', o.depth ? 'z' : '', o.floret ? 'f' : '', o.bell ? 'b' : '', o.translucent ? 't' : '', o.tri ? 'T' : '', a2c ? 'A' : '', o.puff ? 'P' : '', o.model ? 'M' : '', o.key || ''].join('|');
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.uniforms.uSway = { value: o.sway || 0 }; sh.uniforms.uSwayH = { value: o.swayH || 0.9 };
@@ -1433,6 +1440,8 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const texA = new THREE.DataTexture(pa, PW, PH, THREE.RGBAFormat, THREE.FloatType), texS = new THREE.DataTexture(ps, PW, PH, THREE.RGBAFormat, THREE.FloatType);
   for (const t of [texA, texS]) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true; }
   U.uPlantA = { value: texA }; U.uPlantS = { value: texS }; U.uPlantW = { value: PW };
+  const plantModels = assets.plants && Object.keys(assets.plants).length ? createPlantModels({ scene, P, cut, PT, pa, texA, flagsFor, models: assets.plants, lite }) : null;
+  if (plantModels) console.log('[plants] modelled in Blender: ' + plantModels.species.join(', '));
   const st = [0, 0, 0, 0], DOY0 = 165;   // the garden opens on 14 June
   function writeStates() {
     for (let i = 0, NP = PT.k.length; i < NP; i++) { const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, own = PT.own[i], age = (own ? 0 : baseAge) + (PT.tau[i] - PT.planted[i]) / 365;
@@ -1440,7 +1449,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       // a plant you set out: its size is its species' curve from the pot, held back by whatever crowds it
       plantState(PT.k[i], d, age, st, own ? sizeAt(PT.k[i], age, own) * PT.crowd[i] : undefined); ps[i * 4] = st[0]; ps[i * 4 + 1] = st[1]; ps[i * 4 + 2] = st[2]; ps[i * 4 + 3] = st[3];
       if (treeSp[i] !== undefined) { ps[i * 4 + 1] = d; ps[i * 4 + 3] = treeSp[i]; } }   // a tree's leaves read its own day and species (leaves.js)
-    texS.needsUpdate = true;
+    texS.needsUpdate = true; if (plantModels) plantModels.touch();
     leafFall.update(T => ((DOY0 + PT.tau[T.pid]) % 365 + 365) % 365);
   }
   // the year's leaf model: a table of every leaf class's pigments by day, and each species' fall
@@ -1562,6 +1571,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   // ---------------------------------------------------------------- per-frame
   const v2 = new THREE.Vector2(), clipPlane = [new THREE.Plane(new V3(0, 1, 0), -WATER_Y)];
   function update(dt, t, camera) {
+    if (plantModels) plantModels.update(camera);
     U.uCam.value.copy(camera.position); brook.update(dt, t, camera.position.x, camera.position.z);
     sheetT.offset.y = (sheetT.offset.y - dt * 1.5) % 1; foamT.offset.x = (foamT.offset.x + dt * 0.05) % 1;
     TX.waternormals.offset.set(t * 0.011, t * 0.017);
@@ -1590,5 +1600,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     renderer.setRenderTarget(reflRT); renderer.render(scene, reflCam);
     renderer.clippingPlanes = []; U.uPx.value = px0; grass.visible = true; for (const m of hidden) m.visible = true; for (const wm of waterMeshes) wm.visible = true;
   }
-  return { update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
+  /** Where the plants of one species stand ([x, z, pid]), nearest a point first: for tests and screenshots. */
+  const plantsOf = (k, x = 0, z = 0) => PT.k.map((kk, i) => [kk, PT.x[i], PT.z[i], i]).filter(r => r[0] === k && !PT.gone[r[3]]).map(r => r.slice(1)).sort((a, b) => (a[0] - x) ** 2 + (a[1] - z) ** 2 - (b[0] - x) ** 2 - (b[1] - z) ** 2);
+  return { plantsOf, plantModels, update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
 }

@@ -2028,6 +2028,6 @@ window.__umbra = { // debug handle
     refreshSeasonUI(); refreshTimeUI();
   },
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
-  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, doy: d => jumpToDoy(d),
+  setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
   get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
