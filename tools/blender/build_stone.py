@@ -85,36 +85,128 @@ def scales(a, s, s0, s1, n, pitch, depth):  # crossing spirals: the diamond scal
     u = (s - s0) * pitch; env = sstep(s0, s0 + 0.1 * (s1 - s0), s) * (1 - sstep(s1 - 0.12 * (s1 - s0), s1, s))
     return depth * env * ((abs(math.cos(n * a / 2 + u)) * abs(math.cos(n * a / 2 - u))) ** 0.5 - 0.45)
 
+def acanthus(a, s, s0, s1, n, depth, phase=0.0, curl=0.6):
+    """A ring of n acanthus leaves standing up the run s0..s1: pointed, raised, serrated, a groove down each midrib, the tips curling out."""
+    if not (s0 < s < s1): return 0.0
+    v = (s - s0) / (s1 - s0); u = ((a * n / TAU + phase) % 1.0) * 2 - 1                    # u: -1..1 across a leaf, v: 0 foot .. 1 tip
+    w = (1 - v ** 1.6) ** 0.8 * (0.55 + 0.45 * math.sin(math.pi * min(1.0, v * 1.3)))     # its half-width: full at the foot, a point at the tip
+    w *= 1 - 0.18 * abs(math.sin(v * math.pi * 6.5)) ** 1.5                               # lobed, toothed edges
+    if abs(u) >= w: return 0.0
+    e = 1 - abs(u) / max(w, 1e-3); rib = math.exp(-(u / 0.07) ** 2)
+    return depth * (e ** 0.35 * (0.55 + 0.45 * v + curl * sstep(0.7, 1.0, v)) - 0.35 * rib * (1 - v))
+
+def beads(a, s, s0, s1, n, depth, dart=True):
+    """Egg-and-dart (or plain beading) round a moulding: ovals parted by points."""
+    if not (s0 < s < s1): return 0.0
+    v = (s - s0) / (s1 - s0); u = (a * n / TAU) % 1.0; egg = max(0.0, 1 - ((u - 0.5) / 0.36) ** 2 - ((v - 0.5) / 0.5) ** 2) ** 0.5
+    d = math.exp(-((u - 0.0) / 0.05) ** 2) * math.exp(-((v - 0.4) / 0.35) ** 2) if dart else 0.0
+    return depth * (egg - 0.45 + 0.6 * d) * math.sin(math.pi * v)
+
+GRAND = dict(l1=(2.42, 1.72), w1=(2.27, 1.685), l2=(1.36, 2.95), w2=(1.26, 2.915), l3=(0.66, 3.92), w3=(0.58, 3.89), top=4.56)
+
 def fountain_grand():
-    """Three-tier fountain. Fixed by the garden: lower lip r 2.28 at z 1.80, upper lip r 1.16 at z 2.69, top at z 3.16."""
-    p = Prof(1.26, 0).to(1.26, 0.17).to(1.18, 0.17).to(1.18, 0.31).to(1.12, 0.36).mark('oct')        # octagonal stepped plinth
-    p.to(1.0, 0.36).torus(0.98, 0.5, 0.07).to(0.9, 0.52).to(0.9, 0.555).cove(0.62, 0.72, 0.05).torus(0.6, 0.8, 0.035)
-    p.mark('f0').curve(0.8, 0.95, 0.5, 1.2, 16).mark('f1')                                           # fluted baluster
-    p.to(0.45, 1.2).torus(0.45, 1.27, 0.04).to(0.5, 1.3)
-    p.mark('g0').curve(1.5, 1.3, 2.2, 1.68, 40).mark('g1')                                           # gadrooned underside of the great bowl
-    p.to(2.24, 1.7).torus(2.24, 1.8, 0.045).to(2.17, 1.8).curve(2.13, 1.76, 2.06, 1.72, 6).curve(1.3, 1.6, 0.42, 1.6, 14)
-    p.torus(0.36, 1.7, 0.035).mark('f2').curve(0.52, 1.9, 0.24, 2.12, 14).mark('f3')
-    p.torus(0.24, 2.19, 0.04).cove(0.3, 2.3, 0.02)
-    p.mark('h0').curve(0.75, 2.32, 1.1, 2.58, 24).mark('h1')                                         # gadrooned upper bowl
-    p.to(1.12, 2.6).torus(1.12, 2.69, 0.04).to(1.08, 2.69).curve(1.07, 2.64, 1.02, 2.6, 5).curve(0.6, 2.53, 0.2, 2.53, 10)
-    p.torus(0.16, 2.6, 0.03).cove(0.1, 2.68, 0.015).mark('p0').curve(0.31, 2.78, 0.19, 2.99, 14).curve(0.11, 3.1, 0.0, 3.16, 8).mark('p1')
+    """The garden's centrepiece: three scalloped, gadrooned basins diminishing up a column of acanthus-carved balusters, on an octagonal
+    plinth just out of the water, crowned by a pine cone the jet rises from. The garden fits its water to the numbers in GRAND."""
+    p = Prof(1.5, 0).to(1.5, 0.22).to(1.42, 0.22).to(1.42, 0.38).to(1.36, 0.42).mark('oct')                         # octagonal plinth, stepped
+    p.to(1.18, 0.42).torus(1.16, 0.52, 0.05).to(1.08, 0.54).mark('b0').torus(1.06, 0.6, 0.03).mark('b1').cove(0.8, 0.7, 0.045)
+    p.torus(0.78, 0.76, 0.035)
+    p.mark('a0').curve(0.92, 0.86, 0.64, 1.0, 18).mark('a1')                                                         # the vase: acanthus
+    p.cove(0.5, 1.04, 0.015).torus(0.5, 1.1, 0.03).to(0.54, 1.11)
+    p.mark('g0').curve(1.05, 1.08, 1.75, 1.36, 30).curve(2.2, 1.5, 2.34, 1.62, 14).mark('g1')                     # a deep, gadrooned bowl, not a table
+    p.to(2.37, 1.63).mark('e0').torus(2.38, 1.72, 0.045).mark('e1').to(2.3, 1.725).curve(2.27, 1.7, 2.22, 1.665, 5).curve(1.4, 1.62, 0.36, 1.62, 14)
+    p.torus(0.33, 1.7, 0.03).mark('c0').curve(0.5, 1.95, 0.25, 2.32, 18).mark('c1')                                # second baluster, its own leaves
+    p.cove(0.2, 2.42, 0.02).torus(0.2, 2.5, 0.03).to(0.24, 2.52)
+    p.mark('h0').curve(0.85, 2.54, 1.33, 2.87, 30).mark('h1').to(1.35, 2.88).mark('f0').torus(1.36, 2.95, 0.035).mark('f1')
+    p.to(1.29, 2.955).curve(1.27, 2.93, 1.23, 2.905, 5).curve(0.7, 2.86, 0.17, 2.86, 10)
+    p.torus(0.15, 2.92, 0.025).mark('k0').curve(0.29, 3.15, 0.12, 3.45, 16).mark('k1').torus(0.12, 3.52, 0.025)      # the slender top baluster, fluted
+    p.mark('j0').curve(0.42, 3.55, 0.64, 3.86, 18).mark('j1').to(0.65, 3.87).torus(0.66, 3.92, 0.025)                  # the top cup
+    p.to(0.61, 3.925).curve(0.59, 3.9, 0.56, 3.88, 4).curve(0.3, 3.85, 0.13, 3.85, 6)
+    p.torus(0.11, 3.92, 0.025).cove(0.08, 3.98, 0.012).mark('p0').curve(0.24, 4.12, 0.16, 4.36, 14).curve(0.08, 4.48, 0.0, GRAND['top'], 8).mark('p1')   # pine cone
     def mod(a, r, z, s, M):
         if s <= M['oct'] + 1e-6: d = ((a + math.pi / 8) % (math.pi / 4)) - math.pi / 8; return 0.0, 1 / math.cos(d)
-        dn = flute(a, s, M['f0'], M['f1'], 20, 0.022) + gadroon(a, s, M['g0'], M['g1'], 24, 0.05) + flute(a, s, M['f2'], M['f3'], 12, 0.014)
-        dn += gadroon(a, s, M['h0'], M['h1'], 16, 0.035) + scales(a, s, M['p0'], M['p1'], 10, 15.0, 0.028)
-        return dn, 1.0
-    return revolve('fountain_grand', p, mod, segs=192, step=0.03)
+        dn = beads(a, s, M['b0'], M['b1'], 56, 0.012, dart=False)
+        dn += acanthus(a, s, M['a0'], M['a1'], 8, 0.05) + acanthus(a, s, M['a0'] + 0.04, M['a1'] - 0.08, 8, 0.035, phase=0.5, curl=0.3)
+        dn += gadroon(a, s, M['g0'], M['g1'], 32, 0.045) + beads(a, s, M['e0'], M['e1'], 72, 0.016)
+        dn += acanthus(a, s, M['c0'], M['c1'], 6, 0.03) + gadroon(a, s, M['h0'], M['h1'], 24, 0.03) + beads(a, s, M['f0'], M['f1'], 48, 0.012)
+        dn += flute(a, s, M['k0'], M['k1'], 12, 0.012) + gadroon(a, s, M['j0'], M['j1'], 16, 0.02) + scales(a, s, M['p0'], M['p1'], 10, 18.0, 0.024)
+        k = 1.0
+        if s > M['g1'] - 0.3 and s < M['e1'] + 0.25: k += 0.012 * (abs(math.cos(16 * a)) ** 0.5 - 0.6) * sstep(M['g1'] - 0.3, M['g1'], s)   # the lip scalloped
+        return dn, k
+    body = revolve('fountain_grand', p, mod, segs=288, step=0.016)
+    parts = [body]
+    for i in range(4):   # scroll consoles buttressing the vase, between the plinth and the basin's underside
+        parts.append(console(f'console{i}', i * TAU / 4 + TAU / 8, [(1.22, 0.5), (1.22, 0.64), (0.98, 0.8), (0.95, 0.96), (1.16, 1.12)], 0.2, 0.13))
+    for i in range(4):   # and between them, shells on the plinth that the arching jets come from
+        parts.append(shell(f'shell{i}', i * TAU / 4, 1.36, 0.4, 0.3))
+    return join(parts, 'fountain_grand')
+
+def console(name, ang, pts, width, thick=0.05):
+    """A carved scroll console standing in the radial plane at angle ang: a band of stone along pts (r, z), its ends rolled into volutes."""
+    import numpy as np
+    P = np.array(pts, float); t = np.linspace(0, 1, 40); idx = np.linspace(0, len(P) - 1, 40)
+    C = np.stack([np.interp(idx, np.arange(len(P)), P[:, 0]), np.interp(idx, np.arange(len(P)), P[:, 1])], 1)
+    for _ in range(3): C[1:-1] = (C[:-2] + C[1:-1] * 2 + C[2:]) / 4                                # smooth it
+    def scroll(c, d, rad, turns, sign):                                                         # a spiral rolling up from c, leaving along d
+        out = []; nrm = np.array([-d[1], d[0]]) * sign
+        for k in range(1, 22):
+            th = k / 21 * turns * TAU; rr = rad * (1 - 0.75 * k / 21)
+            cen = c + nrm * rad; v = -nrm * math.cos(th) + d * math.sin(th); out.append(cen + v * rr)
+        return np.array(out)
+    d0 = C[0] - C[1]; d0 /= np.linalg.norm(d0); d1 = C[-1] - C[-2]; d1 /= np.linalg.norm(d1)
+    C = np.concatenate([scroll(C[0], d0, 0.085, 1.15, 1)[::-1], C, scroll(C[-1], d1, 0.065, 1.15, -1)])
+    bm = bmesh.new(); rings = []; n = len(C)
+    for i in range(n):
+        tg = C[min(i + 1, n - 1)] - C[max(i - 1, 0)]; tg /= max(np.linalg.norm(tg), 1e-9); nr = np.array([-tg[1], tg[0]])   # normal in the (r, z) plane
+        th = thick * (0.7 + 0.3 * math.sin(math.pi * i / (n - 1))); w = width * (0.85 + 0.15 * math.sin(math.pi * i / (n - 1)))
+        ring = []
+        for (a, b) in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            rz = C[i] + nr * a * th * 0.5; side = b * w * 0.5
+            x = math.cos(ang) * rz[0] - math.sin(ang) * side; y = math.sin(ang) * rz[0] + math.cos(ang) * side
+            ring.append(bm.verts.new((x, y, rz[1])))
+        rings.append(ring)
+    for r0, r1 in zip(rings, rings[1:]):
+        for k in range(4): bm.faces.new((r0[k], r0[(k + 1) % 4], r1[(k + 1) % 4], r1[k]))
+    bm.faces.new(rings[0][::-1]); bm.faces.new(rings[-1])
+    me = bpy.data.meshes.new(name); bm.to_mesh(me); bm.free(); ob = bpy.data.objects.new(name, me); bpy.context.scene.collection.objects.link(ob)
+    m = ob.modifiers.new('bevel', 'BEVEL'); m.width = 0.012; m.segments = 2
+    sub = ob.modifiers.new('sub', 'SUBSURF'); sub.levels = 2
+    return ob
+
+def shell(name, ang, r, z, size):
+    """A scallop shell lying against the plinth at angle ang, its ribs fanning up and out (the jets leave from its hinge)."""
+    bm = bmesh.new(); nu, nv = 49, 12; V = []; nrib = 11
+    for i in range(nu):
+        u = -1 + 2 * i / (nu - 1); row = []
+        rib = abs(math.cos(u * nrib * math.pi / 2))                                              # 1 on a rib, 0 in a furrow
+        for j in range(nv):
+            v = j / (nv - 1); th = u * 1.2; rr = size * (0.1 + 0.9 * v) * (1 + 0.05 * rib * v)           # ribbed and scalloped at the rim
+            lx, lz = math.sin(th) * rr, math.cos(th) * rr * 0.9
+            ly = 0.16 * size * (1 - v * v) ** 0.5 * (1 - u * u) ** 0.5 + 0.03 * rib * v + 0.06 * size * v   # a shallow fan, leaning out
+            x0 = r + ly; y0 = lx
+            row.append(bm.verts.new((math.cos(ang) * x0 - math.sin(ang) * y0, math.sin(ang) * x0 + math.cos(ang) * y0, z + lz)))
+        V.append(row)
+    for i in range(nu - 1):
+        for j in range(nv - 1): bm.faces.new((V[i][j], V[i + 1][j], V[i + 1][j + 1], V[i][j + 1]))
+    me = bpy.data.meshes.new(name); bm.to_mesh(me); bm.free(); ob = bpy.data.objects.new(name, me); bpy.context.scene.collection.objects.link(ob)
+    m = ob.modifiers.new('solid', 'SOLIDIFY'); m.thickness = 0.025; m.offset = -1
+    return ob
+
+BOWL = dict(lip=(0.98, 1.2), water=(0.87, 1.18), top=1.46)
 
 def fountain_bowl():
-    """Single-bowl fountain. Fixed by the garden: lip r 0.98 at z 1.20, bowl holds a water surface r 0.87 at z 1.18."""
-    p = Prof(0.62, 0).to(0.62, 0.1).mark('oct').to(0.55, 0.1).torus(0.53, 0.2, 0.035).cove(0.31, 0.34, 0.045).torus(0.29, 0.42, 0.03)
-    p.mark('f0').curve(0.44, 0.6, 0.24, 0.84, 14).mark('f1').torus(0.24, 0.9, 0.03).to(0.3, 0.93)
-    p.mark('g0').curve(0.64, 0.94, 0.92, 1.1, 26).mark('g1').to(0.94, 1.11).torus(0.94, 1.2, 0.04).to(0.905, 1.2)
-    p.curve(0.895, 1.16, 0.85, 1.12, 5).curve(0.5, 1.06, 0.0, 1.06, 10)
+    """Single-bowl fountain on the cross walk: an acanthus baluster under a gadrooned bowl with an egg-and-dart lip, a small pine-cone
+    jet in the middle. Kept under the void that hangs over the west one (its foot at 1.8 m)."""
+    p = Prof(0.64, 0).to(0.64, 0.12).to(0.58, 0.12).to(0.58, 0.38).to(0.54, 0.42).mark('oct').to(0.5, 0.42).torus(0.48, 0.5, 0.03).cove(0.32, 0.6, 0.035).torus(0.3, 0.66, 0.025)
+    p.mark('f0').curve(0.46, 0.76, 0.24, 0.9, 14).mark('f1').torus(0.22, 0.95, 0.025).to(0.28, 0.97)
+    p.mark('g0').curve(0.66, 0.97, 0.93, 1.11, 26).mark('g1').to(0.945, 1.12).mark('e0').torus(0.95, 1.2, 0.035).mark('e1').to(0.905, 1.2)
+    p.curve(0.895, 1.16, 0.85, 1.12, 5).curve(0.5, 1.07, 0.1, 1.07, 10)
+    p.torus(0.08, 1.13, 0.02).mark('p0').curve(0.13, 1.24, 0.09, 1.37, 10).curve(0.05, 1.43, 0.0, BOWL['top'], 6).mark('p1')
     def mod(a, r, z, s, M):
         if s <= M['oct'] + 1e-6: d = ((a + math.pi / 8) % (math.pi / 4)) - math.pi / 8; return 0.0, 1 / math.cos(d)
-        return flute(a, s, M['f0'], M['f1'], 16, 0.014) + gadroon(a, s, M['g0'], M['g1'], 16, 0.032), 1.0
-    return revolve('fountain_bowl', p, mod, segs=128, step=0.022)
+        dn = acanthus(a, s, M['f0'], M['f1'], 6, 0.03) + acanthus(a, s, M['f0'] + 0.02, M['f1'] - 0.05, 6, 0.02, phase=0.5, curl=0.2)
+        dn += gadroon(a, s, M['g0'], M['g1'], 20, 0.03) + beads(a, s, M['e0'], M['e1'], 40, 0.012) + scales(a, s, M['p0'], M['p1'], 8, 22.0, 0.014)
+        return dn, 1.0
+    return revolve('fountain_bowl', p, mod, segs=192, step=0.014)
 
 def pool(name, R, blocks):
     """Raised pool kerb of jointed coping stones round a pool of inner radius R; top at z 0.67."""
@@ -171,12 +263,14 @@ def join(parts, name):
 
 def weather(ob, amp=0.0028, seed=0):
     """Two centuries outdoors: a slow wobble in every surface and fine pitting, pushed along the vertex normals."""
-    me = ob.data; off = Vector((seed * 7.3, seed * 3.1, seed * 5.7))
-    for v in me.vertices:
-        q = v.co + off
-        d = amp * 1.6 * noise.noise(q * 2.3) + amp * noise.noise(q * 9.0) + amp * 0.5 * noise.noise(q * 31.0)
-        v.co += v.normal * d
-    me.update()
+    me = ob.data; off = Vector((seed * 7.3, seed * 3.1, seed * 5.7)); n = len(me.vertices)
+    co = np.empty(n * 3, np.float32); me.vertices.foreach_get('co', co); co = co.reshape(n, 3)
+    nr = np.empty(n * 3, np.float32); me.vertices.foreach_get('normal', nr); nr = nr.reshape(n, 3)   # read once: touching v.normal after moving a vertex recomputes them all
+    d = np.empty(n, np.float32)
+    for i in range(n):
+        q = Vector(co[i]) + off
+        d[i] = amp * 1.6 * noise.noise(q * 2.3) + amp * noise.noise(q * 9.0) + amp * 0.5 * noise.noise(q * 31.0)
+    me.vertices.foreach_set('co', (co + nr * d[:, None]).ravel()); me.update()
 
 def simplify(ob, ratio):
     activate(ob)
@@ -220,7 +314,7 @@ STONE = bpy.data.materials.new('limestone'); STONE.diffuse_color = (0.74, 0.71, 
 bpy.ops.mesh.primitive_plane_add(size=40, location=(0, 0, 0)); ground = bpy.context.object; ground.name = 'ground'
 
 SPEC = [  # builder, decimate ratio
-    (fountain_grand, 0.24), (fountain_bowl, 0.3), (lambda: pool('pool_grand', 4.6, 30), 0.42), (lambda: pool('pool_bowl', 1.9, 14), 0.42), (urn, 0.3), (finial, 0.6)]
+    (fountain_grand, 0.16), (fountain_bowl, 0.22), (lambda: pool('pool_grand', 4.6, 30), 0.42), (lambda: pool('pool_bowl', 1.9, 14), 0.42), (urn, 0.3), (finial, 0.6)]
 made = []
 for i, (fn, ratio) in enumerate(SPEC):
     ob = fn(); weather(ob, seed=i + 1); simplify(ob, ratio)

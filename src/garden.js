@@ -8,7 +8,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { PlantArt } from './plantart.js';
 import { LOOKS, SIZE } from './looks.js';
 import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
-import { loadPlantModels, createPlantModels } from './plantmodels.js';
+import { createPlantModels } from './plantmodels.js';
 import { plantState, flagsFor, lawnTint, sizeAt } from './seasons.js';
 import { FLORA_BY_KEY } from './flora.js';
 import { HEAP as JUNK_HEAP } from './junk.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
@@ -108,7 +108,8 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   jobs.push(loadModel(base + 'models/trees.json').then(sc => { models.trees = sc; tick(); }, () => tick()));
   jobs.push(loadModel(base + 'models/astronaut.json').then(sc => { models.astronaut = sc; tick(); }, () => tick()));   // your own body (build_astronaut.py); you walk as a bare camera without it
   // plants modelled in Blender (build_plants.py), for the species that have them; ?nopm leaves every plant procedural
-  let plants = {}; if (!new URLSearchParams(location.search).has('nopm')) jobs.push(loadPlantModels(base, renderer).then(m => { plants = m; }));
+  // (fetched in the background once the garden is open, nearest first: see plantmodels.js)
+  const plants = new URLSearchParams(location.search).has('nopm') ? null : { base, renderer };
   await Promise.all(jobs);
   return { tex, models, plants };
 }
@@ -879,6 +880,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const stone = (o = {}) => P.std({ map: ST.diff, normalMap: ST.nor, color: o.color || 0xf0e8d6, roughness: 1, vertexColors: !!o.vc }, { tri: { arm: ST.arm, scale: o.scale || 0.55, moss: o.moss == null ? 1 : o.moss, wet: o.wet || 0 }, key: 'st' + (o.key || '') + (o.vc ? 'v' : '') });
   const stoneMat = stone(), stoneWet = stone({ wet: 0.75, moss: 0.5, key: 'w' }), stoneFloor = stone({ wet: 1, moss: 1.4, color: 0x8f9a86, key: 'f' });
   const stoneVC = stone({ vc: true }), stoneWetVC = stone({ wet: 0.75, moss: 0.5, key: 'w', vc: true });
+  const fountainVC = stone({ wet: 0.3, moss: 0.22, color: 0xfaf4e8, scale: 0.8, key: 'fn', vc: true });   // the carved fountains: pale, fine-grained, only damp
   const BR = TX.castle_brick_02_red;
   const brickMat = P.std({ map: BR.diff, normalMap: BR.nor, aoMap: BR.arm, roughnessMap: BR.arm, roughness: 1, color: 0xe0d6d0 }, { key: 'brick' });
   const metalMat = P.std({ color: 0x1b1c1b, roughness: 0.42, metalness: 0.7 });
@@ -891,23 +893,27 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     for (let i = 0; i < n; i++) { const t = (i + 0.5) / n; list.push(new THREE.Matrix4().compose(new V3(lerp(x0, x1, t), y, lerp(z0, z1, t)), q, new V3(L / n / unitLen, 1, 1))); } };
   const tones = n => Array.from({ length: n }, () => new THREE.Color().setScalar(rr(0.8, 1.06)));
   const stoneParts = {};
+  if (assets.models.stone) assets.models.stone.updateMatrixWorld(true);
   if (assets.models.stone) assets.models.stone.traverse(o => { if (!o.isMesh) return; const g = o.geometry, c = g.attributes.color;
+    if (!o.matrixWorld.equals(new THREE.Matrix4())) {   // packed (quantized) parts carry their scale on the node: unpack to floats and bake it in
+      for (const k of ['position', 'normal']) { const a = g.attributes[k]; if (!a) continue; const f = new Float32Array(a.count * 3); for (let i = 0; i < a.count; i++) { f[i * 3] = a.getX(i); f[i * 3 + 1] = a.getY(i); f[i * 3 + 2] = a.getZ(i); } g.setAttribute(k, new THREE.BufferAttribute(f, 3)); }
+      g.applyMatrix4(o.matrixWorld); }
     if (c) { for (let i = 0; i < c.count; i++) { const v = 0.3 + 0.7 * c.getX(i); c.setXYZ(i, v, v, v); } c.needsUpdate = true; }   // ease the baked occlusion: the live lighting adds its own
     stoneParts[o.name] = g; });
   console.log('[garden] stonework: ' + (Object.keys(stoneParts).join(', ') || 'none (using turned fallbacks)'));
   const carved = (name, x, z, wetStone = false, rotY = 0, y = 0) => {
     const g = stoneParts[name]; if (!g) return false;
-    const m = addMesh(g, g.attributes.color ? (wetStone ? stoneWetVC : stoneVC) : (wetStone ? stoneWet : stoneMat), x, z); m.position.y = y; m.rotation.y = rotY; return true;
+    const m = addMesh(g, name.startsWith('fountain') && g.attributes.color ? fountainVC : g.attributes.color ? (wetStone ? stoneWetVC : stoneVC) : (wetStone ? stoneWet : stoneMat), x, z); m.position.y = y; m.rotation.y = rotY; return true;
   };
   const sheetC = (() => { const [c, g] = canvas(512, 512), r = PlantArt.rngOf(31);   // ribbons of falling water, broken into dashes
-    for (let i = 0; i < 150; i++) { const x = r() * 512, w = 1.2 + r() * 4.5, a0 = 0.25 + r() * 0.6; let y = -r() * 200;
+    for (let i = 0; i < 280; i++) { const x = r() * 512, w = 0.7 + r() * 2.6, a0 = 0.14 + r() * 0.5; let y = -r() * 200;   // many fine threads, glassy rather than painted
       while (y < 512) { const len = 40 + r() * 260, gr = g.createLinearGradient(0, y, 0, y + len); gr.addColorStop(0, 'rgba(240,248,252,0)'); gr.addColorStop(0.25, `rgba(240,248,252,${a0})`); gr.addColorStop(0.8, `rgba(250,253,255,${a0 * 0.8})`); gr.addColorStop(1, 'rgba(250,253,255,0)');
         g.fillStyle = gr; g.fillRect(x, y, w, len); y += len + r() * 90; } }
     return c; })();
   const sheetT = texOf(sheetC, renderer);
-  const sheetMat = P.std({ map: sheetT, color: 0xe6f0f4, transparent: true, opacity: 0.85, roughness: 0.25, depthWrite: false, side: THREE.DoubleSide }, { key: 'sheet' });
+  const sheetMat = P.std({ map: sheetT, color: 0xe6f0f4, transparent: true, opacity: 0.72, roughness: 0.25, depthWrite: false, side: THREE.DoubleSide }, { key: 'sheet' });
   const foamC = (() => { const [c, g] = canvas(512, 64), r = PlantArt.rngOf(41); for (let i = 0; i < 2200; i++) { g.fillStyle = `rgba(250,252,255,${0.15 + r() * 0.5})`; g.beginPath(); g.arc(r() * 512, r() * 64 * r(), 0.8 + r() * 2.5, 0, TAU); g.fill(); } return c; })();
-  const foamT = texOf(foamC, renderer); foamT.repeat.set(6, 1);
+  const foamT = texOf(foamC, renderer);
   const foamMat = P.std({ map: foamT, transparent: true, depthWrite: false, roughness: 0.4 }, { key: 'foam' });
   // planar reflection, shared by every water surface (all at WATER_Y)
   let reflScale = reflScale0;
@@ -955,7 +961,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     const pts = []; for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector2(r0 + (r1 - r0) * Math.sqrt(t), y0 - (y0 - y1) * t)); }   // a thrown sheet falls on a parabola
     const geo = new THREE.LatheGeometry(pts, 96), uv = geo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * Math.max(1, Math.round(r0 * 1.4)), uv.getY(i) * (y0 - y1) / 1.6);
     const m = addMesh(geo, sheetMat, x, z, false); m.renderOrder = 4;
-    const f = addMesh(new THREE.RingGeometry(r1 - 0.12, r1 + 0.5, 96, 1).rotateX(-Math.PI / 2).translate(0, y1 + 0.012, 0), foamMat, x, z, false); f.renderOrder = 5;
+    const rg = new THREE.RingGeometry(r1 - 0.08, r1 + 0.3, 128, 2), ru = rg.attributes.uv, rp = rg.attributes.position;   // foam where the sheet lands: polar uvs, so the bubbles run round the ring instead of across it
+    for (let i = 0; i < ru.count; i++) { const px = rp.getX(i), py = rp.getY(i); ru.setXY(i, (Math.atan2(py, px) / TAU + 0.5) * Math.round(r1 * 5), (Math.hypot(px, py) - (r1 - 0.08)) / 0.38); }
+    const f = addMesh(rg.rotateX(-Math.PI / 2).translate(0, y1 + 0.012, 0), foamMat, x, z, false); f.renderOrder = 5;
   }
   { // the grand tiered fountain: lower bowl lip at r 2.27 / y 1.8, upper bowl lip at r 1.16 / y 2.69, finial top at y 3.16
     const p = layout.pools[0]; poolRim(p.x, p.z, p.r, 'pool_grand');
@@ -964,10 +972,18 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       addMesh(lathe([[0.3, 1.58], [0.22, 1.76], [0.31, 1.96], [0.24, 2.2], [0.3, 2.35], [0.52, 2.41, 0.06], [0.95, 2.51, 0.08], [1.12, 2.61, 0.03], [1.16, 2.67], [1.09, 2.7], [1.03, 2.62], [0.5, 2.55], [0.01, 2.53]], 96, 12), stoneWet, p.x, p.z);
       addMesh(lathe([[0.17, 2.53], [0.1, 2.66], [0.19, 2.76, 0.25], [0.23, 2.9, 0.3], [0.17, 3.02, 0.25], [0.07, 3.1], [0.03, 3.16]], 48, 8), stoneWet, p.x, p.z);
     }
-    addMesh(disc(2.09, 1.775), bowlWater, p.x, p.z, false);
-    addMesh(disc(1.05, 2.655, 64), bowlWater, p.x, p.z, false);
-    sheet(p.x, p.z, 1.8, WATER_Y, 2.28, 2.42); sheet(p.x, p.z, 2.69, 1.775, 1.17, 1.24);
-    jets.push({ o: [p.x, 3.16, p.z], vy: [2.3, 2.9], vr: [0.15, 0.6], n: lite ? 400 : 1000 });
+    if (stoneParts.fountain_grand) {   // the carved one (tools/blender/build_stone.py): three basins, lips at r 2.42 / y 1.72, r 1.36 / y 2.95, r 0.66 / y 3.92, the cone's tip at 4.56
+      addMesh(disc(2.27, 1.685), bowlWater, p.x, p.z, false); addMesh(disc(1.26, 2.915, 64), bowlWater, p.x, p.z, false); addMesh(disc(0.58, 3.89, 48), bowlWater, p.x, p.z, false);
+      sheet(p.x, p.z, 1.74, WATER_Y, 2.44, 2.6); sheet(p.x, p.z, 2.97, 1.685, 1.38, 1.47); sheet(p.x, p.z, 3.94, 2.915, 0.68, 0.74);
+      jets.push({ o: [p.x, 4.56, p.z], vy: [2.3, 2.9], vr: [0.1, 0.5], n: lite ? 400 : 1000 });
+      for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2, dx = Math.cos(a), dz = Math.sin(a);   // from the four shells on the plinth, low arcs out into the pool
+        jets.push({ o: [p.x + dx * 1.42, 0.5, p.z + dz * 1.42], dir: [dx, dz], vy: [1.9, 2.1], vh: [2.8, 3.1], n: lite ? 40 : 90 }); }
+    } else {
+      addMesh(disc(2.09, 1.775), bowlWater, p.x, p.z, false);
+      addMesh(disc(1.05, 2.655, 64), bowlWater, p.x, p.z, false);
+      sheet(p.x, p.z, 1.8, WATER_Y, 2.28, 2.42); sheet(p.x, p.z, 2.69, 1.775, 1.17, 1.24);
+      jets.push({ o: [p.x, 3.16, p.z], vy: [2.3, 2.9], vr: [0.15, 0.6], n: lite ? 400 : 1000 });
+    }
     ripples[0].set(p.x, p.z, 0.02, 5.0);
   }
   for (const [i, p] of layout.pools.slice(1).entries()) {   // two bowl fountains on the cross walk: lip at r 0.98 / y 1.2
@@ -976,7 +992,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       addMesh(lathe([[0.62, 0, 0.05], [0.62, 0.2, 0.05], [0.38, 0.3], [0.25, 0.6], [0.31, 0.78], [0.26, 0.9], [0.5, 0.98, 0.07], [0.82, 1.06, 0.08], [0.95, 1.14, 0.03], [0.98, 1.2], [0.91, 1.22], [0.85, 1.15], [0.4, 1.09], [0.01, 1.07]], 96, 12), stoneWet, p.x, p.z);
     addMesh(disc(0.87, 1.18, 48), bowlWater, p.x, p.z, false);
     sheet(p.x, p.z, 1.21, WATER_Y, 0.99, 1.06);
-    jets.push({ o: [p.x, 1.19, p.z], vy: [1.2, 1.6], vr: [0.0, 0.12], n: 180 });
+    jets.push({ o: [p.x, stoneParts.fountain_bowl ? 1.46 : 1.19, p.z], vy: [1.2, 1.55], vr: [0.0, 0.12], n: 180 });   // (the carved bowl has a pine cone in it, the jet at its tip; kept clear of the void above the west one)
     ripples[1 + i].set(p.x, p.z, 0.012, 7.0);
   }
   { // the canal: stone coping, water, arching jets
@@ -996,7 +1012,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     const tot = jets.reduce((a, j) => a + j.n, 0), seeds = new Float32Array(tot * 4), o = new Float32Array(tot * 3), v = new Float32Array(tot * 3); let k = 0;
     for (const j of jets) for (let i = 0; i < j.n; i++, k++) {
       o.set(j.o, k * 3);
-      if (j.dir) { const vh = rr(j.vh[0], j.vh[1]); v.set([j.dir[0] * vh + rr(-0.05, 0.05), rr(j.vy[0], j.vy[1]), rr(-0.06, 0.06)], k * 3); }
+      if (j.dir) { const vh = rr(j.vh[0], j.vh[1]); v.set([j.dir[0] * vh + rr(-0.05, 0.05), rr(j.vy[0], j.vy[1]), j.dir[1] * vh + rr(-0.06, 0.06)], k * 3); }
       else { const a = rng() * TAU, vr = rr(j.vr[0], j.vr[1]); v.set([Math.cos(a) * vr, rr(j.vy[0], j.vy[1]), Math.sin(a) * vr], k * 3); }
       seeds.set([rng(), rng(), rng(), rng()], k * 4);
     }
@@ -1440,8 +1456,8 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const texA = new THREE.DataTexture(pa, PW, PH, THREE.RGBAFormat, THREE.FloatType), texS = new THREE.DataTexture(ps, PW, PH, THREE.RGBAFormat, THREE.FloatType);
   for (const t of [texA, texS]) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true; }
   U.uPlantA = { value: texA }; U.uPlantS = { value: texS }; U.uPlantW = { value: PW };
-  const plantModels = assets.plants && Object.keys(assets.plants).length ? createPlantModels({ scene, P, cut, PT, pa, texA, flagsFor, models: assets.plants, lite }) : null;
-  if (plantModels) console.log('[plants] modelled in Blender: ' + plantModels.species.join(', '));
+  const plantModels = assets.plants ? createPlantModels({ scene, P, cut, PT, pa, texA, flagsFor, lite }) : null;
+  if (plantModels) plantModels.stream(assets.plants.base, assets.plants.renderer);
   const st = [0, 0, 0, 0], DOY0 = 165;   // the garden opens on 14 June
   function writeStates() {
     for (let i = 0, NP = PT.k.length; i < NP; i++) { const d = ((DOY0 + PT.tau[i]) % 365 + 365) % 365, own = PT.own[i], age = (own ? 0 : baseAge) + (PT.tau[i] - PT.planted[i]) / 365;

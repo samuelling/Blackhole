@@ -396,12 +396,12 @@ def head_empty(name, h, coll):
     M[:3, :3] = Rz * h['s']; M[:3, 3] = h['p']
     import mathutils; e.matrix_world = mathutils.Matrix(M.tolist()); e['kind'] = h['kind']; coll.objects.link(e); return e
 
-def build(key, preview=False, variants=3):
+def build(key, preview=False, variants=None):
     clean(); os.makedirs(OUT, exist_ok=True); os.makedirs(BLEND, exist_ok=True)
-    fn = SPECIES[key]; parts = []
+    fn = SPECIES[key]; parts = []; AS = getattr(fn, 'atlas', 1024); variants = variants or getattr(fn, 'variants', 3)
     # every call paints the same atlas (the painting does not depend on the variant), so each gets a fresh one and the last is kept
     for v in range(variants):
-        at = Atlas(1024); hi = fn(at, 1.0, np.random.default_rng(100 + v)); lo = fn(Atlas(1024), 0.4, np.random.default_rng(100 + v)); parts.append((hi, lo))
+        at = Atlas(AS); hi = fn(at, 1.0, np.random.default_rng(100 + v)); lo = fn(Atlas(AS), 0.4, np.random.default_rng(100 + v)); parts.append((hi, lo))
     at.save(os.path.join(OUT, key + '.webp'), os.path.join(OUT, key + '_n.webp'))
     mat = material(key); coll = bpy.context.scene.collection; tris = {}
     for v, (hi, lo) in enumerate(parts):
@@ -422,34 +422,48 @@ def build(key, preview=False, variants=3):
     sys.path.insert(0, os.path.join(ROOT, 'tools')); import gltf_embed; gltf_embed.embed(path)
     import subprocess; subprocess.run(['node', os.path.join(ROOT, 'tools', 'plants', 'compact.mjs'), path.replace('.gltf', '.json')], check=True)   # quantize and meshopt-pack it
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(BLEND, key + '.blend'), compress=True)
-    per = [tris[f'leaf_{v}'] + tris[f'stem_{v}'] + meta['heads'][v] * tris['head'] for v in range(variants)]
-    print(f'{key}: {variants} variants, {np.mean(per):.0f} triangles a plant near ({tris["head"]} a head), atlas {os.path.getsize(os.path.join(OUT, key + ".webp")) // 1024} KB, model {os.path.getsize(path.replace(".gltf", ".json")) // 1024} KB')
+    th = tris.get('head', 0); per = [tris[f'leaf_{v}'] + tris[f'stem_{v}'] + meta['heads'][v] * th for v in range(variants)]
+    lo = [tris[f'leaf_{v}_lo'] + tris[f'stem_{v}_lo'] + meta['heads'][v] * tris.get('head_lo', 0) for v in range(variants)]
+    print(f'{key}: {variants} variants, {np.mean(per):.0f} / {np.mean(lo):.0f} triangles a plant near / far ({th} a head), atlas {os.path.getsize(os.path.join(OUT, key + ".webp")) // 1024} KB, model {os.path.getsize(path.replace(".gltf", ".json")) // 1024} KB')
     if preview: render_preview(key, meta)
 
 def render_preview(key, meta):
     """A Cycles picture of variant 0 with its heads, on a soil-coloured ground, morning sun; and a close-up of a head."""
     import mathutils
     os.makedirs(PREV, exist_ok=True); sc = bpy.context.scene; coll = bpy.data.collections.new('preview'); sc.collection.children.link(coll)
-    head = bpy.data.objects['head']
+    head = bpy.data.objects.get('head')
     for o in list(sc.objects):
-        if o.name.startswith('fl_0_'):
+        if o.name.startswith('fl_0_') and head is not None:
             d = bpy.data.objects.new('p_' + o.name, head.data); d.matrix_world = o.matrix_world; coll.objects.link(d)
         if o.name.startswith(('leaf_', 'stem_', 'fl_', 'head')) and not o.name.endswith(('_0',)) and not o.name.startswith('fl_0_'): o.hide_render = True
-    bpy.data.objects['head'].hide_render = True
+    if head is not None: head.hide_render = True
     bpy.ops.mesh.primitive_plane_add(size=6); g = bpy.context.object; gm = bpy.data.materials.new('soil'); gm.use_nodes = True; gm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.09, 0.06, 0.04, 1); g.data.materials.append(gm)
     sun = bpy.data.lights.new('sun', 'SUN'); sun.energy = 4.0; so = bpy.data.objects.new('sun', sun); so.rotation_euler = (math.radians(50), 0, math.radians(30)); sc.collection.objects.link(so)
     sc.world = bpy.data.worlds.new('w'); sc.world.use_nodes = True; sc.world.node_tree.nodes['Background'].inputs['Color'].default_value = (0.5, 0.62, 0.8, 1); sc.world.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.9
     cam = bpy.data.cameras.new('cam'); co = bpy.data.objects.new('cam', cam); sc.collection.objects.link(co); sc.camera = co
-    sc.render.engine = 'CYCLES'; sc.cycles.samples = 24; sc.cycles.use_denoising = False; sc.render.resolution_x = 640; sc.render.resolution_y = 640
+    sc.render.engine = 'CYCLES'; sc.cycles.samples = 24; sc.cycles.transparent_max_bounces = 96; sc.cycles.use_denoising = False; sc.render.resolution_x = 640; sc.render.resolution_y = 640
     H = meta['size'][0]
     def shoot(name, eye, look, lens=40):
         co.location = eye; d = mathutils.Vector(look) - mathutils.Vector(eye); co.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler(); cam.lens = lens
         sc.render.filepath = os.path.join(PREV, f'{key}_{name}.png'); bpy.ops.render.render(write_still=True)
     shoot('plant', (H * 1.6, -H * 1.9, H * 1.0), (0, 0, H * 0.45))
+    if not len(coll.objects): return
     hp = [o for o in coll.objects][0].matrix_world.translation
     shoot('head', (hp.x + 0.12, hp.y - 0.18, hp.z + 0.08), tuple(hp), lens=60)
+
+def write_index():
+    """assets/plants/index.json: the species the garden may fetch (every one whose model, atlas and normal map are all there)."""
+    have = sorted(f[:-5] for f in os.listdir(OUT) if f.endswith('.json') and f != 'index.json' and os.path.exists(os.path.join(OUT, f[:-5] + '.webp')) and os.path.exists(os.path.join(OUT, f[:-5] + '_n.webp')))
+    json.dump(dict(species=have), open(os.path.join(OUT, 'index.json'), 'w')); print('index:', len(have), 'species')
+
+
+import species2
+for _k, _v in species2.S.items():
+    import plantforms; SPECIES[_k] = plantforms.make_species(_k, _v)
+
 
 if __name__ == '__main__':
     args = [a for a in (sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else sys.argv[1:])]
     pv = '--preview' in args; keys = [a for a in args if not a.startswith('--')] or list(SPECIES)
     for k in keys: build(k, pv)
+    write_index()

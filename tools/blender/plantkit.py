@@ -165,6 +165,7 @@ class Atlas:
 
     def region(self, w, h, pad=6):
         """A free rect w x h pixels: returns (x0, y0, x1, y1) as fractions (y0 at the top of the image)."""
+        k = self.S / 1024; w, h, pad = max(4, int(round(w * k))), max(4, int(round(h * k))), max(2, int(round(pad * k)))   # sizes are given for a 1024 atlas
         if self.x + w + pad > self.S: self.x = 0; self.y += self.row + pad; self.row = 0
         if self.y + h > self.S: raise ValueError('atlas full')
         r = (self.x, self.y, self.x + w, self.y + h); self.x += w + pad; self.row = max(self.row, h)
@@ -216,6 +217,7 @@ def noise2(u, t, f, seed):
     """Smooth value noise on the rect, about 0..1."""
     rg = np.random.default_rng(seed); g = rg.random((int(f) + 3, int(f) + 3))
     x, y = u * f, t * f; i, j = np.floor(x).astype(int), np.floor(y).astype(int); fx, fy = x - i, y - j
+    i, j = np.clip(i, 0, int(f) + 1), np.clip(j, 0, int(f) + 1)
     sx, sy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
     a, b, c, d = g[j, i], g[j, i + 1], g[j + 1, i], g[j + 1, i + 1]
     return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy
@@ -229,11 +231,12 @@ def band(x, w):
     return np.clip(1 - np.abs(x) / w, 0, 1) ** 2
 
 
-def paint_blade(at, rect, shape, base, tip, mid=None, edge=None, veins=('pinnate', 9, 0.55), midrib=1.0, mottle=0.12, seed=0, gloss_vein=0.0, hair=0.0):
+def paint_blade(at, rect, shape, base, tip, mid=None, edge=None, veins=('pinnate', 9, 0.55), midrib=1.0, mottle=0.12, seed=0, gloss_vein=0.0, hair=0.0, cut=None):
     """A leaf or petal: shape(t) is its half-width (0..1 of the rect's half width) at t along it, tooth(t) roughens the rim.
     Colours run base -> tip along it; veins: ('pinnate', count, angle) or ('parallel', count) or ('radial', count) for petals."""
     def fn(u, t):
         v = (u - 0.5) * 2; w = shape(t); av = np.abs(v); inside = av < w
+        if cut is not None: inside = inside & ~cut(v, t)
         edge_d = np.clip((w - av) / np.maximum(w, 1e-3), 0, 1)             # 0 at the rim, 1 on the midrib
         col = mix(lin(base), lin(tip), t ** 0.9)
         if mid is not None: col = mix(col, lin(mid), np.clip(1 - av / 0.35, 0, 1) * 0.5)

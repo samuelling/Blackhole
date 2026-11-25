@@ -1,3 +1,12 @@
 *.blend1
 __pycache__/
 node_modules/
+# the described species' .blend files are rebuilt by tools/blender/build_plants.py; only the six written by hand are kept
+blender/plants/*.blend
+!blender/plants/echinacea.blend
+!blender/plants/sesleria.blend
+!blender/plants/geranium.blend
+!blender/plants/lavandula.blend
+!blender/plants/nepeta.blend
+!blender/plants/coreopsis.blend
+blender/plants/*.blend1
