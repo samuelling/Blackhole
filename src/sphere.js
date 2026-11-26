@@ -18,6 +18,7 @@
 // and nudges you, gently, toward the people in your life and a room to share the garden in.
 import * as THREE from 'three';
 import { NAME as PIP, MODEL, systemPrompt, cleanMessages } from './brodie.js';   // (who Brodie is, for Haiku: brodie.js)
+import { createVoiceFx, playThrough } from './voicefx.js';
 
 // ---------------------------------------------------------------- what it can teach: a step is done when its test is true
 // s: the state of play each frame (from main.js); a: what the tutorial has noted since it began (turned, walked...)
@@ -177,7 +178,7 @@ export function createSphere(o) {
 
   // his voice: the browser's own (free, a little robotic), or Brodie's (an ElevenLabs voice, through the sphere Worker), which falls
   // back to the browser's if the Worker isn't there
-  let audioEl = null, voiceDown = false;
+  let audioEl = null, voiceDown = false, voiceFx = null, voiceSrc = null;
   function browserSay(text) { if (!window.speechSynthesis) return; try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.pitch = 1.3; u.volume = 0.85; speechSynthesis.speak(u); } catch (e) {} }
   async function speak(text) {
     const v = o.voice ? o.voice() : 'off'; if (!text || v === 'off') return;
@@ -185,6 +186,12 @@ export function createSphere(o) {
       try {
         const r = await fetch(o.chatUrl + '/speak', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: text.slice(0, 400) }) });
         if (!r.ok) throw new Error('speak ' + r.status);
+        const A = o.audio && o.audio(), ctx = A && A.ctx;
+        if (ctx && ctx.state === 'running') {   // through his voice box (voicefx.js): the harmonizer, as much as Settings says
+          const buf = await ctx.decodeAudioData(await r.arrayBuffer()); if (voiceSrc) { try { voiceSrc.stop(); } catch (e) {} }
+          if (!voiceFx) { voiceFx = createVoiceFx(ctx, o.robot ? o.robot() : 0.5); voiceFx.output.connect(ctx.destination); } else voiceFx.setMix(o.robot ? o.robot() : 0.5);
+          voiceSrc = playThrough(ctx, voiceFx, buf, ctx.destination, A.on === false ? 0 : 0.95).source; return;
+        }
         const url = URL.createObjectURL(await r.blob()); if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); }
         audioEl = new Audio(url); audioEl.volume = 0.9; await audioEl.play(); return;
       } catch (e) { voiceDown = true; }

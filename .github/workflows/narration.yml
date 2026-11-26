@@ -1,0 +1,35 @@
+# Brodie narrates the intro film. When tools/narration.json changes, each new or changed line is spoken once by the sphere Worker
+# (which holds the ElevenLabs key; this workflow has no secrets) and the clip is kept in assets/film/vo/, so playing the film
+# never spends anything. Unchanged lines are skipped.
+name: Brodie narrates the story
+on:
+  push:
+    branches: [main]
+    paths: ['tools/narration.json']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: narration
+jobs:
+  speak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ask the sphere Worker for each new line
+        run: |
+          set -e
+          mkdir -p assets/film/vo
+          url=$(jq -r .url tools/narration.json); n=$(jq '.lines | length' tools/narration.json)
+          for i in $(seq 0 $((n - 1))); do
+            id=$(jq -r ".lines[$i].id" tools/narration.json); say=$(jq -r ".lines[$i].say" tools/narration.json)
+            out="assets/film/vo/$id.mp3"; txt="assets/film/vo/$id.txt"
+            if [ -s "$out" ] && [ -f "$txt" ] && [ "$(cat "$txt")" = "$say" ]; then echo "$id: kept"; continue; fi
+            code=$(curl -sS -o "$out" -w '%{http_code}' -X POST "$url/speak" -H 'content-type: application/json' -H 'Origin: https://linglab.org' --data "$(jq -c "{text: .lines[$i].say}" tools/narration.json)")
+            if [ "$code" != "200" ]; then echo "$id: HTTP $code"; head -c 400 "$out"; rm -f "$out"; exit 1; fi
+            printf '%s' "$say" > "$txt"; echo "$id: spoken ($(stat -c %s "$out") bytes)"; sleep 7
+          done
+      - name: Keep the clips
+        run: |
+          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/film/vo
+          if git diff --cached --quiet; then echo "nothing new"; else git commit -m "Brodie's telling of the story so far (his ElevenLabs voice, through the sphere Worker)"; git pull --rebase; git push; fi

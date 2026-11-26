@@ -1,0 +1,19 @@
+{
+  "about": "Brodie's telling of the story so far (src/film.js). Changing a line here and pushing has the workflow (.github/workflows/narration.yml) ask the sphere Worker to speak it in Brodie's ElevenLabs voice, once, and keep the clip in assets/film/vo/. Lines that haven't changed are not spoken again.",
+  "url": "https://garden-sphere.samuelling.workers.dev",
+  "lines": [
+    { "id": "01", "say": "Earth. Twenty twenty-seven." },
+    { "id": "02", "say": "Then came The Event." },
+    { "id": "03", "say": "Earth became uninhabitable." },
+    { "id": "04", "say": "A fleet of probes went out, each one looking for a place where life could carry on." },
+    { "id": "05", "say": "We are one of them." },
+    { "id": "06", "say": "Our land carries Earth's blueprint, and a snapshot of everyone alive in twenty twenty-seven." },
+    { "id": "07", "say": "A few centuries out, our ship lost its navigation." },
+    { "id": "08", "say": "The wormhole links the ships of the fleet. Things come through it." },
+    { "id": "09", "say": "One ship carries the Shred Hole: a fabricator that lost its Earth blueprint in an accident." },
+    { "id": "10", "say": "Before it went dark, another ship found something. It called it World Builder." },
+    { "id": "11", "say": "We have half the coordinates." },
+    { "id": "12", "say": "So it's up to us to find our way again." },
+    { "id": "13", "say": "Until then, we garden. We build the wall. And whatever else suits our fancy, brody." }
+  ]
+}
