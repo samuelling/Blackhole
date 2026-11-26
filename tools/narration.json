@@ -1,5 +1,5 @@
 {
-  "about": "Brodie's telling of the story so far (src/film.js). Changing a line here and pushing has the workflow (.github/workflows/narration.yml) ask the sphere Worker to speak it in Brodie's ElevenLabs voice, once, and keep the clip in assets/film/vo/. Lines that haven't changed are not spoken again. The gone-YEAR lines are the one that follows 'everyone alive in 2027': the film says the year after the one it is played in.",
+  "about": "Brodie's telling of the story so far (src/film.js). Changing a line here and pushing has the workflow (.github/workflows/narration.yml) ask the sphere Worker to speak it in Brodie's ElevenLabs voice, once, and keep the clip in assets/film/vo/. Lines that haven't changed are not spoken again. The gone-YEAR lines are the one that follows 'everyone alive in 2027': the film says the year after the one it is played in. The snapshot is of everyone alive in that same year: line 06 says it whole for 2027; for later years it is 06a followed by alive-YEAR. Add a year's pair of lines (alive-YEAR, gone-YEAR) before the January it is first needed.",
   "url": "https://garden-sphere.samuelling.workers.dev",
   "lines": [
     {
@@ -81,6 +81,30 @@
     {
       "id": "gone-2032",
       "say": "And gone, in twenty thirty-two."
+    },
+    {
+      "id": "06a",
+      "say": "Our land carries Earth's blueprint,"
+    },
+    {
+      "id": "alive-2028",
+      "say": "and a snapshot of everyone alive in twenty twenty-eight."
+    },
+    {
+      "id": "alive-2029",
+      "say": "and a snapshot of everyone alive in twenty twenty-nine."
+    },
+    {
+      "id": "alive-2030",
+      "say": "and a snapshot of everyone alive in twenty thirty."
+    },
+    {
+      "id": "alive-2031",
+      "say": "and a snapshot of everyone alive in twenty thirty-one."
+    },
+    {
+      "id": "alive-2032",
+      "say": "and a snapshot of everyone alive in twenty thirty-two."
     }
   ]
 }
