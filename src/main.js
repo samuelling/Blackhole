@@ -24,6 +24,7 @@ import './invisible-hands.js';
 import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass } from './astro.js';
 import { doyLabel, doyToMonthDay } from './seasons.js';
 import { createMulti } from './multi.js';
+import { createWorlds } from './worlds.js';
 
 // ------------------------------------------------------------------ setup
 const MAXV = 12;
@@ -598,6 +599,30 @@ const body = assets.models.astronaut ? createBody({ model: assets.models.astrona
 if (body) { scene.add(body.root); body.setEnabled(S.body && !QS.has('nobody')); }
 // together: up to six astronauts in one garden, in outfits of their own, talking (multi.js)
 let lobbyView = null;   // the self view as it was before the lobby turned you round to see your suit
+// the one garden of a room (and of your online saves, worlds.js): what the wall, the junk heap and the planting each hand over, take on and tell (their own .net)
+const gardenWorld = {
+    attach(net) { walling.net.attach(net); junk.net.attach({ send: m => net.send(m), host: net.host }); planter.net.attach({ send: m => net.send(m) }); },
+    snapshot(light) { return { wall: walling.net.snapshot(), junk: light ? null : junk.net.snapshot(), plants: planter.net.snapshot() }; },   // light: over the relay, without the junk heap
+    adopt(w) {
+      if (!w || !w.wall) return false; const mine = walling.net.isMine(w.wall);
+      if (w.junk || !mine) junk.net.adopt(w.junk || {}, mine);   // (the heap first: junk built into walls is drawn from it)
+      walling.net.adopt(w.wall); if (w.plants) planter.net.adopt(w.plants, mine);
+      if (drawer && drawer.sync) drawer.sync('junkInfo'); return mine;
+    },
+    release() { walling.net.release(); junk.net.release(); planter.net.release(); },
+    onMsg(from, m) { if (!m) return; if (m.b) walling.net.onMsg(from, m); else if (m.j) junk.net.onMsg(m); else if (m.p) planter.net.onMsg(m); },
+    peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
+  get guest() { return walling.net.guest; },
+};
+let worlds = null;
+// the Shred Hole (linglab.org/tunnel) is where new junk comes from: opened set to send here
+const SHRED_URL = 'https://linglab.org/tunnel/?to=garden';
+function openShredHole() { try { window.open(SHRED_URL, '_blank', 'noopener'); } catch (e) { location.href = SHRED_URL; } }
+const shredB = document.createElement('a'); shredB.href = SHRED_URL; shredB.target = '_blank'; shredB.rel = 'noopener'; shredB.id = 'bShred';
+shredB.textContent = '🌀 Shred Hole: send more junk'; shredB.title = 'open the Shred Hole, set to send what it shreds through the wormhole here';
+shredB.style.cssText = 'position:fixed;left:50%;top:calc(14px + env(safe-area-inset-top));transform:translateX(-50%);z-index:7;padding:9px 14px;border-radius:999px;background:rgba(10,12,16,.6);border:1px solid rgba(160,120,255,.55);color:#e9e4da;font:11px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.08em;text-decoration:none;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity .5s';
+document.body.append(shredB);
+let shredNear = false;
 const multi = assets.models.astronaut ? createMulti({ scene, camera, model: assets.models.astronaut, U, COMMON, createBody, selfBody: body,
   audio: () => A, initAudio: () => initAudio(), hint: (t, ms) => setHint(t, ms), ink: () => body ? body.uniforms.uInk.value : 0.004,
   getSky: () => ({ h: +(timeMode === 'live' ? (d => d.getHours() + d.getMinutes() / 60)(new Date()) : timeMode === 'night' ? 23 : manualHour).toFixed(3), doy: +(((calDoy() % 365) + 365) % 365).toFixed(2) }),
@@ -610,20 +635,9 @@ const multi = assets.models.astronaut ? createMulti({ scene, camera, model: asse
     else if (lobbyView) { selfView = lobbyView.on; selfAng = lobbyView.ang; selfDist = lobbyView.dist; lobbyView = null; }
   },
   onRoom: () => togetherLabel(),
-  // the one garden of a room: what the wall, the junk heap and the planting each hand over, take on and tell (their own .net)
-  world: {
-    attach(net) { walling.net.attach(net); junk.net.attach({ send: m => net.send(m), host: net.host }); planter.net.attach({ send: m => net.send(m) }); },
-    snapshot(light) { return { wall: walling.net.snapshot(), junk: light ? null : junk.net.snapshot(), plants: planter.net.snapshot() }; },   // light: over the relay, without the junk heap
-    adopt(w) {
-      if (!w || !w.wall) return false; const mine = walling.net.isMine(w.wall);
-      if (w.junk || !mine) junk.net.adopt(w.junk || {}, mine);   // (the heap first: junk built into walls is drawn from it)
-      walling.net.adopt(w.wall); if (w.plants) planter.net.adopt(w.plants, mine);
-      if (drawer && drawer.sync) drawer.sync('junkInfo'); return mine;
-    },
-    release() { walling.net.release(); junk.net.release(); planter.net.release(); },
-    onMsg(from, m) { if (!m) return; if (m.b) walling.net.onMsg(from, m); else if (m.j) junk.net.onMsg(m); else if (m.p) planter.net.onMsg(m); },
-    peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
-  } }) : null;
+  world: gardenWorld,
+  roomGarden: c => worlds ? worlds.roomGarden(c) : Promise.resolve(null), newCode: () => worlds ? worlds.newCode() : Promise.resolve(null),
+ }) : null;
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
@@ -1539,6 +1553,7 @@ const SETTINGS = [
   { id: 'wallPause', tab: 'wall', label: 'Put this stint away', kind: 'action', set: () => walling.pause() },
   { id: 'wallFinish', tab: 'wall', label: 'Finish this stint', kind: 'action', set: () => walling.finish() },
   { id: 'junkInfo', tab: 'wall', group: 'Junk from the Shred Hole', label: '', kind: 'info', get: () => `${junk.count} pieces on the junk heap, from ${junk.drops} flush${junk.drops === 1 ? '' : 'es'} · it comes through the wormhole in the clearing east of the wall, when someone in the Shred Hole flushes to the garden` },
+  { id: 'junkShred', tab: 'wall', label: 'Open the Shred Hole (it sends its junk here)', kind: 'action', set: () => openShredHole(), note: 'linglab.org/tunnel, set to send to this garden: shred something and it comes through the wormhole' },
   { id: 'junkGo', tab: 'wall', label: 'Walk me to the wormhole', kind: 'action', set: () => { drawer.close(); player.set(junk.heap.x - 8, 1.65, junk.heap.z + 5); yaw = -1.1; pitch = 0.32; } },
   { id: 'junkClear', tab: 'wall', label: 'Vaporize the whole junk heap', kind: 'action', set: () => { if (guestHere()) return;  if (confirm(`Vaporize all ${junk.count} pieces on the junk heap? What you have built with stays.`)) { const n = junk.vaporizeAll(); burst(new THREE.Vector3(junk.heap.x, heightAt(junk.heap.x, junk.heap.z) + 0.6, junk.heap.z), 2.2); setHint(`${n} pieces vaporized`, 4000); drawer.sync('junkInfo'); } } },
   { id: 'freeClear', tab: 'wall', label: 'Take down every free build', kind: 'action', set: () => { if (guestHere()) return;  if (confirm('Take down everything you have built freely? Stone from the heaps and the junk goes back to them.')) walling.resetFree(); } },
@@ -1552,6 +1567,11 @@ const SETTINGS = [
   { id: 'meadow', tab: 'garden', label: 'Meadow sounds', kind: 'toggle', get: () => S.meadow, set: v => { S.meadow = v; save(); if (A.meadow) A.meadow.setEnabled(v); },
     note: 'gusting wind in the grass and leaves, birdsong by day, crickets on summer and autumn nights, an owl now and then' },
   { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
+  { id: 'saveInfo', tab: 'garden', group: 'Keeping your garden', label: '', kind: 'info', get: () => `Kept in this browser, and online: ${worlds ? worlds.status : 'not yet'}. Open your garden's link on another device to build there. A room keeps its own garden online, by its code.` },
+  { id: 'saveLink', tab: 'garden', label: 'Copy the link to your garden', kind: 'action', set: () => worlds && worlds.copyLink(), note: 'open it on another device (an iPad, say) and your garden is there; keep it to yourself' },
+  { id: 'saveEarlier', tab: 'garden', label: 'Earlier saves…', kind: 'action', set: () => { drawer.close(); worlds && worlds.earlier(); }, note: 'the last twelve saves of the garden you are in' },
+  { id: 'saveFile', tab: 'garden', label: 'Save to a file', kind: 'action', set: () => worlds && worlds.exportFile(), note: 'the whole garden in one file, to keep or load anywhere' },
+  { id: 'loadFile', tab: 'garden', label: 'Load a garden file', kind: 'action', set: () => worlds && worlds.importFile() },
   { id: 'plantInfo', tab: 'garden', group: 'Planting', label: '', kind: 'info', get: () => `${planter.count} of ${garden.planting.max} planted by you · each grows to its own height and spread over its own years, on the garden's seasons` },
   { id: 'plantOpen', tab: 'garden', label: 'Open the plant menu (P)', kind: 'action', set: () => { drawer.close(); planter.setOpen(true); } },
   { id: 'plantUndig', tab: 'garden', label: "Put back the garden's own plants you dug up", kind: 'action', set: () => { if (guestHere()) return;  const n = planter.undig(); setHint(n ? `${n} plant${n === 1 ? '' : 's'} back where ${n === 1 ? 'it' : 'they'} stood` : 'nothing of the garden\'s has been dug up', 3500); } },
@@ -1667,6 +1687,8 @@ drawer = createDrawer({
   controls: SETTINGS, tag: hands ? id => hands.tag(id) : null,
   onOpenChange: open => { if (open && document.pointerLockElement === canvas) document.exitPointerLock(); },
 });
+// your garden kept online, and a room's (worlds.js; ?noworlds keeps to this browser only)
+if (!QS.has('noworlds')) { worlds = createWorlds({ world: gardenWorld, multi, hint: (t, ms) => setHint(t, ms), started: () => started }); worlds.init(); }
 if (hands) { const box = document.createElement('div'); box.className = 'hands'; box.append(hands.panel());
   const link = document.createElement('a'); link.textContent = 'open the console ↗'; link.target = '_blank'; link.rel = 'noopener'; link.style.cssText = 'display:inline-block;margin-top:14px;color:inherit;opacity:.7';
   const setLink = () => { link.href = 'https://linglab.org/invisiblehands/console/' + (hands.room ? '?room=' + encodeURIComponent(hands.room) : ''); };
@@ -1980,7 +2002,9 @@ const _mpAim = new THREE.Vector3();
 // in somebody else's garden (a room you came into) the clear-everything actions are not yours to use
 function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint('this is not your garden: only its owner can clear things wholesale', 4500); return true; } return false; }
 function stepWalling(dt, t) {
-  planter.update(); planter.tick(performance.now()); junk.update(dt, t);
+  planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
+  { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
+    if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
   if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand); body.setGesture(walling.busy ? walling.gesture : null); body.point(planter.armed && !planter.open ? 1 : 0);
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
@@ -2071,4 +2095,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

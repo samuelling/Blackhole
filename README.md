@@ -42,6 +42,9 @@ The stints are the guided way. You can also build anywhere, however you like:
 
 ### The wormhole and the junk heap
 
+The junk comes from the [Shred Hole](https://linglab.org/tunnel/?to=garden). Walk to the wormhole's clearing and a **🌀 Shred Hole** button comes up at the top of the screen (also Settings → Wall → *Open the Shred Hole*): it opens the Shred Hole already set to send here.
+
+
 In a clearing in the wood about 25 m east of the wall's east side, level with the grand fountain, a wormhole hangs twenty-two metres up, and climbs as the heap grows so that it always stays twelve metres clear of the top of the pile. A heap that grows past 700 pieces, or higher than seven metres, is too big: the wormhole takes some of it back, vaporizing pieces at random off the top of the pile, a few a second, until it is comfortably under that again (what is built into a wall or a free build is never taken). It is drawn as a traversable (Ellis) wormhole is expected to look, the way Kip Thorne's group rendered one for *Interstellar*: not a glowing thing but a crystal ball made of bent light. It is done in the same post pass that lenses the black holes, ray by ray:
 
 - A ray that passes the throat (radius 1.8 m) farther out than its radius stays on this side and is bent round it, by about (π/4)(a/b)² far out and without limit as it grazes the throat. So the trees, sky and grass around it are wrapped into rings of stretched and multiplied images, and things directly behind it show round its rim.
@@ -59,6 +62,16 @@ When someone pulls **FLUSH!** in [Shred Hole](https://linglab.org/tunnel/) with 
 Not modelled for junk: material (the drop carries none, so friction and bounce are guessed from density), and shape detail beyond the 16-point hull.
 
 Not in this version: the hammer and the fit light from Dry Stack, and any collision between you and loose stones (you walk through the pile).
+
+## Keeping your garden
+
+Your garden is kept in your browser, and online (`src/worlds.js`, and the `garden-worlds` Cloudflare Worker in `worker/`):
+
+- **Your own garden** is saved online every 20 seconds while it changes and the page is in front, under a secret link made the first time (Settings → Garden → *Copy the link to your garden*). Open the link on another device (an iPad, say) and the same garden is there; from then on, whichever device last changed it is the one the others take on when they open. Anyone with the link can open and change your garden, so keep it to yourself. Safari wipes a site's stored data after seven days without a visit; the online copy outlives that.
+- **A room's garden** is kept online by its code. Whoever has been in the room longest saves it every 15 seconds while it changes. Someone who opens the room when nobody is in it gets the room's garden as it was left (as a guest: their own is set aside and comes back when they leave), so a room is a place you can go back to and keep building. A room never saved starts from the garden of whoever opens it, as before. *Start a new room* asks the worker for a code no saved garden has. If a room's saved garden can't be fetched, you're put in your own and the room's is never saved over.
+- **Earlier saves** (Settings → Garden): the worker keeps each garden's last twelve saves; pick one to go back to it (in a room, only when nobody else is there).
+- **Garden files**: *Save to a file* downloads the whole garden (gzip'd JSON); *Load a garden file* puts one in place of yours. No server involved.
+- What travels: the garden in four parts (the wall and free builds; the planting, trees included; the junk heap; the junk's pieces, the heavy part, which change least). A save sends only the parts that changed. The worker stores each part once, by its SHA-256, in a SQLite-backed Durable Object per garden, and refuses saves closer together than 4 s or bigger than 24 MB. `?noworlds` keeps to the browser only; `?worlds=http://127.0.0.1:8787` points at a local worker (`npx wrangler dev` in `worker/`).
 
 ## Together (up to six)
 

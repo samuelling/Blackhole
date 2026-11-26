@@ -1,0 +1,12 @@
+# garden-worlds: Garden of Delight's gardens kept online (worlds.js)
+name = "garden-worlds"
+main = "worlds.js"
+compatibility_date = "2026-11-01"
+
+[[durable_objects.bindings]]
+name = "WORLD"
+class_name = "World"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["World"]

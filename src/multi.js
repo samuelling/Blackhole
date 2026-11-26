@@ -140,7 +140,7 @@ export function createMulti(o) {
     else if (b.dataset.top) { outfit.top = b.dataset.top; wear(); }
     else if (b.dataset.k) { const list = b.dataset.k === 'visor' ? VISORS : b.dataset.k === 'glow' ? GLOWS : SUITS; outfit[b.dataset.k] = list[+b.dataset.i].slice(); wear(); }
     else if (b.dataset.mute) { const p = others.get(b.dataset.mute); if (p) { p.muted = !p.muted; if (p.voice) p.voice.gain.gain.value = p.muted ? 0 : 1.2; render(); } }
-    else if (b.dataset.a === 'new') join(code4());
+    else if (b.dataset.a === 'new') { setStatus('finding a free room…'); (o.newCode ? o.newCode() : Promise.resolve(null)).then(c => join(c || code4())); }
     else if (b.dataset.a === 'join') { const c = clean(el.querySelector('#mpCode').value).toUpperCase().replace(/[^A-Z0-9]/g, ''); if (c) join(c); else setStatus('Type the code your friend gave you.'); }
     else if (b.dataset.a === 'copy') { const t = `${HOME}?room=${code}`; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => setStatus('Link copied: send it to up to five friends.'), () => { el.querySelector('#mpLink').select(); setStatus('Select the link and copy it.'); }); }
     else if (b.dataset.a === 'leave') leave();
@@ -158,7 +158,7 @@ export function createMulti(o) {
     leave(true);
     code = c; o.initAudio && o.initAudio();
     room = new Room({ server: SERVER(), maxPeers: MAX - 1, prefix: 'gd-', handlers: {
-      status: (kind, text) => { if (kind === 'in') { joinedAt = performance.now(); if (room.alone) { synced = true; gardenOf = 'yours'; o.hint && o.hint('this is your garden: friends who come in build in it with you', 5000); } }
+      status: (kind, text) => { if (kind === 'in') { joinedAt = performance.now(); if (room.alone) firstIn(); }
         setStatus(kind === 'in' ? `In room ${code}. ${text}` : text); if (kind === 'error') { room && room.leave(); room = null; render(); } o.onRoom && o.onRoom(); },
       roster: () => { syncPeers(); if (isOpen) render(); o.onRoom && o.onRoom(); },
       peerOpen: p => { if (!openedAt) openedAt = performance.now(); sendWho(p.id); syncPeers(); askWorld(); if (isOpen) render(); },
@@ -174,6 +174,24 @@ export function createMulti(o) {
     try { const u = new URL(location.href); u.searchParams.set('room', code); history.replaceState(null, '', u); } catch (_) {}
     if (micStream) room.addTrack(micTrack, micStream);
     talkB.classList.add('on'); document.body.classList.add('mpIn'); render();
+  }
+  // nobody else here: the room's garden as it was left (kept online, worlds.js), or, for a room never saved, yours
+  let firstFor = null;
+  function firstIn() {
+    if (firstFor === room) return; firstFor = room;
+    const r = room, c = code, done = (w) => {
+      if (room !== r || synced) return;
+      let mine = true;
+      if (w && W) { try { mine = W.adopt(w); } catch (e) { console.warn('[together] the saved garden did not load', e); mine = true; } }
+      synced = true; gardenOf = mine ? 'yours' : `room ${c}'s`;
+      o.hint && o.hint(!w ? 'this is your garden: friends who come in build in it with you, and the room keeps it online' : mine ? 'your garden, as the room kept it: friends who come in build in it with you'
+        : `room ${c}'s garden, as it was left · build here together · your own is kept, and comes back when you leave`, 8000);
+      for (const [id, m] of pendingW.splice(0)) { try { W.onMsg(id, m); } catch (e) { console.warn(e); } }
+      if (isOpen) render(); o.onRoom && o.onRoom();
+    };
+    if (!o.roomGarden || !W) { done(null); return; }
+    setStatus(`In room ${c}. Fetching its garden…`);
+    o.roomGarden(c).then(done, () => done(null));
   }
   function leave(quiet) {
     if (room) { if (W) { try { W.release(); } catch (e) { console.warn('[together] leaving', e); } } room.leave(); room = null; }   // (what is in hand is put by and told before the links close)
@@ -375,7 +393,7 @@ export function createMulti(o) {
     if (!synced && room.id) {
       askWorld(); const now = performance.now();
       if (!room.alone && !openedAt && now - joinedAt > 40000) {   // the room lists others but none can be reached (gone without saying, most likely): carry on as its first
-        synced = true; gardenOf = 'yours'; o.hint && o.hint('nobody else in the room can be reached yet: this is your garden', 6000); if (isOpen) render();
+        firstIn();
       } else if (openedAt && now - openedAt > 45000) {   // they are there, but the garden never came (a link can take twenty seconds to come up; a garden a while to cross a slow one)
         synced = true; pendingW.length = 0; if (W) { try { W.release(); } catch (e) {} W = null; }   // (and nothing of the room's is written into your own)
         o.hint && o.hint('the room\'s garden did not arrive: you can see and hear everyone, but you are building in your own (leave and join again to retry)', 9000);
@@ -421,7 +439,7 @@ export function createMulti(o) {
   return {
     open, close, toggle: () => (isOpen ? close() : open()), update, key, join,
     get isOpen() { return isOpen; }, get inRoom() { return !!room; }, get code() { return code; }, get count() { return room ? others.size + 1 : 0; },
-    get outfit() { return outfit; }, get synced() { return synced; }, _others: others,
+    get outfit() { return outfit; }, get synced() { return synced; }, get keeper() { return !!room && synced && isHost(room.id); }, _others: others,
     _talk: on => setTalk(on),
     _dbg: () => ({ synced, gardenOf, asked, pending: pendingW.length, big: [...bigIn.values()].map(b => b.got + '/' + b.parts.length), alone: room && room.alone, id: room && room.id, host: !!room && isHost(room.id), peers: room ? [...room.peers.values()].map(p => [p.path, !!p.opened, p.dc && p.dc.readyState, p.n]) : [] }),
     _stats: async () => { const out = { ctx: o.audio && o.audio().ctx ? o.audio().ctx.state : null, links: [] };
