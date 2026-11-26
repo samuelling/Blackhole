@@ -86,7 +86,7 @@ export function makeBrook(base, edgeR, CENTRE) {
 }
 
 /** Everything you see of it: banks, water, pond, the slabs over it, the fall. ground(x, z) is the cut ground (field.js terrainAt). */
-export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, lite }) {
+export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, lite, bridge }) {
   const group = new THREE.Group(); group.name = 'brook';
   const pos = [], col = [], uv = [], idx = [];
   const dry = [0.26, 0.25, 0.21], wet = [0.2, 0.18, 0.15], turf = [0.19, 0.25, 0.11], silt = [0.12, 0.115, 0.09];
@@ -159,11 +159,17 @@ export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, li
 
   // slabs: a footbridge where a walk crosses, a lintel where the wall does
   const slabMat = P.std({ color: 0x6d6a63, normalMap: gravel.nor, roughness: 0.95 }, { key: 'brookslab' });
-  for (const d of B.decks) { const th = d.kind === 'lintel' ? 0.2 : 0.16, g = new THREE.BoxGeometry(d.across, th, d.along), m = new THREE.Mesh(g, slabMat);
+  const kit = bridge && bridge.scene ? bridgeKit(bridge, P) : null;
+  for (const d of B.decks) { if (kit && d.kind === 'bridge') continue;
+    const th = d.kind === 'lintel' ? 0.2 : 0.16, g = new THREE.BoxGeometry(d.across, th, d.along), m = new THREE.Mesh(g, slabMat);
     { const u = g.attributes.uv, p = g.attributes.position; for (let i = 0; i < u.count; i++) u.setXY(i, (p.getX(i) + p.getY(i)) / 2.2 + d.x * 0.3, (p.getZ(i) + p.getY(i)) / 2.2); }
     const top = Math.max(ground(d.x - d.tz * d.across / 2, d.z + d.tx * d.across / 2), ground(d.x + d.tz * d.across / 2, d.z - d.tx * d.across / 2)) + (d.kind === 'lintel' ? 0.015 : 0.05);   // level with the ground either side
     m.position.set(d.x, top - th / 2, d.z); m.rotation.y = Math.atan2(-d.tx, -d.tz);                                  // its long side across the water
     m.castShadow = m.receiveShadow = true; group.add(m); d.top = m.position.y + th / 2; }
+  if (kit) { for (const d of B.decks) if (d.kind === 'bridge') {
+      const top = Math.max(ground(d.x - d.tz * d.across / 2, d.z + d.tx * d.across / 2), ground(d.x + d.tz * d.across / 2, d.z - d.tx * d.across / 2)) + 0.05;
+      kit.lay(d, top); d.top = top; }
+    kit.finish(group); }
 
   // the fall: the water leaves the lip at the speed it arrived and drops; the sheet tears into strands and then into mist before the bubble's skin
   { const F = B.fall, v0 = 2.2, G = 9.8, T = 2.55, NT = lite ? 40 : 64, fp = [], fu = [], fi = [];
@@ -310,4 +316,41 @@ export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, li
   }
   update(0.016, 0, 1e6, 1e6);
   return { group, water, banks, update, kois, setSize(h) { group.userData.mist.material.uniforms.uPx.value = h * 0.9; } };
+}
+
+// Timber footbridges (tools/blender/build_bridge.py): a kit of boards, stringers, sills, posts and rails, laid out here to each crossing's
+// span and width. In the kit's frame X runs along the span, Z across it, Y up; the boards' tops are the deck (y = 0).
+function bridgeKit(bridge, P) {
+  const parts = {}; bridge.scene.updateMatrixWorld(true);
+  bridge.scene.traverse(o => { if (!o.isMesh) return; const g = o.geometry.clone();
+    for (const k of ['position', 'normal', 'uv']) { const a = g.attributes[k]; if (!a) continue; const n = a.itemSize, f = new Float32Array(a.count * n), get = [a.getX, a.getY, a.getZ]; for (let i = 0; i < a.count; i++) for (let c = 0; c < n; c++) f[i * n + c] = get[c].call(a, i); g.setAttribute(k, new THREE.BufferAttribute(f, n)); }   // unpack the quantized parts
+    g.applyMatrix4(o.matrixWorld); parts[o.name] = g; });
+  const mat = P.std({ map: bridge.map, normalMap: bridge.nmap, normalScale: new THREE.Vector2(1, 1), roughness: 0.88, side: THREE.DoubleSide }, { key: 'oak' });
+  const lists = {}, put = (name, M) => { (lists[name] = lists[name] || []).push(M); };
+  const hash = i => { let h = (i * 2654435761) >>> 0; h ^= h >>> 15; h = Math.imul(h, 2246822519) >>> 0; return ((h ^ (h >>> 13)) >>> 0) / 4294967296; };
+  const Mx = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  let seed = 0;
+  return {
+    lay(d, top) {
+      const S = d.across, W = d.along, base = new THREE.Matrix4().compose(new THREE.Vector3(d.x, top, d.z), q.setFromEuler(e.set(0, Math.atan2(-d.tx, -d.tz), 0)), sc.set(1, 1, 1));
+      const at = (x, y, z, ry, rz, sx, sy, sz) => { Mx.compose(v.set(x, y, z), q.setFromEuler(e.set(0, ry, rz)), sc.set(sx, sy, sz)); return base.clone().multiply(Mx); };
+      // boards across the walk, a finger's gap apart, each a little different
+      const n = Math.max(4, Math.round(S / 0.152)), pitch = S / n;
+      for (let i = 0; i < n; i++) { const r = hash(seed++), r2 = hash(seed++);
+        put('board' + Math.floor(r * 6), at(-S / 2 + pitch * (i + 0.5) + (r2 - 0.5) * 0.008, (r - 0.5) * 0.005, (r2 - 0.5) * 0.04, (r - 0.5) * 0.02, 0, 1, 1, W + 0.04 + r2 * 0.03)); }
+      for (const z of [-W / 2 + 0.16, 0, W / 2 - 0.16]) put('stringer', at(-S / 2 - 0.05, -0.035, z, 0, 0, S + 0.1, 1, 1));
+      for (const x of [-S / 2 + 0.12, S / 2 - 0.12]) put('sill', at(x, -0.255, 0, 0, 0, 1, 1, W + 0.3));
+      // posts each side, about every 1.2 m, handrail and mid rail on them, a brace in each end panel
+      const np = Math.max(2, Math.ceil((S - 0.2) / 1.25) + 1), x0 = -S / 2 + 0.12, x1 = S / 2 - 0.12;
+      for (const s of [-1, 1]) { const z = s * (W / 2 + 0.065);
+        for (let i = 0; i < np; i++) put('post', at(x0 + (x1 - x0) * i / (np - 1), 0, z, 0, 0, 1, 1, 1));
+        put('rail', at(x0 - 0.06, 0.985, z, 0, 0, x1 - x0 + 0.12, 1, 1)); put('midrail', at(x0, 0.5, z + s * 0.01, 0, 0, x1 - x0, 1, 1));
+        const pw = (x1 - x0) / (np - 1), rise = 0.42, len = Math.hypot(pw, rise), ang = Math.atan2(rise, pw);
+        put('brace', at(x0, 0.05, z - s * 0.012, 0, ang, len, 1, 1)); put('brace', at(x1, 0.05, z - s * 0.012, Math.PI, ang, len, 1, 1)); }
+    },
+    finish(group) {
+      for (const [name, Ms] of Object.entries(lists)) { const g = parts[name]; if (!g) continue;
+        const im = new THREE.InstancedMesh(g, mat, Ms.length); Ms.forEach((M, i) => im.setMatrixAt(i, M)); im.castShadow = im.receiveShadow = true; group.add(im); }
+    },
+  };
 }

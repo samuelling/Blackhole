@@ -60,7 +60,7 @@ export function makeLayout() {
   const arches = [[-21, 27, 0, 1], [-21, -8, 0, 1], [21, 16, 0, 1], [21, -8, 0, 1], [0, -17, 0, 1]];   // x, z, tangent
   const bench = { x: 0, z: -28.0 };
   // x, y, z, size — index 1 is the giant above the grand fountain
-  const voids = [[0, 2.6, 37.0, 1.0], [0, 16.5, 0, 3.0], [-13, 3.0, 37.5, 1.25], [13, 2.6, 37.5, 0.9], [-17.2, 2.6, 0, 0.8], [13.4, 4.6, 22.2, 0.5], [0.5, 2.8, -22.5, 1.0], [22.6, 2.6, -12, 0.7], [-22.8, 2.4, 14, 0.45], [-14.2, 4.8, -16.8, 0.55]];
+  const voids = [[0, 2.6, 37.0, 1.0], [0, 19.5, 0, 3.0], [-13, 3.0, 37.5, 1.25], [13, 2.6, 37.5, 0.9], [-17.2, 2.6, 0, 0.8], [13.4, 4.6, 22.2, 0.5], [0.5, 2.8, -22.5, 1.0], [22.6, 2.6, -12, 0.7], [-22.8, 2.4, 14, 0.45], [-14.2, 4.8, -16.8, 0.55]];
   const start = { x: 0, z: 52.6 };
   const pathS = [];
   const line = (x0, z0, x1, z1) => { const L = Math.hypot(x1 - x0, z1 - z0); for (let d = 0; d <= L; d += 0.5) pathS.push([x0 + (x1 - x0) * d / L, z0 + (z1 - z0) * d / L]); };
@@ -75,7 +75,7 @@ export function makeLayout() {
 // ======================================================================= assets
 export const PBR_SETS = ['gravel_floor', 'sparse_grass', 'yellow_flower_mulch', 'cobblestone_square', 'castle_brick_02_red', 'white_plaster_02', 'bark_brown_02'];
 const CARDS = ['leaf_atlas', 'card_yew', 'card_box', 'card_lime', 'card_cover', 'card_ivy', 'trees_atlas'];
-const MODELS = ['street_lamp_01', 'large_iron_gate', 'painted_wooden_bench', 'concrete_cat_statue'];
+const MODELS = ['street_lamp_01', 'painted_wooden_bench', 'concrete_cat_statue'];   // (the scanned iron gate, large_iron_gate, is fetched only if the forged one is missing)
 // Models are glTF saved as .json with the buffer embedded as base64 (tools/gltf_embed.py). The buffer is unpacked here and
 // handed to GLTFLoader as an in-memory GLB, so nothing but same-origin fetches is needed (data: URLs are often blocked).
 export async function loadModel(url) {
@@ -99,6 +99,8 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   for (const s of PBR_SETS) { tex[s] = {}; for (const [m, srgb] of [['diff', true], ['nor', false], ['arm', false]]) jobs.push(T(`${s}_${m}`, srgb, true).then(t => { tex[s][m] = t; })); }
   for (const c of CARDS) { jobs.push(T(c, true, false).then(t => { tex[c] = t; })); jobs.push(T(c + '_n', false, false).then(t => { tex[c + '_n'] = t; })); }
   jobs.push(T('waternormals', false, true).then(t => { tex.waternormals = t; }));
+  // the clipped face of yew and box (tools/blender/build_hedge.py): tiles of rendered shoots, every 0.5 m; the older sprig shells without them
+  for (const h of ['hedge_yew', 'hedge_yew_n', 'hedge_box', 'hedge_box_n']) jobs.push(T(h, !h.endsWith('_n'), true).then(t => { tex[h] = t; }, () => {}));
   jobs.push(T('trees_atlas_m', false, false).then(t => { tex.trees_atlas_m = t; }));   // which leaf, turn order, wood (tools/build_leafcards.py)
   for (const m of MODELS) jobs.push(loadModel(`${base}models/${m}/${m}.json`).then(sc => { models[m] = sc; tick(); }, () => { throw new Error('could not load ' + m); }));
   // stonework modelled in Blender (tools/blender/build_stone.py); the garden falls back to simple turned shapes without it
@@ -106,6 +108,11 @@ export async function loadAssets(renderer, onProgress = () => {}) {
   // trees grown in Blender (tools/blender/build_trees.py); simpler procedural trees stand in without them
   jobs.push(loadModel(base + 'models/props.json').then(sc => { models.props = sc; tick(); }, () => tick()));   // coping stones, lantern (build_props.py)
   jobs.push(loadModel(base + 'models/trees.json').then(sc => { models.trees = sc; tick(); }, () => tick()));
+  // timber footbridges over the brook (tools/blender/build_bridge.py): a kit of parts, its own weathered-oak atlas; stone slabs without it
+  jobs.push(Promise.all([loadModel(base + 'models/bridge.json'), T('bridge', true, false), T('bridge_n', false, false)]).then(([scene, map, nmap]) => { map.flipY = nmap.flipY = false; models.bridge = { scene, map, nmap }; }, () => tick()));
+  // wrought ironwork (tools/blender/build_ironwork.py): the entrance gates and their overthrow, the rose arches
+  jobs.push(loadModel(base + 'models/ironwork.json').then(sc => { models.ironwork = sc; tick(); },
+    () => loadModel(`${base}models/large_iron_gate/large_iron_gate.json`).then(sc => { models.large_iron_gate = sc; tick(); }, () => tick())));
   jobs.push(loadModel(base + 'models/astronaut.json').then(sc => { models.astronaut = sc; tick(); }, () => tick()));   // your own body (build_astronaut.py); you walk as a bare camera without it
   // plants modelled in Blender (build_plants.py), for the species that have them; ?nopm leaves every plant procedural
   // (fetched in the background once the garden is open, nearest first: see plantmodels.js)
@@ -763,9 +770,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const radiusOf = k => SIZE[k][1] / 2 * IN;
   // ---------------------------------------------------------------- hedges & topiary: clipped forms shelled with scanned sprigs
   const hedgeBase = texOf(noiseTex(512, 512, '#223319', [[16000, ['#2f4423', '#1b2913', '#3a5229', '#24361a'], [1.5, 4]]], 5), renderer);
+  for (const h of ['hedge_yew', 'hedge_yew_n', 'hedge_box', 'hedge_box_n']) if (TX[h]) TX[h].repeat.set(2, 2);   // the tiles are half a metre; hedge and topiary uvs are in metres
   const HK = {
-    yew: { base: P.std({ map: hedgeBase, roughness: 1, color: 0x8f9a8a }), card: P.std(cut({ map: TX.card_yew, normalMap: TX.card_yew_n, color: new THREE.Color(1.5, 1.55, 1.4), alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.4 }), { sway: 0.025, swayH: 2, translucent: true, key: 'yew' }), depth: P.depth(TX.card_yew, {}), size: 0.2, dens: lite ? 110 : 300 },
-    box: { base: P.std({ map: hedgeBase, roughness: 1, color: 0xb4c49a }), card: P.std(cut({ map: TX.card_box, normalMap: TX.card_box_n, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.55, envMapIntensity: 0.5 }), { sway: 0.02, swayH: 1, translucent: true, key: 'box' }), depth: P.depth(TX.card_box, {}), size: 0.135, dens: lite ? 170 : 420 },
+    yew: { base: TX.hedge_yew ? P.std({ map: TX.hedge_yew, normalMap: TX.hedge_yew_n, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.85, color: new THREE.Color(1.5, 1.55, 1.4) }, { key: 'hyew' }) : P.std({ map: hedgeBase, roughness: 1, color: 0x8f9a8a }), card: P.std(cut({ map: TX.card_yew, normalMap: TX.card_yew_n, color: new THREE.Color(1.5, 1.55, 1.4), alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.72, envMapIntensity: 0.4 }), { sway: 0.025, swayH: 2, translucent: true, key: 'yew' }), depth: P.depth(TX.card_yew, {}), size: 0.2, dens: lite ? 110 : 300 },
+    box: { base: TX.hedge_box ? P.std({ map: TX.hedge_box, normalMap: TX.hedge_box_n, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.6, color: 0xf0f2ea }, { key: 'hbox' }) : P.std({ map: hedgeBase, roughness: 1, color: 0xb4c49a }), card: P.std(cut({ map: TX.card_box, normalMap: TX.card_box_n, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.55, envMapIntensity: 0.5 }), { sway: 0.02, swayH: 1, translucent: true, key: 'box' }), depth: P.depth(TX.card_box, {}), size: 0.135, dens: lite ? 170 : 420 },
   };
   function sweepGeo(pts, closed, W, H, kind) {
     const w = W / 2, rt = kind === 'box' ? w * 0.95 : Math.min(w * 0.55, H * 0.25), prof = [];
@@ -827,7 +835,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     mesh.customDepthMaterial = depth; mesh.castShadow = true; mesh.receiveShadow = true; mesh.computeBoundingSphere(); scene.add(mesh);
     return mesh;
   }
-  const shellify = (geo, kind, k = 1) => scatter(geo, HK[kind].card, HK[kind].depth, { size: HK[kind].size * k, dens: HK[kind].dens / (k * k) });
+  // with the rendered clipped face under them, the sprig cards are only the few shoots that have grown out since the last clipping
+  const FUZZ = TX.hedge_yew ? 0.35 : 1;
+  const shellify = (geo, kind, k = 1) => scatter(geo, HK[kind].card, HK[kind].depth, { size: HK[kind].size * k * (TX.hedge_yew ? 0.75 : 1), dens: HK[kind].dens * FUZZ / (k * k), outFrac: TX.hedge_yew ? 0.85 : 0.5 });
   function hedge(pts, closed, W, H, kind, solid = true) {
     const geo = sweepGeo(pts, closed, W, H, kind), base = new THREE.Mesh(geo, HK[kind].base);
     base.castShadow = base.receiveShadow = true; scene.add(base); shellify(geo, kind);
@@ -843,6 +853,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     else if (form === 'tier') { const pts = []; for (let i = 0; i <= 36; i++) { const t = i / 36; pts.push(new THREE.Vector2(Math.max(0.01, R * (1 - 0.5 * t) * (0.2 + 0.8 * Math.pow(Math.abs(Math.sin(Math.PI * t * 3)), 0.6)) * Math.min(1, (1 - t) / 0.04)), t * Hh)); } geo = new THREE.LatheGeometry(pts, 24); }   // three stacked rounds: a "cake stand"
     else { const pts = []; for (let i = 0; i <= 16; i++) { const t = i / 16; pts.push(new THREE.Vector2(Math.max(0.01, R * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.02)), form === 'cone' ? 0.9 : 0.45) * (form === 'cone' ? 1 - t * 0.75 : 1)), t * Hh)); } geo = new THREE.LatheGeometry(pts, 24); }
     const pa = geo.attributes.position; for (let i = 0; i < pa.count; i++) { const v = new V3().fromBufferAttribute(pa, i), d = 1 + (vn2(v.x * 4 + x, v.y * 4 + v.z * 3, 8) - 0.5) * 0.08; pa.setXYZ(i, v.x * d, v.y, v.z * d); }
+    { const uv = geo.attributes.uv, P2 = geo.attributes.position; for (let i = 0; i < P2.count; i++) { const vx = P2.getX(i), vy = P2.getY(i), vz = P2.getZ(i), r = Math.hypot(vx, vz); uv.setXY(i, Math.atan2(vz, vx) * Math.max(r, 0.05), vy); } }   // in metres round and up
     geo.computeVertexNormals(); geo.translate(x, 0, z);
     const base = new THREE.Mesh(geo, HK[kind].base); base.castShadow = base.receiveShadow = true; scene.add(base); shellify(geo, kind, form === 'ball' ? 0.85 : 1);
     aoBlob(x, z, R * 2.2, 0.55); block(x, z, R + 0.2);
@@ -892,6 +903,12 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const course = (list, x0, z0, x1, z1, y, unitLen) => { const L = Math.hypot(x1 - x0, z1 - z0), n = Math.max(1, Math.round(L / unitLen)), q = new Q().setFromAxisAngle(_Y, Math.abs(x1 - x0) > Math.abs(z1 - z0) ? 0 : Math.PI / 2);
     for (let i = 0; i < n; i++) { const t = (i + 0.5) / n; list.push(new THREE.Matrix4().compose(new V3(lerp(x0, x1, t), y, lerp(z0, z1, t)), q, new V3(L / n / unitLen, 1, 1))); } };
   const tones = n => Array.from({ length: n }, () => new THREE.Color().setScalar(rr(0.8, 1.06)));
+  // a model's meshes as plain float geometry with their node transforms baked in (packed models carry their scale on the node)
+  const bakedParts = sc => { const out = {}; if (!sc) return out; sc.updateMatrixWorld(true);
+    sc.traverse(o => { if (!o.isMesh) return; const g = o.geometry.clone();
+      for (const k of ['position', 'normal']) { const a = g.attributes[k]; if (!a) continue; const f = new Float32Array(a.count * 3); for (let i = 0; i < a.count; i++) { f[i * 3] = a.getX(i); f[i * 3 + 1] = a.getY(i); f[i * 3 + 2] = a.getZ(i); } g.setAttribute(k, new THREE.BufferAttribute(f, 3)); }
+      g.applyMatrix4(o.matrixWorld); out[o.name] = g; }); return out; };
+  const ironParts = bakedParts(assets.models.ironwork);
   const stoneParts = {};
   if (assets.models.stone) assets.models.stone.updateMatrixWorld(true);
   if (assets.models.stone) assets.models.stone.traverse(o => { if (!o.isMesh) return; const g = o.geometry, c = g.attributes.color;
@@ -1093,9 +1110,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     const lamp = assets.models.street_lamp_01, LAMP_H = 3.3, lk = LAMP_H / 3.87;
     adopt(lamp, s => /glass/.test(s.name) ? { transparent: true, opacity: 0.22, roughness: 0.08, metalness: 0, depthWrite: false } : /bulb/.test(s.name) ? { emissive: new THREE.Color(1, 0.72, 0.4), emissiveIntensity: 6, map: null } : null);
     for (const [x, z] of layout.lamps) { const m = lamp.clone(); m.scale.setScalar(lk); m.position.set(x, 0, z); m.rotation.y = Math.atan2(x, z); scene.add(m); block(x, z, 0.3); aoBlob(x, z, 0.7, 0.55); lampHeads.push([x, 3.27 * lk, z]); }
-    const gate = assets.models.large_iron_gate; adopt(gate);
-    { const k = (layout.gate.hw * 2 + 0.04) / 2.96; gate.scale.setScalar(k); gate.position.set(layout.gate.x, 0, layout.gate.z); scene.add(gate);
-      for (let x = -layout.gate.hw; x <= layout.gate.hw; x += 0.25) block(x, layout.gate.z, 0.3); }
+    if (ironParts.gate_left) { for (const n of ['gate_left', 'gate_right', 'overthrow']) { const m = new THREE.Mesh(ironParts[n], metalMat); m.position.set(layout.gate.x, 0, layout.gate.z); m.castShadow = m.receiveShadow = true; scene.add(m); } }
+    else if (assets.models.large_iron_gate) { const gate = assets.models.large_iron_gate; adopt(gate); const k = (layout.gate.hw * 2 + 0.04) / 2.96; gate.scale.setScalar(k); gate.position.set(layout.gate.x, 0, layout.gate.z); scene.add(gate); }
+    for (let x = -layout.gate.hw; x <= layout.gate.hw; x += 0.25) block(x, layout.gate.z, 0.3);
     const bench = assets.models.painted_wooden_bench; adopt(bench);
     { bench.scale.setScalar(1.18); bench.position.set(layout.bench.x, 0, layout.bench.z); scene.add(bench);
       for (const dx of [-0.5, 0, 0.5]) block(layout.bench.x + dx, layout.bench.z, 0.45); aoBlob(layout.bench.x, layout.bench.z, 1.3, 0.5); }
@@ -1112,9 +1129,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       for (let i = 0; i <= 24; i++) { const u = i / 24; let off, y;
         if (u < 0.3) { off = -Wd; y = u / 0.3 * 2.1; } else if (u > 0.7) { off = Wd; y = (1 - u) / 0.3 * 2.1; } else { const a = Math.PI * (1 - (u - 0.3) / 0.4); off = Math.cos(a) * Wd; y = 2.1 + Math.sin(a) * 0.75; }
         pts.push(new V3(bx + nx * off, y, bz + nz * off)); }
-      frames.push(pts); for (let i = 0; i < pts.length - 1; i++) tubeSegs.push([pts[i].toArray(), pts[i + 1].toArray(), 0.02]);
+      frames.push(pts); if (!ironParts.rose_arch) for (let i = 0; i < pts.length - 1; i++) tubeSegs.push([pts[i].toArray(), pts[i + 1].toArray(), 0.02]);
     }
-    for (let i = 4; i <= 20; i += 2) tubeSegs.push([frames[0][i].toArray(), frames[1][i].toArray(), 0.012]);
+    if (ironParts.rose_arch) { const m = new THREE.Mesh(ironParts.rose_arch, metalMat); m.position.set(ax, 0, az); m.rotation.y = Math.atan2(-nz, nx); m.castShadow = m.receiveShadow = true; scene.add(m); }   // forged in Blender
+    else for (let i = 4; i <= 20; i += 2) tubeSegs.push([frames[0][i].toArray(), frames[1][i].toArray(), 0.012]);
     const L = LOOKS.roseDA, lr = LEAF_RECTS[L.leaf] || LEAF_RECTS.rose, lc = new THREE.Color(L.leafCol), archPal = pick(PALETTES.roseDA);
     for (let i = 0; i < (lite ? 200 : 420); i++) {
       const fi = rng() < 0.5 ? 0 : 1, u = rng() * 24, a = frames[fi][Math.floor(u)], b = frames[fi][Math.min(24, Math.floor(u) + 1)];
@@ -1471,7 +1489,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   // the year's leaf model: a table of every leaf class's pigments by day, and each species' fall
   const leafTab = new THREE.DataTexture(new Uint8Array((ND + 1) * SPECIES.length * NC * 4), ND + 1, SPECIES.length * NC, THREE.RGBAFormat, THREE.UnsignedByteType);
   leafTab.magFilter = leafTab.minFilter = THREE.NearestFilter; leafTab.generateMipmaps = false; leafTab.needsUpdate = true; U.uLeafTab = { value: leafTab };
-  const brook = createBrook({ U, COMMON, P, gravel: G.grav, wn: TX.waternormals, lite }); scene.add(brook.group);
+  const brook = createBrook({ U, COMMON, P, gravel: G.grav, wn: TX.waternormals, lite, bridge: assets.models.bridge }); scene.add(brook.group);
   const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite, heightAt }); scene.add(leafFall.group);
   let autumn = null;
   function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }
