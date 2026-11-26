@@ -1817,10 +1817,10 @@ function update(dt, t) {
     if (!v || v.evap) continue;
     if (v.dieAt == null) v.dieAt = t + lifeOf(v);
     if (S.restless && started && t > v.dieAt) { collapseVoid(v, true); continue; }
-    const d = player.distanceTo(v.pos);
+    const filmEye = filmCam && !filmCam.space ? filmCam.p : null, d = (filmEye || player).distanceTo(v.pos);   // in the intro film's garden shots it is the camera they notice
     const k = v.k, wakeR = (v.giant ? 28 : 5.5 + 7 * Math.pow(k, 0.9)) * S.wakeRange;
-    let target = started && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
-    const rate = target > v.wake ? 0.45 : 0.08;
+    let target = (started || filmEye) && d < wakeR ? 1 : 0; if (v.giant) target = Math.max(target, 0.4);   // it never fully sleeps
+    const rate = (target > v.wake ? 0.45 : 0.08) * (filmEye ? filmCam.wake : 1);
     v.wake += (target - v.wake) * Math.min(1, dt * rate);
     v.scar = Math.max(v.scar - dt / 40, v.wake);
     v.drain = Math.max(v.wake, v.scar * 0.8);
@@ -1828,7 +1828,7 @@ function update(dt, t) {
     v.R = (0.18 + 1.0 * w + 0.05 * Math.sin(t * 1.3 + v.seed) * w) * k * S.voidSize;
     v.reach = (2.5 + 15.5 * v.drain) * Math.pow(k, 0.85); v.reach = Math.min(v.reach, v.giant ? 25 : 13);
     if (v.giant) { if (!v.wasAwake && v.wake > 0.6) { v.wasAwake = true; if (A.ctx && A.on) inhale(1.4, 3.5); } if (v.wake < 0.5) v.wasAwake = false; }
-    else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
+    else if (!v.wasAwake && v.wake > 0.04) { v.wasAwake = true; if (A.ctx && A.on) inhale(Math.min(1.3, 0.45 + 0.4 * k), k); if (!firstWake && !filmEye) { firstWake = true; setHint('it noticed you · walk away and the light comes back', 7000); } }
     if (v.wake < 0.02) v.wasAwake = false;
     // drift toward the walker, tethered to home
     const desired = tmpP.copy(v.home);
@@ -2014,7 +2014,7 @@ if (multi) {
   const eM = $('enterMp'); eM.hidden = false; if (roomQ) eM.textContent = `join room ${roomQ}`;
   eM.addEventListener('click', e => { e.stopPropagation(); enterGarden(() => { multi.open(); if (roomQ) multi.join(roomQ); }); });
 }
-film = createFilm({ renderer, cat: starCat ? starCat.d : null, audio: () => A, isTouch, robot: () => S.brodieRobot ?? 0.5, game: { scene, hole: () => junk.hole } });
+film = createFilm({ renderer, cat: starCat ? starCat.d : null, audio: () => A, isTouch, robot: () => S.brodieRobot ?? 0.5, game: { scene, hole: () => junk.hole, giant: () => voidSlots[GIANT] && !voidSlots[GIANT].evap ? voidSlots[GIANT].pos : null } });
 composer.addPass(film.grade);   // the film's grade, on while one of its shots is the game's
 if (!film.seen && !TEST && !QS.has('nofilm')) setTimeout(() => film.preload(), 1500);
 { const st = $('story'); if (st) { st.hidden = false; st.addEventListener('click', e => { e.stopPropagation(); playFilm(); }); } }

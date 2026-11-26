@@ -11,12 +11,12 @@ The background narrative for the game, as Sam set it out (26 Nov 2026). Everythi
 ## What the land carries
 
 - **Earth's blueprint** is embedded in the land.
-- So is a **static snapshot of the entire human population in 2027**, taken before The Event.
+- So is a **static snapshot of the entire human population in 2027**, taken before The Event. Alive in 2027, and gone the year after whenever you are hearing this.
 
 ## What went wrong
 
-- A few centuries into the journey, **our ship lost its navigation**.
 - **The wormhole** was built to connect the ships of the fleet. It's the one out in the field, where things come through.
+- A few centuries into the journey, **a glitch in the wormhole technology opened black holes inside the ship**. They threw it off course, and that is how **our ship lost its navigation**. They are still here: they come and go as they wish.
 - One of the other ships carries the **Shred Hole**. It has a fabricator, but **no Earth blueprint any more**: a Shred Hole accident compromised it. What it shreds comes to us through the wormhole.
 - Before it went offline, another ship sent word that it had found something it called **World Builder**. We have only partial coordinates for it.
 - The Shredder has established a **vortex portal** to World Builder. We are still working out where it is, and how to get there.

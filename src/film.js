@@ -1,10 +1,10 @@
 // film.js: the intro. The story so far (STORY.md), told in eight shots before you first walk in, with Brodie telling it:
-// Earth and The Event, the fleet, our ship and what its land carries, the navigation lost, the wormhole, the Shred Hole's ship,
+// Earth and The Event, the fleet, our ship and what its land carries, the wormhole, the black holes its glitch let in, the Shred Hole's ship,
 // World Builder at half its coordinates, and the crew's task. About a minute and a half; Esc, Enter or "skip" ends it. It plays
 // once (the title's "the story so far" plays it again).
 //
 // Half of it IS the game. Our ship is the real bubble, seen by the game's own space view; the wormhole is the one in the east
-// field; the last shot walks in through the light tunnel and climbs out over the garden. For those shots this file only says where
+// field; the black hole is the great void over the fountain, waking; the last shot walks in through the light tunnel and climbs out over the garden. For those shots this file only says where
 // the camera is (main.js hands it over) and lays a few things into the game's scene (the lights in the ground, what falls through).
 // The other half is drawn here, in a scene of its own, through its own bloom and the same tone curve: the Earth (NASA's Blue
 // Marble by day, Black Marble by night: real coasts, real cities, which go out), the fleet leaving, the Shred Hole's ship with
@@ -40,12 +40,14 @@ float fbm3(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a
 // ---------------------------------------------------------------- the script
 // Shots: game: true is drawn by the game itself (this file only poses its camera). Lines: [seconds into the shot, clip, its length
 // as recorded, the words as they appear: [fraction of the clip at which each caption starts, caption]].
+// "…and gone in": the year after the one it is being watched in. (Brodie has said the next few; after that the words stand alone.)
+const YEAR = new Date().getFullYear() + 1, GONE = { 2027: 1.75, 2028: 1.91, 2029: 1.70, 2030: 1.52, 2031: 1.52, 2032: 1.67 };
 const SHOTS = [
   { id: 'earth', len: 15.5, vo: [[2.6, '01', 1.75, [[0, 'Earth. 2027.']]], [7.3, '02', 1.25, [[0, 'Then came The Event.']]], [11.6, '03', 1.67, [[0, 'Earth became uninhabitable.']]]] },
   { id: 'fleet', len: 9.5, vo: [[1.3, '04', 4.44, [[0, 'A fleet of probes went out,'], [0.36, 'each one looking for a place where life could carry on.']]]] },
-  { id: 'ship', len: 13.5, game: true, vo: [[1.3, '05', 0.91, [[0, 'We are one of them.']]], [4.8, '06', 4.86, [[0, 'Our land carries Earth’s blueprint,'], [0.42, 'and a snapshot of everyone alive in 2027.']]]] },
-  { id: 'lost', len: 8.5, game: true, vo: [[1.5, '07', 2.87, [[0, 'A few centuries out,'], [0.4, 'our ship lost its navigation.']]]] },
+  { id: 'ship', len: 15, game: true, vo: [[1.3, '05', 0.91, [[0, 'We are one of them.']]], [4.8, '06', 4.86, [[0, 'Our land carries Earth’s blueprint,'], [0.42, 'and a snapshot of everyone alive in 2027.']]], [10.6, `gone-${YEAR}`, GONE[YEAR] || 1.7, [[0, `…and gone in ${YEAR}.`]]]] },
   { id: 'worm', len: 9.5, game: true, vo: [[1.3, '08', 3.34, [[0, 'The wormhole links the ships of the fleet.'], [0.66, 'Things come through it.']]]] },
+  { id: 'voids', len: 12, game: true, vo: [[1.2, '07', 4.36, [[0, 'A few centuries out, a glitch in the wormhole'], [0.55, 'opened black holes inside our ship.']]], [6.9, '14', 3.11, [[0, 'They threw us off course.'], [0.42, 'They come and go as they wish.']]]] },
   { id: 'shred', len: 10.5, vo: [[1.4, '09', 5.15, [[0, 'One ship carries the Shred Hole: a fabricator'], [0.5, 'that lost its Earth blueprint in an accident.']]]] },
   { id: 'world', len: 11.5, vo: [[1.2, '10', 4.02, [[0, 'Before it went dark, another ship found something.'], [0.64, 'It called it World Builder.']]], [7.6, '11', 1.52, [[0, 'We have half the coordinates.']]]] },
   { id: 'home', len: 16.5, game: true, vo: [[1.0, '12', 2.04, [[0, 'So it’s up to us to find our way again.']]], [4.6, '13', 5.04, [[0, 'Until then, we garden.'], [0.27, 'We build the wall.'], [0.5, 'And whatever else suits our fancy, brody.']]]] },
@@ -58,7 +60,7 @@ export const FILM_LENGTH = SHOTS[SHOTS.length - 1].t1;
 const at = id => SHOTS.find(s => s.id === id).t0;
 
 /** o: { renderer, cat (the star catalogue), audio(): { ctx, on }, robot(): how much machine in Brodie's voice, isTouch,
- *       game: { scene, hole(): where the wormhole hangs (a Vector3) } } */
+ *       game: { scene, hole(): where the wormhole hangs (a Vector3), giant(): where the great void is } } */
 export function createFilm(o) {
   const { renderer } = o, G = o.game || {};
   const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(38, 1, 0.05, 20000); scene.background = new THREE.Color(0x000000);
@@ -327,18 +329,13 @@ export function createFilm(o) {
     #film .skip { position:absolute; right:calc(18px + env(safe-area-inset-right)); bottom:calc(max(10px, var(--bar) / 2 - 15px) + env(safe-area-inset-bottom)); font:11px 'IBM Plex Mono', ui-monospace, monospace; letter-spacing:.2em; text-transform:uppercase; color:rgba(233,228,218,.55); background:none; border:1px solid rgba(233,228,218,.22); border-radius:14px; padding:7px 14px; cursor:pointer; }
     #film .skip:hover { color:#fff; border-color:rgba(233,228,218,.6); }
     #film .title { position:absolute; left:0; right:0; top:calc(var(--bar) + 7vh); text-align:center; font:500 clamp(36px, 8.5vmin, 96px)/1 'Cormorant Garamond', Georgia, serif; color:#f4efe5; opacity:0; text-shadow:0 2px 40px #000, 0 0 4px rgba(0,0,0,.6); letter-spacing:.01em; } #film .title em { font-style:italic; }
-    #film .nav { position:absolute; left:66%; top:38%; width:30vmin; height:30vmin; margin:-15vmin 0 0 -15vmin; opacity:0; filter:drop-shadow(0 0 6px rgba(140,255,190,.5)); } #film .nav svg { width:100%; height:100%; overflow:visible; }
-    #film .nav text { font:10px 'IBM Plex Mono', ui-monospace, monospace; letter-spacing:.2em; fill:#bfe8cc; } #film .nav.lost { filter:drop-shadow(0 0 8px rgba(255,90,60,.7)); } #film .nav.lost text { fill:#ff8a6a; } #film .nav.lost circle, #film .nav.lost line, #film .nav.lost path { stroke:#ff8a6a; }
     #film .coord { position:absolute; left:0; right:0; top:calc(var(--bar) + 5vh); text-align:center; font:clamp(11px, 1.9vmin, 16px)/1.9 'IBM Plex Mono', ui-monospace, monospace; letter-spacing:.2em; color:#bfe8e0; opacity:0; text-shadow:0 0 12px rgba(120,255,230,.5); } #film .coord b { color:#0b0f0e; background:#bfe8e0; font-weight:400; box-shadow:0 0 12px rgba(120,255,230,.4); }
     #film .wait { position:absolute; left:0; right:0; top:48%; text-align:center; font:11px 'IBM Plex Mono', ui-monospace, monospace; letter-spacing:.3em; text-transform:uppercase; color:rgba(233,228,218,.4); opacity:0; transition:opacity .6s; }`;
   document.head.append(css);
   const el = document.createElement('div'); el.id = 'film';
-  el.innerHTML = `<div class="nav"><svg viewBox="-60 -60 120 120"><circle r="50" fill="none" stroke="#bfe8cc" stroke-width="0.6"/><circle r="38" fill="none" stroke="#bfe8cc" stroke-width="0.3" stroke-dasharray="1 3"/>
-    ${Array.from({ length: 24 }, (_, i) => `<line x1="0" y1="-50" x2="0" y2="${i % 6 ? -47 : -43}" stroke="#bfe8cc" stroke-width="0.5" transform="rotate(${i * 15})"/>`).join('')}
-    <g class="needle"><path d="M0,-36 L4,0 L0,8 L-4,0 Z" fill="none" stroke="#bfe8cc" stroke-width="0.8"/><line x1="0" y1="8" x2="0" y2="30" stroke="#bfe8cc" stroke-width="0.5"/></g><text class="lab" x="0" y="72" text-anchor="middle">NAV · FIX GOOD</text></svg></div>
-    <div class="coord"></div><div class="title">Garden of <em>Delight</em></div><div class="fade"></div><div class="wait">the story so far</div><div class="cap"></div><div class="bar t"></div><div class="bar b"></div><button class="skip">skip ›</button>`;
+  el.innerHTML = `<div class="coord"></div><div class="title">Garden of <em>Delight</em></div><div class="fade"></div><div class="wait">the story so far</div><div class="cap"></div><div class="bar t"></div><div class="bar b"></div><button class="skip">skip ›</button>`;
   const veil = document.createElement('div'); veil.id = 'filmVeil'; document.body.append(el, veil);
-  const fadeEl = el.querySelector('.fade'), capEl = el.querySelector('.cap'), navEl = el.querySelector('.nav'), needle = el.querySelector('.needle'), navLab = el.querySelector('.lab'), coordEl = el.querySelector('.coord'), titleEl = el.querySelector('.title'), waitEl = el.querySelector('.wait');
+  const fadeEl = el.querySelector('.fade'), capEl = el.querySelector('.cap'), coordEl = el.querySelector('.coord'), titleEl = el.querySelector('.title'), waitEl = el.querySelector('.wait');
   el.querySelector('.skip').addEventListener('click', e => { e.stopPropagation(); finish(true); });
   for (const ev of ['mousedown', 'mouseup', 'click', 'contextmenu', 'touchstart', 'touchend', 'pointerdown', 'wheel']) el.addEventListener(ev, e => e.stopPropagation());
   addEventListener('keydown', e => { if (!active) return; e.stopImmediatePropagation(); if (['Escape', 'Enter', 'Space'].includes(e.code)) { e.preventDefault(); finish(true); } }, true);
@@ -381,9 +378,9 @@ export function createFilm(o) {
     [0.3, () => chord([57, 64, 71, 72], 8, 0.05)], [3.2, () => chord([76, 83, 88], 5, 0.02, 'sine', 2.2)],
     [at('earth') + 7.0, () => { boom(44, 4.5, 0.6); sweep(2400, 120, 3.4, 0.12); chord([45, 46, 52], 8.5, 0.05, 'triangle', 0.4); }],
     [at('fleet') + 0.2, () => { chord([53, 60, 65, 69], 9.5, 0.05); sweep(200, 900, 4, 0.04, 0.8); }],
-    [at('ship') + 0.2, () => chord([48, 55, 64, 67], 9, 0.055)], [at('ship') + 4.8, () => chord([72, 76, 79, 84], 9, 0.024, 'sine', 3)],
-    [at('lost') + 0.2, () => chord([50, 57, 62], 4, 0.045)], [at('lost') + 3.0, () => { glitch(); boom(60, 1.4, 0.35); chord([49, 50, 56], 5.5, 0.04, 'sawtooth', 0.2); }],
+    [at('ship') + 0.2, () => chord([48, 55, 64, 67], 9, 0.055)], [at('ship') + 4.8, () => chord([72, 76, 79, 84], 6.5, 0.024, 'sine', 3)], [at('ship') + 10.6, () => chord([60, 63, 67], 4.5, 0.03, 'sine', 0.8)],
     [at('worm') + 0.2, () => { sweep(180, 2600, 2.4, 0.1); chord([50, 57, 65, 69], 9.5, 0.05); }], [at('worm') + 3.4, () => boom(70, 1.2, 0.2)],
+    [at('voids') + 0.2, () => { chord([38, 45, 50, 51], 7, 0.05, 'triangle', 2.5); sweep(1800, 90, 5.5, 0.07, 2); }], [at('voids') + 3.4, () => boom(38, 4, 0.5)], [at('voids') + 6.4, () => { glitch(); boom(60, 1.4, 0.35); chord([49, 50, 56], 5.5, 0.04, 'sawtooth', 0.2); }],
     [at('shred') + 0.2, () => { grind(10); chord([40, 47, 55], 10.5, 0.05, 'triangle'); }],
     [at('world') + 0.2, () => { chord([59, 66, 69, 74], 11.5, 0.042); chord([86, 90, 93], 11.5, 0.012, 'sine', 4); }],
     [at('home') + 0.2, () => chord([45, 57, 64, 69, 73], 16, 0.055, 'triangle', 2.5)], [at('home') + 10.0, () => { chord([81, 85, 88], 6.5, 0.022, 'sine', 2); boom(55, 3, 0.25); }],
@@ -395,13 +392,13 @@ export function createFilm(o) {
   // ---------------------------------------------------------------- the shots
   let active = false, t = 0, onDone = null, ending = 0, frozen = false, lastNow = 0, waiting = 0, gcam = null, sunVis = 0, fadeK = 1, roll = 0, rollV = 0;
   const look = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _z = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0), _s = new THREE.Vector3();
-  const C0 = new THREE.Vector3(CENTRE.x, BUBBLE.y, CENTRE.z), pose = { p: new THREE.Vector3(), q: new THREE.Quaternion(), fov: 40, space: 1, near: 0.07 };
+  const C0 = new THREE.Vector3(CENTRE.x, BUBBLE.y, CENTRE.z), pose = { p: new THREE.Vector3(), q: new THREE.Quaternion(), fov: 40, space: 1, near: 0.07, wake: 1 };
   const show = (...objs) => { for (const m of [earth, fleet, shred, world, sunS]) m.visible = objs.includes(m); };
   const orbitDir = (yaw, pitch, out) => out.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
-  function gameCam(eye, target, fov, space, rollA = 0) { pose.p.copy(eye); _m.lookAt(eye, target, UP); pose.q.setFromRotationMatrix(_m); if (rollA) pose.q.multiply(_q.setFromAxisAngle(_z, rollA)); pose.fov = fov; pose.space = space; pose.near = space ? Math.max(1, (pose.p.distanceTo(C0) - BUBBLE.R) * 0.45) : 0.07; gcam = pose; }
+  function gameCam(eye, target, fov, space, rollA = 0) { pose.p.copy(eye); _m.lookAt(eye, target, UP); pose.q.setFromRotationMatrix(_m); if (rollA) pose.q.multiply(_q.setFromAxisAngle(_z, rollA)); pose.fov = fov; pose.space = space; pose.wake = 1; pose.near = space ? Math.max(1, (pose.p.distanceTo(C0) - BUBBLE.R) * 0.45) : 0.07; gcam = pose; }
   function frameShot(S, u, ts, dt) {
     const id = S.id; gcam = null; extra.visible = false; sunVis = 0; let inner = 1; if (id !== 'worm') for (const m of things) m.visible = false;
-    navEl.style.opacity = 0; coordEl.style.opacity = 0; titleEl.style.opacity = 0; starU.uGain.value = 1; skyU.uNeb.value = 0; skyU.uMilky.value = 1; dustU.uGain.value = 0; bloom.strength = 0.85; bloom.threshold = 0.82;
+    coordEl.style.opacity = 0; titleEl.style.opacity = 0; starU.uGain.value = 1; skyU.uNeb.value = 0; skyU.uMilky.value = 1; dustU.uGain.value = 0; bloom.strength = 0.85; bloom.threshold = 0.82;
     if (id === 'earth') {   // the night side from orbit, its cities lit; the sun comes over the limb; then the lights go out across the world, and the air turns
       show(earth, sunS); SUN.set(0.2, -0.22, -0.95).normalize(); const dist = 31 - 2.5 * u, th = (Math.asin(10 / dist) / D2R - 0.7 + 1.5 * ease(ts / 4.5) - 0.5 * ease((ts - 9) / 6)) * D2R;   // the sun stays at the limb: a diamond ring
       _a.copy(SUN).negate().applyAxisAngle(UP, -th).normalize(); cam.position.copy(_a).multiplyScalar(dist); look.set(0, 0, 0).addScaledVector(_b.crossVectors(UP, _a).normalize(), -2.2 + 1.2 * u); cam.fov = 36;
@@ -419,16 +416,15 @@ export function createFilm(o) {
         _q.setFromAxisAngle(UP, f.spin + ts * 0.05); _m.compose(_a, _q, _s.setScalar(Math.max(f.R * ease(tt * 1.6), 1e-4))); fShell.setMatrixAt(i, _m); fLand.setMatrixAt(i, _m); }
       fShell.instanceMatrix.needsUpdate = fLand.instanceMatrix.needsUpdate = true; skyU.uNeb.value = 0.1; HEAD.copy(ax).multiplyScalar(-1).addScaledVector(UP, 0.5).addScaledVector(rt, -0.7).normalize(); dustU.uGain.value = 0.25 * ease(ts / 4);
     } else if (id === 'ship') {   // ours: the game's own bubble, the nebula behind it; then down under the brink to what its ground carries
-      const dn = ease((ts - 4.2) / 6.5), a = 0.72 + 0.42 * u, d = 350 - 118 * ease(u * 1.15);
+      const dn = ease((ts - 4.2) / 7), a = 0.72 + 0.42 * u, d = 350 - 118 * ease(u * 1.15);
       orbitDir(a, 0.17 - 0.33 * dn, _a).multiplyScalar(d).add(C0); _b.copy(C0); _b.y += -10 - 26 * dn; gameCam(_a, _b, 34, 1);
-      extra.visible = true; seeds.visible = true; seedU.uOn.value = ease((ts - 4.9) / 4.5) * (1 - ease((ts - 12.6) / 0.8));
-    } else if (id === 'lost') {   // the compass good, then gone: the ship rolls, the stars swing
-      const lostAt = 3.0, k = Math.max(0, ts - lostAt), lost = ts > lostAt;
-      if (frozen) { roll = lost ? 1.9 * (1 - Math.exp(-k * 0.42)) + 0.09 * k : 0; } else { rollV += ((lost ? 0.85 * Math.exp(-k * 0.42) + 0.09 : 0) - rollV) * Math.min(1, dt * 4); roll += rollV * dt; }
-      orbitDir(1.55 + 0.1 * u + 0.5 * (lost ? 1 - Math.exp(-k * 0.5) : 0), 0.1 + 0.2 * Math.sin(roll * 0.7) * (lost ? 1 : 0), _a).multiplyScalar(305 - 20 * u).add(C0); _b.copy(C0).y -= 6; gameCam(_a, _b, 38, 1, roll);
-      navEl.style.opacity = (ease(ts / 1.0) * (1 - ease((ts - 7.6) / 0.7)) * (lost ? 0.5 + 0.5 * Math.round(0.3 + 0.7 * Math.abs(Math.sin(ts * 31) * Math.sin(ts * 7.3))) : 1)).toFixed(3);
-      navEl.classList.toggle('lost', lost); navLab.textContent = lost ? 'NAV · NO FIX' : 'NAV · FIX GOOD';
-      needle.setAttribute('transform', `rotate(${lost ? k * 420 * Math.exp(-k * 0.22) + 40 * Math.sin(ts * 3) : 18 + 1.5 * Math.sin(ts * 0.9)})`);
+      extra.visible = true; seeds.visible = true; seedU.uOn.value = ease((ts - 4.9) / 4.5) * (1 - 0.72 * ease((ts - 10.7) / 0.9)) * (1 - ease((ts - 14.0) / 0.8));   // …and gone: they dim, but they are kept
+    } else if (id === 'voids') {   // the great void over the fountain wakes as we come under it; then, from outside, what it did: the ship rolls, the stars swing
+      const cut = 6.4;
+      if (ts < cut) { const k = ease(ts / cut), z = 26 - 12 * k, V = (G.giant && G.giant()) || _c.set(0, 19.5, 0);
+        _a.set(1.6 * Math.sin(ts * 0.3), heightAt(0, z) + 1.9 + 0.8 * k, z); _b.set(V.x, lerp(7, V.y - 1.5, ease(ts / 4.2)), V.z); gameCam(_a, _b, 60 - 4 * k, 0); pose.wake = 2.4; inner = Math.min(1, (cut - ts) / 0.5); }
+      else { const k = ts - cut; if (frozen || roll === 0) roll = 0.45 + 1.9 * (1 - Math.exp(-k * 0.42)) + 0.09 * k; else { rollV += ((0.85 * Math.exp(-k * 0.42) + 0.09) - rollV) * Math.min(1, dt * 4); roll += rollV * dt; }
+        orbitDir(1.55 + 0.5 * (1 - Math.exp(-k * 0.5)), 0.1 + 0.2 * Math.sin(roll * 0.7), _a).multiplyScalar(300 - 3 * k).add(C0); _b.copy(C0).y -= 6; gameCam(_a, _b, 38, 1, roll); inner = Math.min(1, k / 0.5); }
     } else if (id === 'worm') {   // in the east field, under it: the wormhole, and what comes through
       const H = G.hole ? G.hole() : _c.set(55.6, 21.7, 4.4), an = 0.35 + 0.5 * u, d = 15 - 4 * u;
       _a.set(H.x + Math.cos(an) * d, H.y - 2.5 - 2.5 * u, H.z + Math.sin(an) * d); _b.set(H.x - 2.5, H.y - 2.2 - 1.5 * u, H.z); gameCam(_a, _b, 46, 0);
@@ -505,7 +501,7 @@ export function createFilm(o) {
   }
   return {
     get active() { return active; }, frame, play: begin, skip: () => finish(true), length: FILM_LENGTH, shots: SHOTS.map(s => [s.id, s.t0, s.t1, !!s.game]), grade: gameGrade,
-    /** While a game shot is up: where the game's camera should be ({ p, q, fov, space (0 in the garden, 1 outside), near }); otherwise null. */
+    /** While a game shot is up: where the game's camera should be ({ p, q, fov, space (0 in the garden, 1 outside), near, wake: how fast the voids notice it }); otherwise null. */
     get cam() { return active ? gcam : null; },
     /** Seen before (so it isn't played again unasked)? */
     get seen() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } },
