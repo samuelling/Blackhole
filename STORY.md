@@ -36,4 +36,5 @@ We pass the time:
 ## Still to come
 
 - An **intro cut scene** that tells this story, to be made with Fable.
+- **Star navigation**, the first step to getting our nav back. The garden's sky is the real one, with true star positions. You climb a giant tree for a clear view and take star sightings to fix the ship's position, the way old navigators did. The Shred Hole fabricates the instruments for it. This gets built alongside the cut scene.
 - Eventually, the Shred Hole housed in a **building on a planet you can travel to**.
