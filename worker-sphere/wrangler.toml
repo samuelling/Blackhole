@@ -1,0 +1,18 @@
+# garden-sphere: Brodie's thinking (Claude Haiku) and his voice (ElevenLabs), for the Garden of Delight. Not deployed by any push:
+# deploy it yourself (wrangler deploy, from this folder), then set the secrets: ANTHROPIC_API_KEY, and for the voice ELEVENLABS_API_KEY.
+name = "garden-sphere"
+main = "sphere.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+ORIGINS = "https://linglab.org,https://samuelling.github.io,*.claudeusercontent.com,http://localhost"
+MODEL = "claude-haiku-5-5"
+BRODIE_VOICE = ""            # an ElevenLabs voice id, once Brodie's voice is chosen
+
+# each address: twelve asks a minute, to /chat and /speak separately
+[[ratelimits]]
+name = "LIMIT"
+namespace_id = "2401"
+  [ratelimits.simple]
+  limit = 12
+  period = 60

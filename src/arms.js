@@ -95,7 +95,7 @@ export function createArms(o) {
 
   // ---------------------------------------------------------------- the gun in hand
   let held = null;   // { w, ud, gun (Betamax's model, in the world where your hands hold it), mag, rl (a reload under way), nextAt, drawn }
-  let trigger = false, aiming = 0, aimOn = false, recoil = 0, lastShot = 0, flashT = 0;
+  let trigger = false, aiming = 0, aimOn = false, recoil = 0, lastShot = 0, flashT = 0, fired = 0;
   const flashTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     gr.addColorStop(0, 'rgba(255,250,230,1)'); gr.addColorStop(0.25, 'rgba(255,200,110,.9)'); gr.addColorStop(1, 'rgba(255,120,40,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
     for (let k = 0; k < 6; k++) { g.save(); g.translate(32, 32); g.rotate(k * Math.PI / 3 + 0.3); g.fillStyle = 'rgba(255,220,150,.7)'; g.beginPath(); g.moveTo(-2, 0); g.lineTo(0, -31); g.lineTo(2, 0); g.fill(); g.restore(); }
@@ -301,7 +301,7 @@ export function createArms(o) {
     const h = held, ud = h.ud, now = performance.now() / 1000;
     if (h.rl) return;
     if (h.mag <= 0) { foley('click', 0.5); trigger = false; reload(); return; }
-    h.mag--; h.nextAt = now + 60 / (ud.rpm || 600); lastShot = now; hud();
+    h.mag--; h.nextAt = now + 60 / (ud.rpm || 600); lastShot = now; fired++; hud();
     const O = camera.getWorldPosition(new THREE.Vector3()); camera.getWorldDirection(_d);
     const moving = o.moving ? o.moving() : 0;
     const spread = (0.022 * (1 - aiming) + 0.0025 * aiming + moving * 0.012 + recoil * 0.2) * (ud.spread || 1) + ((ud.pellets || 1) > 1 ? 0.045 : 0);
@@ -650,7 +650,7 @@ export function createArms(o) {
   return {
     update, others, key, mouse, arrive, onMsg,
     get held() { return held && held.drawn ? held.w : ''; }, get down() { return !!downUntil; }, get hp() { return hp; }, get aiming() { return aiming; },
-    get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; },
+    get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; }, get fired() { return fired; },
     /** How much the view narrows, aiming: 1 at the hip, the gun's own sight field (Betamax's adsFov, of 70°) aimed. */
     get zoom() { return held ? 1 + ((held.ud.adsFov || 55) / 70 - 1) * aiming : 1; },
     net: {

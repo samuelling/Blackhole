@@ -8,7 +8,7 @@ const SECTIONS = [
   { id: 'walk', title: 'Walking and looking', rows: [
     K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'run'), K('Space', 'jump (gravity here is a little under half the Earth’s)'), K('climb', 'walk into a tree trunk and keep going: W up, S down, A D round it, Space lets go'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
     K('Shift+V', 'see yourself from outside'), K('Z', 'the space view: the whole bubble from outside'), K('Shift+F', 'full screen'),
-    K('O', 'settings'), K('M', 'sound on / off'), K('F', 'frame rate'), K('?', 'this sheet') ] },
+    K('I', 'talk to Brodie, the little sphere at your shoulder: company, and lessons (“teach me…”)'), K('O', 'settings'), K('M', 'sound on / off'), K('F', 'frame rate'), K('?', 'this sheet') ] },
   { id: 'gesture', title: 'Gestures and bearing', rows: [
     K('1', 'wave'), K('2', 'bow'), K('3', 'beckon'), K('4', 'this way'), K('5', 'nod'), K('6', 'arms up'), K('7', 'laugh'), K('8', 'dance'), K('9', 'chicken dance'), K('0', 'stretch'),
     K('Shift+G', 'the room panel: more gestures, how you carry yourself, your suit and its colours') ] },

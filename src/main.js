@@ -26,6 +26,7 @@ import { doyLabel, doyToMonthDay } from './seasons.js';
 import { createMulti } from './multi.js';
 import { createWorlds } from './worlds.js';
 import { createArms } from './arms.js';
+import { createSphere } from './sphere.js';
 
 // ------------------------------------------------------------------ setup
 const MAXV = 12;
@@ -53,7 +54,7 @@ const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
   exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0, autumnTemp: 0, autumnSun: 0.55, autumnRain: 1, autumnFrost: false, chimes: true, meadow: true, restless: true };
-const SAVED = ['lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost', 'chimes', 'meadow', 'restless'];
+const SAVED = ['brodie', 'brodieChat', 'brodieVoice', 'lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost', 'chimes', 'meadow', 'restless'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -618,7 +619,7 @@ const gardenWorld = {
     peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
   get guest() { return walling.net.guest; },
 };
-let worlds = null, arms = null;   // (arms.js: guns, made once the rest is)
+let worlds = null, arms = null, sphere = null;   // (arms.js: guns, made once the rest is)
 // the Shred Hole (linglab.org/tunnel) is where new junk comes from: opened set to send here
 const SHRED_URL = 'https://linglab.org/tunnel/?to=garden';
 function openShredHole() { try { window.open(SHRED_URL, '_blank', 'noopener'); } catch (e) { location.href = SHRED_URL; } }
@@ -1572,6 +1573,11 @@ const SETTINGS = [
   { id: 'meadow', tab: 'garden', label: 'Meadow sounds', kind: 'toggle', get: () => S.meadow, set: v => { S.meadow = v; save(); if (A.meadow) A.meadow.setEnabled(v); },
     note: 'gusting wind in the grass and leaves, birdsong by day, crickets on summer and autumn nights, an owl now and then' },
   { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
+  { id: 'brodie', tab: 'garden', group: 'Brodie', label: 'Brodie, the little sphere', kind: 'toggle', get: () => S.brodie !== false, set: v => { S.brodie = !!v; }, note: 'the garden, only small: company, and lessons · I talks to him' },
+  { id: 'brodieChat', tab: 'garden', group: 'Brodie', label: 'Chatter', kind: 'choice', options: [{ label: 'only when asked', value: 0 }, { label: 'now and then', value: 1 }, { label: 'chatty', value: 2 }], get: () => S.brodieChat ?? 1, set: v => { S.brodieChat = v; } },
+  { id: 'brodieVoice', tab: 'garden', group: 'Brodie', label: 'Voice', kind: 'choice', options: [{ label: 'off', value: 'off' }, { label: 'the browser’s', value: 'browser' }, { label: 'Brodie’s', value: 'brodie' }], get: () => S.brodieVoice || 'off', set: v => { S.brodieVoice = v; }, note: 'Brodie’s own voice needs the sphere Worker; without it, the browser’s' },
+  { id: 'brodieKey', tab: 'garden', group: 'Brodie', label: 'Use my own Anthropic API key', kind: 'action', set: () => { const k = prompt('Your Anthropic API key, so Brodie can really talk (Claude Haiku). It stays in this browser and goes only to Anthropic. Leave it empty to forget it.', ''); if (k === null) return; try { if (k.trim()) localStorage.setItem('gd.brodie.key', k.trim()); else localStorage.removeItem('gd.brodie.key'); } catch (e) {} setHint(k.trim() ? 'Brodie will talk with your key' : 'your key is forgotten', 3000); } },
+  { id: 'brodieInfo', tab: 'garden', group: 'Brodie', label: '', kind: 'info', get: () => { let k = ''; try { k = localStorage.getItem('gd.brodie.key') || ''; } catch (e) {} return k ? 'Brodie talks with your own key (Claude Haiku, straight from this browser)' : 'Brodie talks with the garden’s key when the sphere Worker is up, and from his written lines otherwise'; } },
   { id: 'canBeShot', tab: 'garden', group: 'Guns', label: 'Others can shoot me', kind: 'toggle', get: () => S.canBeShot !== false, set: v => { S.canBeShot = !!v; }, note: 'in a room: off, their rounds pass through you (your own gun still works)' },
   { id: 'saveInfo', tab: 'garden', group: 'Keeping your garden', label: '', kind: 'info', get: () => `Kept in this browser, and online: ${worlds ? worlds.status : 'not yet'}. Open your garden's link on another device to build there. A room keeps its own garden online, by its code.` },
   { id: 'saveLink', tab: 'garden', label: 'Copy the link to your garden', kind: 'action', set: () => worlds && worlds.copyLink(), note: 'open it on another device (an iPad, say) and your garden is there; keep it to yourself' },
@@ -1715,6 +1721,17 @@ drawer = createDrawer({
   addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (arms.down && ['KeyE', 'KeyG', 'Enter'].includes(e.code)) { arms.key(e.code, true, e.shiftKey); e.preventDefault(); e.stopPropagation(); return; } if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
   addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
 }
+// Brodie (sphere.js): the garden in a glass ball at your shoulder, for company and lessons
+sphere = createSphere({ scene, camera, layout,
+  arborTrees: () => garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, H: t.H })) : [], heap: () => ({ x: junk.heap.x, z: junk.heap.z }),
+  on: () => S.brodie !== false && !QS.has('nobrodie'), chatter: () => S.brodieChat ?? 1, voice: () => S.brodieVoice || 'off',
+  ownKey: () => { try { return localStorage.getItem('gd.brodie.key') || ''; } catch (e) { return ''; } },
+  chatUrl: QS.get('sphere') || window.GD_SPHERE || 'https://garden-sphere.samuelling.workers.dev',
+  state: () => ({ started, x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, jumpY, selfView, hour: parseFloat($('tSlider').value) || 12,
+    planterOpen: !!planter.open, planterArmed: !!planter.armed, planted: planter.count, wallBusy: !!walling.busy, wallFree: !!(walling.active && walling.active.free), holding: !!walling.holding,
+    climbH: climb ? climb.h : null, armed: !!(arms && arms.armed), fired: arms ? arms.fired : 0, aiming: arms ? arms.aiming : 0, reloading: !!(arms && arms.reloading), down: !!(arms && arms.down),
+    inRoom: !!(multi && multi.inRoom), others: multi && multi.inRoom ? multi.players().length : 0, busy: spaceOn || !!(drawer && drawer.isOpen) || !!(help && help.isOpen) }) });
+addEventListener('keydown', e => { if (e.code !== 'KeyI' || !started || e.metaKey || e.ctrlKey || e.altKey || walling.busy || planter.open) return; e.preventDefault(); sphere.isOpen ? sphere.close() : sphere.open(); });
 // a lamp shot out: its glass gone, its bulb dark, its light out and the pool of it off the ground (until the page is loaded again)
 function breakLamp(i) {
   if (garden.breakLamp) garden.breakLamp(i);
@@ -2047,6 +2064,7 @@ function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
   if (arms) { arms.others(multi && multi.inRoom ? multi.players() : []); arms.update(dt); }
+  if (sphere) sphere.update(dt);
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
     if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
@@ -2139,4 +2157,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get sphere() { return sphere; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

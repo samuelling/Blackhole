@@ -86,6 +86,21 @@ For now (a demo, before anything has come through) there's also a **crate of the
   - at nothing left you **go down**: you topple the way the round pushed you and lie there, and your view steps out to circle above where you lie. **You get up when you choose**: *get up here* (**E**) or *back to the gate* (**G**), or tap the buttons; the holes and cracks go when you do.
 - The guns lying about are part of the garden: saved with it, handed over in a room, kept online.
 
+## Brodie
+
+**Brodie** is a little glass sphere that floats at your left shoulder (`src/sphere.js`). Inside him is the garden, small: its brick walls, the loop walk, the pools and canal, the garden's trees and the ones you plant (they turn up in his glass as you plant them), the lamps, and the black hole over it all with its glowing ring. He turns to look at you, blinks, glows when he talks, and says "brody" a lot. It's slang.
+
+- **Company.** The first time, he says hello. Now and then, when you're not busy, he says something: about the ship and the story, the time of day, what you're holding, your plants. If you've been on your own a long while he suggests bringing a friend into a room. Settings → Garden → Brodie: chatter *only when asked*, *now and then* or *chatty*; or Brodie off.
+- **Talk to him**: **I**, or the *brodie* button. He really converses (Claude Haiku, told where you are, what you're doing and the time) with either of two keys:
+  - **your own Anthropic API key**: Settings → Garden → *Use my own Anthropic API key*. It's kept in this browser and sent only to Anthropic (`api.anthropic.com`, straight from the page). Note that every site under linglab.org shares one browser storage, so any of them could read it.
+  - **the garden's key**, behind the sphere Worker (below), for everyone else.
+  - With neither (or offline) he answers from his written lines, and says so once.
+- **Lessons**: say "teach me…" (or ask him how to do something) and he walks you through getting about, planting, the dry stone wall, free builds, climbing trees or guns, a step at a time. Each step is done when you've actually done it; you can skip a step or stop.
+- **His voice** (Settings → Garden → Brodie → Voice): off, the browser's own (free, a bit robotic), or **Brodie's**, an ElevenLabs voice spoken through the sphere Worker (it falls back to the browser's).
+- He's for everyone, children included: what he says (written, or from Haiku, `src/brodie.js` holds who he is) is kind and simple, he never asks for personal information, and if you tell him you're lonely he's glad of you and nudges you toward the people in your life.
+
+**The sphere Worker** (`worker-sphere/`, `garden-sphere`) holds the keys so the page never does: `POST /chat` is Claude Haiku as Brodie, `POST /speak` is his ElevenLabs voice, `GET /health` says which are set. It only answers the garden's own sites (`ORIGINS`), twelve asks a minute per address. It isn't deployed by any push; to switch it on: deploy it (`wrangler deploy` in `worker-sphere/`), then add the secret `ANTHROPIC_API_KEY` (and for his voice, `ELEVENLABS_API_KEY` and the voice id in `BRODIE_VOICE`). The page already looks for it at `https://garden-sphere.samuelling.workers.dev` (or `?sphere=<url>`). A spending limit on the Anthropic console caps what it can cost.
+
 ## Keeping your garden
 
 Your garden is kept in your browser, and online (`src/worlds.js`, and the `garden-worlds` Cloudflare Worker in `worker/`):
