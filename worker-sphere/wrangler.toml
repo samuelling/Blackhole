@@ -7,7 +7,7 @@ compatibility_date = "2026-11-01"
 [vars]
 ORIGINS = "https://linglab.org,https://samuelling.github.io,*.claudeusercontent.com,http://localhost"
 MODEL = "claude-haiku-5-5"
-BRODIE_VOICE = ""            # an ElevenLabs voice id, once Brodie's voice is chosen
+BRODIE_VOICE = "JMggHO1NiDgr3D9FFONs"   # ElevenLabs: Luis (bright, relaxed, casual), chosen 26 Nov 2026
 
 # each address: twelve asks a minute, to /chat and /speak separately
 [[ratelimits]]
