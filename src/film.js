@@ -127,8 +127,12 @@ export function createFilm(o) {
         vec3 N = normalize(vN), V = normalize(cameraPosition - vW), p = vO; float nl = dot(N, uSun), day = smoothstep(-0.08, 0.32, nl), nv = max(dot(N, V), 0.0);
         vec3 alb = pow(texture2D(tDay, vUv).rgb, vec3(2.2)); float water = texture2D(tWater, vUv).r;
         // the weather: its own, drifting; after The Event it closes over and turns the colour of ash
-        vec3 wp = p * 2.6 + vec3(uTime * 0.006, 0.0, uTime * 0.004); wp += 0.35 * vec3(fbm3(p * 4.0 + 3.0), fbm3(p * 4.0 + 9.0), fbm3(p * 4.0 + 17.0));
+        vec3 wp = p * 2.6 + vec3(uTime * 0.006, 0.0, uTime * 0.004); wp += 0.4 * vec3(vn3(p * 4.0 + 3.0), vn3(p * 4.0 + 9.0), vn3(p * 7.0 + 17.0));
         float cn = fbm3(wp) * 0.75 + fbm3(wp * 3.1) * 0.25, cl = smoothstep(0.50 - 0.2 * uDead, 0.70 - 0.16 * uDead, cn + 0.06 * (1.0 - abs(p.y)));
+        // it is already hurt, before The Event: whole regions burning (lines of fire by night, scorch and smoke by day), and districts gone dark
+        float land = 1.0 - water, burn = smoothstep(0.6, 0.72, fbm3(p * 3.4 + 61.0)), ridge = 1.0 - abs(2.0 * (vn3(p * 17.0 + 5.0) * 0.65 + vn3(p * 41.0 + 9.0) * 0.35) - 1.0);
+        float fire = pow(ridge, 34.0) * burn * land, smoke = smoothstep(0.45, 0.75, fbm3(wp * 1.9 + 61.0)) * burn, dark = smoothstep(0.5, 0.62, vn3(p * 6.5 + 80.0));
+        alb = mix(alb, vec3(0.045, 0.036, 0.03), 0.5 * burn * land);
         float lum = dot(alb, vec3(0.3, 0.6, 0.1)); vec3 dead = mix(vec3(lum) * vec3(0.9, 0.72, 0.55), vec3(0.075, 0.055, 0.04), 0.45 + 0.4 * water);
         alb = mix(alb, dead, uDead);
         vec3 sunC = mix(vec3(1.0, 0.45, 0.2), vec3(1.0, 0.97, 0.92), smoothstep(0.0, 0.4, nl)) * 2.6;
@@ -136,15 +140,18 @@ export function createFilm(o) {
         col += sunC * pow(max(dot(reflect(-uSun, N), V), 0.0), 60.0) * water * (1.0 - cl) * 0.5 * (1.0 - uDead) * day;      // the sun on the sea
         vec3 cloudC = mix(vec3(0.92, 0.94, 0.97), vec3(0.2, 0.15, 0.11), uDead);
         col = mix(col, cloudC * day * sunC * (0.55 + 0.45 * cn), cl * (0.9 - 0.15 * uDead));
+        col = mix(col, vec3(0.2, 0.16, 0.13) * day * sunC, smoke * 0.7 * (1.0 - cl));
         // the cities, on the night side. The Event crosses the world from one place: ahead of its front they surge, behind it they are out
         float ang = acos(clamp(dot(p, uOrigin), -1.0, 1.0)) / 3.14159, front = uOut * 1.12, wob = 0.03 * (fbm3(p * 7.0) - 0.5);
         float on = smoothstep(front - 0.012, front + 0.004, ang + wob), band = exp(-pow((ang + wob - front) / 0.03, 2.0)) * step(0.001, uOut) * step(uOut, 0.999);
         vec3 lights = pow(texture2D(tNight, vUv).rgb, vec3(2.2)); float lit = max(lights.r, max(lights.g, lights.b));
-        float city = smoothstep(0.012, 0.14, max(lights.r, lights.g));                                   // (the Black Marble's seas and land are a dim blue: by moonlight)
+        float city = smoothstep(0.012, 0.14, max(lights.r, lights.g)) * (1.0 - 0.9 * dark);                                   // (the Black Marble's seas and land are a dim blue: by moonlight)
         col += lights * 1.3 * (1.0 - day) * (1.0 - 0.6 * uDead) + lights * vec3(1.0, 0.78, 0.48) * city * (1.0 - day) * (1.0 - cl * 0.75) * on * (9.0 + 30.0 * band);
         col += vec3(0.55, 0.75, 1.0) * band * (1.0 - day) * (0.02 + 0.5 * lit);
+        float flick = 0.7 + 0.3 * sin(uTime * 6.0 + hash3(floor(p * 70.0)) * 6.2832);
+        col += (vec3(1.0, 0.33, 0.06) * fire * 3.2 * flick + vec3(1.0, 0.25, 0.04) * burn * land * 0.006) * (1.0 - day) * (1.0 - cl * 0.5) * (1.0 - 0.75 * uDead);
         // the air, seen through its own depth at the limb
-        vec3 air = mix(vec3(0.16, 0.42, 1.0), vec3(0.5, 0.3, 0.16), uDead);
+        vec3 air = mix(vec3(0.16, 0.42, 1.0), vec3(0.5, 0.3, 0.16), max(uDead, 0.16));
         col += air * pow(1.0 - nv, 3.0) * (0.03 + 1.3 * day) + air * 0.012 * day;
         gl_FragColor = vec4(col, 1.0);
       }` })));
@@ -152,7 +159,7 @@ export function createFilm(o) {
     vertexShader: `varying vec3 vN, vW; void main(){ vN = normalize(mat3(modelMatrix) * normal); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
     fragmentShader: `uniform vec3 uSun; uniform float uDead; varying vec3 vN, vW; void main(){ vec3 N = normalize(vN), V = normalize(cameraPosition - vW); float f = pow(clamp(dot(-N, V) / 0.33, 0.0, 1.0), 2.4), nl = dot(N, uSun);
       float lit = smoothstep(-0.42, 0.12, nl), fwd = pow(max(dot(-V, uSun), 0.0), 6.0);           // lit by the sun; brightest looking toward it through the air (a sunrise from orbit)
-      vec3 blue = mix(vec3(0.2, 0.5, 1.0), vec3(0.55, 0.33, 0.16), uDead), rose = vec3(1.0, 0.42, 0.16);
+      vec3 blue = mix(vec3(0.2, 0.5, 1.0), vec3(0.55, 0.33, 0.16), max(uDead, 0.16)), rose = vec3(1.0, 0.42, 0.16);
       gl_FragColor = vec4(mix(rose, blue, smoothstep(-0.25, 0.25, nl)) * f * lit * (0.45 + 2.0 * fwd), 1.0); }` })));
 
   // ---------------------------------------------------------------- ships: a soap film round a piece of torn-off ground (as the game's own, simply)
@@ -258,6 +265,23 @@ export function createFilm(o) {
         vec3 p = vec3(cos(a) * (0.5 - sp * life * 0.4), 0.45 + life * (0.5 + 1.6 * aS.y) - life * life * 0.9, sin(a) * (0.5 - sp * life * 0.4)); vA = (1.0 - life) * (1.0 - life);
         vec4 mv = modelViewMatrix * vec4(p, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = uPR * (1.0 + 2.0 * aS.x) * clamp(9.0 / -mv.z, 0.6, 3.0); }`,
       fragmentShader: `varying float vA; void main(){ vec2 q = gl_PointCoord * 2.0 - 1.0; if (dot(q, q) > 1.0) discard; gl_FragColor = vec4(mix(vec3(1.0, 0.35, 0.05), vec3(1.0, 0.9, 0.6), vA) * vA * 1.6, 1.0); }` })); sparks.frustumCulled = false; tw.add(sparks); }
+
+  // The Shred Hole draws its own ship now (its js/bubble.js: the building on its slab, in its bubble). The film borrows that,
+  // so the two always agree; the tower above stands in if it can't be fetched.
+  let theirs = null, wantShred = false;
+  function loadShred() { if (wantShred) return; wantShred = true;
+    import(new URL('../../tunnel/js/bubble.js', import.meta.url).href).then(m => {
+      const holder = new THREE.Group(); holder.visible = false; const ship = m.buildBubble(holder, { low: !!o.isTouch });
+      if (!ship || !ship.group || typeof ship.tick !== 'function' || !m.HALL || !m.BUBBLE || !m.DOOR) return;
+      // through the hangar door: the hall, dark, and the plant alight in the middle of it
+      const R = m.HALL.R, H = m.HALL.H, inside = new THREE.Mesh(new THREE.CylinderGeometry(R - 1, R - 1, H, 64, 1, true), new THREE.MeshBasicMaterial({ color: 0x07080b, side: THREE.BackSide })); inside.position.y = H / 2; holder.add(inside);
+      const fl = new THREE.Mesh(new THREE.CircleGeometry(R - 1, 64), new THREE.MeshBasicMaterial({ color: 0x0b0c10 })); fl.rotation.x = -Math.PI / 2; fl.position.y = 0.05; holder.add(fl);
+      const plant = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, H * 0.9, 32, 1, true), new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, uniforms: { uTime: T },
+        vertexShader: `varying vec2 vU; void main(){ vU = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform float uTime; varying vec2 vU; void main(){ float sw = 0.5 + 0.5 * sin(vU.x * 40.0 + vU.y * 18.0 - uTime * 5.0); gl_FragColor = vec4(mix(vec3(0.6, 0.25, 1.0), vec3(0.3, 0.8, 1.0), vU.y) * (0.6 + 0.6 * sw) * (0.12 + 0.7 * pow(1.0 - vU.y, 2.0)), 1.0); }` })); plant.position.y = H * 0.45; holder.add(plant);
+      const glow = new THREE.Mesh(new THREE.CircleGeometry(46, 48), new THREE.MeshBasicMaterial({ map: soft, color: new THREE.Color(0.5, 0.22, 0.85), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false })); glow.rotation.x = -Math.PI / 2; glow.position.y = 0.3; holder.add(glow);
+      scene.add(holder); theirs = { holder, ship, C: new THREE.Vector3(0, m.BUBBLE.y, 0), R: m.BUBBLE.R, door: Math.atan2(Math.cos(m.DOOR.az), Math.sin(m.DOOR.az)), H };
+    }).catch(() => {}); }
 
   // ---------------------------------------------------------------- World Builder: something turning, a long way off
   const world = new THREE.Group(); scene.add(world); const vortU = { uTime: T, uPR, uOn: { value: 1 } };
@@ -403,7 +427,7 @@ export function createFilm(o) {
   const orbitDir = (yaw, pitch, out) => out.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
   function gameCam(eye, target, fov, space, rollA = 0) { pose.p.copy(eye); _m.lookAt(eye, target, UP); pose.q.setFromRotationMatrix(_m); if (rollA) pose.q.multiply(_q.setFromAxisAngle(_z, rollA)); pose.fov = fov; pose.space = space; pose.wake = 1; pose.near = space ? Math.max(1, (pose.p.distanceTo(C0) - BUBBLE.R) * 0.45) : 0.07; gcam = pose; }
   function frameShot(S, u, ts, dt) {
-    const id = S.id; gcam = null; extra.visible = false; sunVis = 0; let inner = 1; if (id !== 'worm') for (const m of things) m.visible = false;
+    const id = S.id; gcam = null; extra.visible = false; sunVis = 0; let inner = 1; cam.near = 0.05; sky.visible = stars.visible = true; if (theirs) theirs.holder.visible = false; if (id !== 'worm') for (const m of things) m.visible = false;
     coordEl.style.opacity = 0; titleEl.style.opacity = 0; starU.uGain.value = 1; skyU.uNeb.value = 0; skyU.uMilky.value = 1; dustU.uGain.value = 0; bloom.strength = 0.85; bloom.threshold = 0.82;
     if (id === 'earth') {   // the night side from orbit, its cities lit; the sun comes over the limb; then the lights go out across the world, and the air turns
       show(earth, sunS); SUN.set(0.2, -0.22, -0.95).normalize(); const dist = 31 - 2.5 * u, th = (Math.asin(10 / dist) / D2R - 0.7 + 1.5 * ease(ts / 4.5) - 0.5 * ease((ts - 9) / 6)) * D2R;   // the sun stays at the limb: a diamond ring
@@ -437,7 +461,11 @@ export function createFilm(o) {
       extra.visible = true; seeds.visible = false; const gy = heightAt(H.x - 3, H.z);
       for (const m of things) { const k = ts - m.userData.t0, fall = 0.5 * 4.2 * k * k; m.visible = k > 0 && H.y - 1 - fall > gy + 0.3; if (!m.visible) continue;
         m.position.set(H.x + m.userData.dx * Math.min(1, k * 0.35), H.y - 1 - fall, H.z + m.userData.dz * Math.min(1, k * 0.35)); m.quaternion.setFromAxisAngle(m.userData.ax, k * m.userData.w); m.scale.setScalar(Math.min(1, k * 4)); }
-    } else if (id === 'shred') {   // another ship: bare ground, and the tower working
+    } else if (id === 'shred' && theirs) {   // another ship, as the Shred Hole itself draws it: the building on its slab, lit, the nebula behind; in toward the hangar door
+      show(); theirs.holder.visible = true; sky.visible = stars.visible = false; cam.near = 3; SUN.set(0.24, 0.8, 0.37).normalize();
+      const k = ease(u * 1.05), a = theirs.door + 0.85 - 0.72 * k, d = 840 - 370 * k; orbitDir(a, 0.17 - 0.07 * k, cam.position).multiplyScalar(d).add(theirs.C); look.copy(theirs.C).y += 12 + 22 * k; cam.fov = 36;
+      theirs.ship.tick(t, cam, renderer.getPixelRatio()); bloom.strength = 0.4; bloom.threshold = 1.05;
+    } else if (id === 'shred') {   // (the same, when the Shred Hole's own can't be fetched: bare ground, and the tower working)
       show(shred); SUN.set(-0.6, 0.45, 0.66).normalize(); HEAD.set(0.7, 0.25, -0.67).normalize(); skyU.uNeb.value = 1; dustU.uGain.value = 0.55;
       const a = 2.5 + 0.55 * u, d = 30 - 20.5 * ease(u * 1.1); orbitDir(a, 0.2 - 0.09 * u, cam.position).multiplyScalar(d); look.set(0, 0.3 + 1.2 * ease(u * 1.1), 0); cam.fov = 36;
       const ud = shred.userData; ud.fan.rotation.y = ts * 11; ud.pl.intensity = 7 + 2 * Math.sin(ts * 9); for (const b of ud.beacons) b.visible = Math.sin(ts * 5) > 0.2;
@@ -465,7 +493,7 @@ export function createFilm(o) {
     fadeK = 1 - ease(Math.min(ts / 0.7, (S.len - ts) / 0.7, inner, 1)); fadeEl.style.opacity = fadeK.toFixed(3);
   }
 
-  function loadPictures() { if (wantTex) return; wantTex = true; earthU.tDay.value = tex('earth_day.jpg'); earthU.tNight.value = tex('earth_night.jpg'); earthU.tWater.value = tex('earth_water.jpg'); }
+  function loadPictures() { loadShred(); if (wantTex) return; wantTex = true; earthU.tDay.value = tex('earth_day.jpg'); earthU.tNight.value = tex('earth_night.jpg'); earthU.tWater.value = tex('earth_water.jpg'); }
   function begin(done) {
     if (active) return; active = true; t = 0; ending = 0; frozen = false; onDone = done || null; cued = new Set(); spoken = new Set(); roll = rollV = 0; waiting = 0; lastNow = performance.now(); seedU.uOn.value = 0;
     el.classList.add('on'); document.body.classList.add('filming'); fadeEl.style.opacity = 1; capEl.style.opacity = 0; veil.style.transition = 'none'; veil.style.opacity = 0;
