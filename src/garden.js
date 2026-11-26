@@ -1490,6 +1490,9 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const leafTab = new THREE.DataTexture(new Uint8Array((ND + 1) * SPECIES.length * NC * 4), ND + 1, SPECIES.length * NC, THREE.RGBAFormat, THREE.UnsignedByteType);
   leafTab.magFilter = leafTab.minFilter = THREE.NearestFilter; leafTab.generateMipmaps = false; leafTab.needsUpdate = true; U.uLeafTab = { value: leafTab };
   const brook = createBrook({ U, COMMON, P, gravel: G.grav, wn: TX.waternormals, lite, bridge: assets.models.bridge }); scene.add(brook.group);
+  if (assets.models.bridge) for (const d of BROOK.decks) if (d.kind === 'bridge') {   // the footbridges' side rails are solid: you leave a bridge by its ends
+    const th = Math.atan2(-d.tx, -d.tz), c = Math.cos(th), sn = Math.sin(th), S = d.across, W = d.along;
+    for (const side of [-1, 1]) { const z = side * (W / 2 + 0.065); for (let x = -S / 2 + 0.1; x <= S / 2 - 0.1; x += 0.15) blockWall(d.x + x * c + z * sn, d.z - x * sn + z * c, 0.12); } }
   const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite, heightAt }); scene.add(leafFall.group);
   let autumn = null;
   function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }

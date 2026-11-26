@@ -13,7 +13,7 @@ const NAMES = { ps: ['✕', '○', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Create
 // '+' after a code: it repeats while held (turning a stone). L2 held is Shift for whatever else is pressed.
 export const MAP = {
   any: [[9, 'help', 'this sheet'], [10, 'Shift+KeyV', 'see yourself from outside'], [16, 'Shift+KeyG', 'the room panel']],
-  walk: [[7, 'click', 'evaporate the void you look at · lift a loose stone'], [0, 'KeyE', 'open a void ahead of you'], [2, 'KeyB', 'build: a stint of wall, or a free build where you stand'], [3, 'KeyP', 'the plant list'],
+  walk: [[7, 'click', 'evaporate the void you look at · lift a loose stone'], [0, 'Space', 'jump'], [6, 'KeyE', 'open a void ahead of you'], [2, 'KeyB', 'build: a stint of wall, or a free build where you stand'], [3, 'KeyP', 'the plant list'],
     [1, 'KeyX', 'vaporize the junk you look at'], [8, 'KeyZ', 'the space view'], [12, 'Digit1', 'wave'], [13, 'Digit2', 'bow'], [14, 'Digit4', 'this way'], [15, 'Digit3', 'beckon'], [4, 'Digit5', 'nod'], [5, 'Digit6', 'arms up'], [11, 'Digit8', 'dance'], [17, 'KeyT', 'night / live time']],
   build: [[7, 'click', 'lift the stone you look at · set it down'], [4, 'KeyQ+', 'turn it left'], [5, 'KeyE+', 'turn it right'], [6, 'shift', 'hold: finer turns'], [12, 'KeyR', 'tip it'], [13, 'KeyV', 'roll it'], [14, 'KeyT', 'length into the wall'], [15, 'KeyC', 'on edge'],
     [0, 'Space', 'hold: press it down'], [1, 'KeyG', 'hold: pass through the other stones'], [2, 'KeyH', 'hearting'], [3, 'KeyN', 'more stone'], [11, 'KeyJ', 'glue (with L2: unglue)'], [8, 'Backspace', 'undo the last stone'], [17, 'KeyP', 'put the work away'], [16, 'Enter', 'twice: finish the stint']],

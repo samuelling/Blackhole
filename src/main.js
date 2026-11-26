@@ -30,8 +30,8 @@ const QS = new URLSearchParams(location.search), LOW = QS.get('q') === 'low', TE
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const $ = id => document.getElementById(id);
 const KEYS_HELP = $('keys').innerHTML = isTouch
-  ? 'drag left side to walk · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
-  : 'WASD / arrows walk · Shift runs · mouse looks · click a void to evaporate it<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · 1-9, 0 gestures · a controller works too · ? every control';
+  ? 'drag left side to walk · flick up on it to jump · drag right side to look<br>double-tap or “open a void” to make a new one · tap a void to evaporate it'
+  : 'WASD / arrows walk · Shift runs · Space jumps · mouse looks · click a void to evaporate it<br>E new void · P plant · B build the wall · Z space view · Y season speed · R replant · T night / live · M sound · F frame rate · Shift+F full screen · Shift+V see yourself<br>Shift+G together (up to six of you) · hold ` to talk · 1-9, 0 gestures · a controller works too · ? every control';
 
 let renderer;
 try {
@@ -1053,10 +1053,13 @@ const keys = new Set();
 const WALK = 1.6, RUN = 5.6;   // m/s: the ordinary pace is a walk, Shift is a run; a stick (or a thumb on a phone) goes anywhere between
 const paceFor = m => m <= 0.55 ? WALK * m / 0.55 : WALK + (RUN - WALK) * Math.pow((m - 0.55) / 0.45, 1.3);   // how hard the stick is pushed (0..1) to a speed: half way is the walk
 const grav = new THREE.Vector3();
+// jumping: gravity here is a little under half the Earth's (4.2 m/s², between Mars and the Moon), so a hop lifts you about 1.4 m and hangs
+let jumpY = 0, jumpV = 0; const JUMP_G = 4.2, JUMP_V = 3.4;
 addEventListener('keydown', e => {
   keys.add(e.code);
   if (!started) return;
-  if (e.code === 'KeyE' || e.code === 'Space') { openVoid(); e.preventDefault(); }
+  if (e.code === 'KeyE') { openVoid(); e.preventDefault(); }
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && !planter.open && !spaceOn && jumpY === 0) jumpV = JUMP_V; }   // a jump (the wall and free builds take Space before this sees it)
   if (e.code === 'KeyM') setSound(!A.on);
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -1141,6 +1144,7 @@ const endTouch = e => {
     const o = touches.get(t.identifier);
     if (o) {
       const quick = performance.now() - o.t0 < 260 && Math.hypot(o.x - o.x0, o.y - o.y0) < 14, now = performance.now();
+      if (o.type === 'move' && !spaceOn && now - o.t0 < 320 && o.y0 - o.y > 40 && Math.abs(o.x - o.x0) < o.y0 - o.y && jumpY === 0) jumpV = JUMP_V;   // a quick flick up on the walking side: jump
       const hit = quick && !spaceOn ? pickVoid(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1)) : null;
       if (hit) { collapseVoid(hit); lastTap = 0; }
       else if (quick && !spaceOn && planter.tap(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1))) lastTap = 0;
@@ -1727,7 +1731,9 @@ function update(dt, t) {
     if (dh < minD) { tmpV.setLength(minD); player.x = v.pos.x + tmpV.x; player.z = v.pos.z + tmpV.z; }
   }
   { const rx = player.x - CENTRE.x, rz = player.z - CENTRE.z, r = Math.hypot(rx, rz), lim = RIM - 2.2; if (r > lim) { player.x = CENTRE.x + rx * lim / r; player.z = CENTRE.z + rz * lim / r; } }   // the bubble's skin is as far as you can go
-  const groundY = heightAt(player.x, player.z);
+  const groundY0 = heightAt(player.x, player.z);
+  if (jumpV > 0 || jumpY > 0) { jumpV -= JUMP_G * dt; jumpY = Math.max(0, jumpY + jumpV * dt); if (jumpY === 0) jumpV = 0; }   // in the air: the ground still under you, you over it
+  const groundY = groundY0 + jumpY;
 
   const moving = Math.min(1, Math.hypot(mx, mz));
   bobPhase += dt * moving * speed * 2.2;
