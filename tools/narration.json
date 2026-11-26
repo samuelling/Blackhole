@@ -1,5 +1,5 @@
 {
-  "about": "Brodie's telling of the story so far (src/film.js). Changing a line here and pushing has the workflow (.github/workflows/narration.yml) ask the sphere Worker to speak it in Brodie's ElevenLabs voice, once, and keep the clip in assets/film/vo/. Lines that haven't changed are not spoken again. The gone-YEAR lines are the one that follows 'everyone alive in 2027': the film says the year after the one it is played in. The snapshot is of everyone alive in that same year: line 06 says it whole for 2027; for later years it is 06a followed by alive-YEAR. Add a year's pair of lines (alive-YEAR, gone-YEAR) before the January it is first needed.",
+  "about": "Brodie's telling of the story so far (src/film.js). Changing a line here and pushing has the workflow (.github/workflows/narration.yml) ask the sphere Worker to speak it in Brodie's ElevenLabs voice, once, and keep the clip in assets/film/vo/. Lines that haven't changed are not spoken again. The gone-YEAR lines are the one that follows 'everyone alive in 2027': the film says the year after the one it is played in. The snapshot is of everyone alive in that same year: line 06 says it whole for 2027; for later years it is 06a followed by alive-YEAR. The opening is the same year: line 01 for 2027, earth-YEAR after. Add a year's three lines (earth-YEAR, alive-YEAR, gone-YEAR) before the January it is first needed.",
   "url": "https://garden-sphere.samuelling.workers.dev",
   "lines": [
     {
@@ -105,6 +105,26 @@
     {
       "id": "alive-2032",
       "say": "and a snapshot of everyone alive in twenty thirty-two."
+    },
+    {
+      "id": "earth-2028",
+      "say": "Earth. Twenty twenty-eight."
+    },
+    {
+      "id": "earth-2029",
+      "say": "Earth. Twenty twenty-nine."
+    },
+    {
+      "id": "earth-2030",
+      "say": "Earth. Twenty thirty."
+    },
+    {
+      "id": "earth-2031",
+      "say": "Earth. Twenty thirty-one."
+    },
+    {
+      "id": "earth-2032",
+      "say": "Earth. Twenty thirty-two."
     }
   ]
 }
