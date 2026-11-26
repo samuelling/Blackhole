@@ -1818,11 +1818,17 @@ function update(dt, t) {
     if (tmpV.length() > step) tmpV.setLength(step); v.pos.add(tmpV);
     // gravity on the walker
     tmpV.set(v.pos.x - player.x, 0, v.pos.z - player.z); const dh = tmpV.length();
-    const pull = v.giant ? 1.25 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 19))) : 2.4 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
+    const pull = v.giant ? 1.05 * w * (1 - Math.min(1, Math.max(0, (dh - 4) / 19))) : 2.0 * w * Math.pow(k, 0.7) * (1 - Math.min(1, Math.max(0, (dh - 2) / (13 * Math.pow(k, 0.6)))));
     if (dh > 0.01) grav.addScaledVector(tmpV.normalize(), pull * PULL);
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
   if (grav.length() > 2.8) grav.setLength(2.8);
+  // ...but it never holds you. Stand still, or wander, and it draws you in; set off away from it and the part of the pull that's against
+  // you is held to under a third of your pace, so you always get away at 70% or more of your speed (and its sideways tug eases too)
+  { const mv = Math.hypot(move.x, move.z);
+    if (mv > 0.05) { const ux = move.x / mv, uz = move.z / mv, along = grav.x * ux + grav.z * uz, sx = grav.x - along * ux, sz = grav.z - along * uz;
+      const a = along < 0 ? -Math.min(-along, 0.3 * mv) : along, side = 0.6;
+      grav.x = a * ux + sx * side; grav.z = a * uz + sz * side; } }
   if (!climb && !(arms && arms.down)) { // walk, sliding along hedges, pools and trunks (and, having let go of a tree, drifting out from it as you fall)
     if (offV) { if (jumpY <= 0) offV = null; else { move.x += offV.x; move.z += offV.z; const k = Math.exp(-dt * 0.6); offV.x *= k; offV.z *= k; } }
     const sx = (move.x + grav.x) * dt, sz = (move.z + grav.z) * dt, nx = player.x + sx, nz = player.z + sz;
