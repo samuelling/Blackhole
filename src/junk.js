@@ -189,14 +189,14 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
       const total = names.reduce((n, o) => n + (o.pieces || 0), 0), budget = Math.min(400, total); owner = [];
       names.forEach((o, i) => { const share = Math.max(Math.min(8, o.pieces || 0), Math.round(budget * (o.pieces || 0) / Math.max(1, total))); for (let k = 0; k < share; k++) owner.push(i); });
     }
-    const wholeSeen = new Set(); let whole = 0, guns = 0;
+    const wholeSeen = new Set(); let whole = 0, guns = 0, tools = 0;
     pieces.forEach((pc, n) => {
       const oi = pc.k != null ? pc.k : owner ? owner[n] : null, from = names && oi != null && names[oi] ? names[oi] : obj;
       // part of a thing that came through in one piece, with its recipe: the thing itself, once
       const rcp = pc.u != null && keepRecipe(from.recipe);
       if (rcp) {
         const key = (oi ?? '') + ':' + pc.u; if (wholeSeen.has(key)) return; wholeSeen.add(key);
-        if (rcp.weapon && onWeapon) { onWeapon(rcp.weapon); guns++; return; }   // a gun: not junk, but the real thing (arms.js)
+        if (rcp.weapon && onWeapon) { if (onWeapon(rcp.weapon) === 'tool') tools++; else guns++; return; }   // a gun, or an instrument (a sextant): not junk, but the real thing (arms.js, nav.js)
         const rk = recipeKey(rcp); store.recipes[rk] = rcp;
         const id = 'j' + (store.seq++).toString(36);
         store.pieces[id] = { w: rk, c: pc.c, m: Math.max(0.03, +rcp.mass || +pc.m || 0.3), n: (from.name || rcp.name || 'something').slice(0, 40), k: from.icon || rcp.icon || '' };
@@ -208,9 +208,9 @@ export function createJunk({ scene, U, COMMON, P, heightAt, lite = false, onArri
       store.pieces[id] = { c: pc.c, i: pc.i, m: Math.max(0.03, +pc.m || 0.3), s: enc.s, b: enc.b, n: (from.name || obj.name || 'something').slice(0, 40), k: from.icon || obj.icon || '' };
       ids.push(id);
     });
-    if (!ids.length && !guns) return;
+    if (!ids.length && !guns && !tools) return;
     store.drops++; queue.push(...ids); flare = Math.max(flare, 0.4);
-    const info = { name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length - whole, whole, guns };
+    const info = { name: names && names.length ? [...new Set(names.map(o => o.name))].slice(0, 3).join(', ') + (new Set(names.map(o => o.name)).size > 3 ? ' and more' : '') : obj.name || 'something', icon: names ? '📦' : obj.icon || '', pieces: ids.length - whole, whole, guns, tools };
     onArrive(info); if (net) net.send({ j: 'arr', info });
     trim(); save();
   }

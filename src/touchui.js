@@ -38,7 +38,8 @@ body.tui #aim.on { width:14px; height:14px; margin:-7px 0 0 -7px; border:1.5px s
 // what each mode's pad holds: [label, what it sends, how it behaves]. 'click' is the tap where you are looking; '+' repeats while held;
 // 'hold' keeps the key down while the finger is; 'shift' is a toggle for finer turns.
 const PADS = {
-  walk: [['jump', 'Space', 'big'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click'], ['gun: pick up / draw', 'KeyQ']],
+  walk: [['jump', 'Space', 'big'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click'], ['gun: pick up / draw', 'KeyQ'], ['sextant', 'KeyN']],
+  sextant: [['sight', 'KeyK', 'big'], ['raise / lower', 'KeyL'], ['work the fix', 'KeyR'], ['put away', 'KeyN'], ['jump', 'Space']],
   armed: [['fire', 'KeyK', 'bighold'], ['aim', 'KeyL', 'hold'], ['reload', 'KeyR'], ['put away', 'KeyQ'], ['jump', 'Space']],
   build: [['lift / set', 'click', 'big'], ['turn ⟲', 'KeyQ', 'repeat'], ['turn ⟳', 'KeyE', 'repeat'], ['fine', 'shift', 'toggle'],
     ['tip', 'KeyR'], ['roll', 'KeyV'], ['length in', 'KeyT'], ['on edge', 'KeyC'], ['press', 'Space', 'hold'], ['pass through', 'KeyG', 'hold'],
@@ -106,7 +107,7 @@ export function createTouchUI(o) {
   let shown = null;
   function refresh(force) {
     const c = o.started() ? o.context() : 'none';
-    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id || (id === 'build' && c === 'free') || (id === 'walk' && c === 'armed'));
+    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id || (id === 'build' && c === 'free') || (id === 'walk' && (c === 'armed' || c === 'sextant')));
     railB.self.classList.toggle('on', !!(o.selfView && o.selfView()));
     rail.style.display = o.started() ? '' : 'none';
     if (c === shown && !force) return; shown = c; pad.innerHTML = ''; fine = false;

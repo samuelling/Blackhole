@@ -26,6 +26,8 @@ import { doyLabel, doyToMonthDay } from './seasons.js';
 import { createMulti } from './multi.js';
 import { createWorlds } from './worlds.js';
 import { createArms } from './arms.js';
+import { createNav } from './nav.js';
+import { createFilm } from './film.js';
 import { createSphere } from './sphere.js';
 
 // ------------------------------------------------------------------ setup
@@ -619,7 +621,7 @@ const gardenWorld = {
     peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
   get guest() { return walling.net.guest; },
 };
-let worlds = null, arms = null, sphere = null;   // (arms.js: guns, made once the rest is)
+let worlds = null, arms = null, sphere = null, nav = null, film = null;   // (arms.js: guns, made once the rest is)
 // the Shred Hole (linglab.org/tunnel) is where new junk comes from: opened set to send here
 const SHRED_URL = 'https://linglab.org/tunnel/?to=garden';
 function openShredHole() { try { window.open(SHRED_URL, '_blank', 'noopener'); } catch (e) { location.href = SHRED_URL; } }
@@ -646,7 +648,7 @@ const multi = assets.models.astronaut ? createMulti({ scene, camera, model: asse
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
-const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), onWeapon: w => arms && arms.arrive(w), mailbox: !QS.has('nomail'), onVaporize: pos => burst(pos, 0.22) });   // ?nomail: tests keep off the live mailbox
+const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), onWeapon: w => { if (w === 'sextant') { if (nav) nav.arrive(); return 'tool'; } if (arms) arms.arrive(w); }, mailbox: !QS.has('nomail'), onVaporize: pos => burst(pos, 0.22) });   // ?nomail: tests keep off the live mailbox
 const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; }, onTurn: sg => { if (body) body.turn(sg); } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1149,11 +1151,11 @@ function beginStint() {
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 /** What a click does where you are looking (the mouse's button, or the controller's trigger). */
 function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(button)) return; if (!walling.busy && button === 0 && walling.idleHover) { walling.pluckIdle(player.x, player.z, yaw); return; } if (button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started && !(arms && arms.mouse(e.button, true))) act(e.button); });
-canvas.addEventListener('contextmenu', e => { if (arms && arms.armed) e.preventDefault(); });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started && !(nav && nav.mouse(e.button, true)) && !(arms && arms.mouse(e.button, true))) act(e.button); });
+canvas.addEventListener('contextmenu', e => { if ((arms && arms.armed) || (nav && nav.out)) e.preventDefault(); });
 // a controller (gamepad.js): its buttons arrive as the keys and the click they stand for
 let padAim = false, lastPace = 0;
-const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && walling.active.free ? 'free' : 'build') : (planter.open || planter.armed) ? 'plant' : arms && arms.armed ? 'armed' : 'walk';
+const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && walling.active.free ? 'free' : 'build') : (planter.open || planter.armed) ? 'plant' : nav && nav.out ? 'sextant' : arms && arms.armed ? 'armed' : 'walk';
 const sendKey = (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true }));
 const padClick = () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); };
 const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000), context: modeNow, key: sendKey, click: padClick,
@@ -1162,12 +1164,13 @@ const pad = createGamepad({ started: () => started, start: () => enterGarden(), 
 const tui = isTouch ? createTouchUI({ context: modeNow, key: sendKey, click: padClick, selfView: () => selfView, started: () => started }) : null;
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas || padAim));
 if (tui) setInterval(() => $('aim').classList.toggle('on', started && !spaceOn && walling.busy), 250);   // on touch the crosshair shows what you will lift while building
-addEventListener('mouseup', e => { mouseDown = false; if (arms) arms.mouse(e.button, false); });
+addEventListener('mouseup', e => { mouseDown = false; if (nav) nav.mouse(e.button, false); if (arms) arms.mouse(e.button, false); });
+const lookK = () => Math.min(1, (nav ? nav.zoom : 1) * (arms ? 0.5 + 0.5 * arms.zoom : 1));
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
   if (spaceOn) { if (document.pointerLockElement === canvas || mouseDown) orbitBy(e.movementX, e.movementY); return; }
   if (document.pointerLockElement === canvas || mouseDown) {
-    yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022; pitch = Math.max(-1.45, Math.min(1.35, pitch));
+    const k = 0.0022 * lookK(); yaw -= e.movementX * k; pitch -= e.movementY * k; pitch = Math.max(-1.45, Math.min(1.35, pitch));   // (a narrowed view turns as much slower)
   }
 });
 const touches = new Map(); let lastTap = 0;
@@ -1184,7 +1187,7 @@ canvas.addEventListener('touchmove', e => {
       if (touches.size >= 2) { const [a, b] = [...touches.values()], d0 = Math.hypot(a.x - b.x, a.y - b.y); o.x = t.clientX; o.y = t.clientY; const d1 = Math.hypot(a.x - b.x, a.y - b.y);
         if (d0 > 8 && d1 > 8) orbit.dist = Math.max(150, Math.min(620, orbit.dist * d0 / d1)); orbit.idle = 0; continue; }
       orbitBy((t.clientX - o.x) * 2.2, (t.clientY - o.y) * 2.2); o.x = t.clientX; o.y = t.clientY; continue; }
-    if (o.type === 'look') { yaw -= (t.clientX - o.x) * 0.0055; pitch -= (t.clientY - o.y) * 0.0055; pitch = Math.max(-1.45, Math.min(1.35, pitch)); }
+    if (o.type === 'look') { const k = 0.0055 * lookK(); yaw -= (t.clientX - o.x) * k; pitch -= (t.clientY - o.y) * k; pitch = Math.max(-1.45, Math.min(1.35, pitch)); }
     o.x = t.clientX; o.y = t.clientY; if (tui && o.type === 'move') tui.stick(o);
   }
 }, { passive: false });
@@ -1245,7 +1248,7 @@ function collapseVoid(v, self = false) {
 let firstCollapse = false, firstSelf = false, waterAt = 0; const _wormV = new THREE.Vector3();
 function junkArrived(o) {
   const d = Math.hypot(player.x - junk.hole.x, player.z - junk.hole.z);
-  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${[o.guns ? (o.guns === 1 ? 'a gun, by the heap (Q picks it up)' : `${o.guns} guns, by the heap (Q picks one up)`) : '', o.whole ? (o.whole === 1 && !o.pieces ? 'in one piece' : `${o.whole} whole`) : '', o.pieces ? `${o.pieces} pieces` : ''].filter(Boolean).join(', ')}`, 6000);
+  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${[o.guns ? (o.guns === 1 ? 'a gun, by the heap (Q picks it up)' : `${o.guns} guns, by the heap (Q picks one up)`) : '', o.tools ? `a sextant, by the heap (${isTouch ? '“sextant”' : 'N'} picks it up)` : '', o.whole ? (o.whole === 1 && !o.pieces ? 'in one piece' : `${o.whole} whole`) : '', o.pieces ? `${o.pieces} pieces` : ''].filter(Boolean).join(', ')}`, 6000);
   if (!A.ctx || !A.on || !A.noise) return;   // a rush down from high to low, louder the nearer you are
   const ac = A.ctx, t0 = ac.currentTime, v = Math.min(1, 14 / Math.max(6, d)), s = ac.createBufferSource(); s.buffer = A.noise; s.loop = true;
   const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2.2; f.frequency.setValueAtTime(2400, t0); f.frequency.exponentialRampToValueAtTime(160, t0 + 2.6);
@@ -1322,13 +1325,22 @@ const hint = $('hint');
 function setHint(t, ms = 9000) { hint.textContent = t; hint.style.opacity = 1; clearTimeout(setHint.h); setHint.h = setTimeout(() => hint.style.opacity = 0, ms); }
 
 $('enter').addEventListener('click', () => enterGarden());
-function enterGarden() {
-  if (started) return;
+// the first time in, the story so far plays before the garden does (film.js); after that only when asked for
+function playFilm(then) {
+  if (!film || film.active) { if (then) then(); return; }
+  $('intro').classList.add('gone'); initAudio(); if (A.ctx && A.ctx.state === 'suspended') A.ctx.resume();
+  if (A.master) A.master.gain.setTargetAtTime(0, A.ctx.currentTime, 0.4);   // the garden's own sound waits outside
+  film.play(() => { if (A.master) A.master.gain.setTargetAtTime(A.on ? 0.55 : 0, A.ctx.currentTime, 1.2); if (then) then(); else if (!started) $('intro').classList.remove('gone'); });
+}
+function enterGarden(then) {
+  if (started || (film && film.active)) return;
+  if (film && (QS.has('film') || (!film.seen && !TEST && !QS.has('nofilm'))) && !enterGarden.shown) { enterGarden.shown = true; playFilm(() => enterGarden(then)); return; }
   started = true; $('intro').classList.add('gone'); $('hud').classList.add('on');
   initAudio(); setSound(true); tryLock();
   // a moment more out here, with the title gone, then down through the skin and the trees to where you stand
   const arrive = () => setHint(isTouch ? 'walk through the arches · something is waiting past them' : 'walk through the arches · something is waiting past them · Esc frees the mouse');
   if (spaceOn) { flyIn = 4.4; introTimer = setTimeout(() => { introTimer = 0; setSpaceView(false, true); setTimeout(arrive, 4200); }, 2600); } else arrive();
+  if (then) then();
 }
 
 // ------------------------------------------------------------------ time of day
@@ -1371,7 +1383,7 @@ $('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seaso
 addEventListener('keydown', e => {
   if (!started) return;
   if (e.code === 'KeyY') $('bSpeed').click();   // (it was S, which is also the key for walking backwards)
-  if (e.code === 'KeyR' && !(arms && arms.armed)) $('bReplant').click();
+  if (e.code === 'KeyR' && !(arms && arms.armed) && !(nav && nav.out)) $('bReplant').click();
 });
 
 let timeMode = 'night', manualHour = 12;
@@ -1497,6 +1509,7 @@ const SETTINGS = [
   { id: 'properTime', tab: 'garden', label: 'Plants keep their own time', kind: 'toggle', get: () => S.properTime, set: v => { S.properTime = v; save(); },
     note: 'each plant ages by its own clock, slowed near a void; off, the whole garden shares the calendar' },
   { id: 'replant', tab: 'garden', label: 'Replant everything', kind: 'action', set: () => $('bReplant').click() },
+  { id: 'story', tab: 'garden', label: 'The story so far', kind: 'action', set: () => { if (drawer) drawer.close(); if (document.pointerLockElement) document.exitPointerLock(); playFilm(() => {}); }, note: 'the intro film: how the garden came to be out here' },
   { id: 'weather', tab: 'garden', group: 'Weather', label: 'Weather', kind: 'choice', options: [{ label: 'local, live', value: 'live' }, { label: 'set by hand', value: 'set' }],
     get: () => S.weather, set: v => { if (v === 'set') takeWeather(); else { S.weather = 'live'; save(); pullWeather(true); } syncWeather(); } },
   { id: 'weatherInfo', tab: 'garden', label: '', kind: 'info', get: weatherSummary },
@@ -1716,11 +1729,21 @@ drawer = createDrawer({
     respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
     kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
     me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
-    free: () => started && !spaceOn && !climb && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+    free: () => started && !spaceOn && !climb && !(nav && nav.out) && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
-  addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (arms.down && ['KeyE', 'KeyG', 'Enter'].includes(e.code)) { arms.key(e.code, true, e.shiftKey); e.preventDefault(); e.stopPropagation(); return; } if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
-  addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
+  addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
+    if (nav && !arms.down && !walling.busy && !planter.open && ['KeyN', 'KeyK', 'KeyL', 'KeyR', 'KeyQ', 'Enter', 'Escape'].includes(e.code) && nav.key(e.code, true)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (arms.down && ['KeyE', 'KeyG', 'Enter'].includes(e.code)) { arms.key(e.code, true, e.shiftKey); e.preventDefault(); e.stopPropagation(); return; } if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
+  addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) { if (nav) nav.key(e.code, false); arms.key(e.code, false, e.shiftKey); } });
 }
+// star navigation (nav.js): a bubble sextant from the Shred Hole, three stars, and the ship's place
+nav = createNav({ scene, camera, cat: starCat ? starCat.d : null, skyM: () => _skyM, sky: () => SKY, truth: () => ({ lat: S.lat, lon: S.lon }),
+  heightAt, height: () => jumpY, starGain: () => U.uStarGain.value, overcast: () => WX.over, body, selfView: () => selfView, isTouch, given: QS.has('sextant'),
+  me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }),
+  free: () => started && !spaceOn && !walling.busy && !planter.open && !planter.armed && !(arms && arms.down) && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+  hint: (t, ms) => setHint(t, ms), audio: () => A, stowGun: () => arms && arms.holster(),
+  onNeed: () => { if (sphere) sphere.say('No sextant yet, brody. The Shred Hole can fabricate one: it’s on the Instruments shelf. Send it through and it lands by the heap.'); else setHint('no sextant yet · the Shred Hole fabricates one (its Instruments shelf) and sends it through the wormhole', 7000); },
+  onFix: f => { if (!sphere) return; sphere.say(f.first ? 'BRODY. You did it. We know where we are. First nav system: back online.' : f.grade === 'fine' ? 'That’s a navigator’s fix, brody. Clean.' : f.good ? 'Solid fix, brody.' : f.grade === 'wrong' ? 'Those don’t line up, brody. One of them’s the wrong star, I reckon.' : 'Close, brody. Climb higher and let the bubble settle: it’ll tighten up.'); } });
 // Brodie (sphere.js): the garden in a glass ball at your shoulder, for company and lessons
 sphere = createSphere({ scene, camera, layout,
   arborTrees: () => garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, H: t.H })) : [], heap: () => ({ x: junk.heap.x, z: junk.heap.z }),
@@ -1730,6 +1753,7 @@ sphere = createSphere({ scene, camera, layout,
   state: () => ({ started, x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, jumpY, selfView, hour: parseFloat($('tSlider').value) || 12,
     planterOpen: !!planter.open, planterArmed: !!planter.armed, planted: planter.count, wallBusy: !!walling.busy, wallFree: !!(walling.active && walling.active.free), holding: !!walling.holding,
     climbH: climb ? climb.h : null, armed: !!(arms && arms.armed), fired: arms ? arms.fired : 0, aiming: arms ? arms.aiming : 0, reloading: !!(arms && arms.reloading), down: !!(arms && arms.down),
+    sextant: !!(nav && nav.have), sextantOut: !!(nav && nav.out), scope: nav ? nav.raised : 0, sights: nav ? nav.sights.length : 0, sightStars: nav ? new Set(nav.sights.map(q => q.name)).size : 0, navFixes: nav ? nav.fixes.length : 0,
     inRoom: !!(multi && multi.inRoom), others: multi && multi.inRoom ? multi.players().length : 0, busy: spaceOn || !!(drawer && drawer.isOpen) || !!(help && help.isOpen) }) });
 addEventListener('keydown', e => { if (e.code !== 'KeyI' || !started || e.metaKey || e.ctrlKey || e.altKey || walling.busy || planter.open) return; e.preventDefault(); sphere.isOpen ? sphere.close() : sphere.open(); });
 // a lamp shot out: its glass gone, its bulb dark, its light out and the pool of it off the ground (until the page is loaded again)
@@ -1775,7 +1799,7 @@ function update(dt, t) {
   // the controller's right stick looks (and turns the space view; its triggers bring that nearer and farther)
   if (started && (pd.lx || pd.ly || pd.zoom) && !(help && help.isOpen)) {
     if (spaceOn) { orbitBy(pd.lx * 430 * dt, pd.ly * 430 * dt); if (pd.zoom) { orbit.dist = Math.max(150, Math.min(620, orbit.dist * Math.exp(-pd.zoom * 1.2 * dt))); orbit.idle = 0; } }
-    else { yaw -= pd.lx * 2.9 * dt; pitch = Math.max(-1.45, Math.min(1.35, pitch - pd.ly * 2.1 * dt)); }
+    else { const k = lookK(); yaw -= pd.lx * 2.9 * k * dt; pitch = Math.max(-1.45, Math.min(1.35, pitch - pd.ly * 2.1 * k * dt)); }
   }
   if (pd.on !== padAim) { padAim = pd.on; if (padAim) $('aim').classList.add('on'); }   // a controller has no pointer to lock: the aim point shows once it is in use
   // keys walk, and run with Shift; a stick or a thumb goes at whatever pace it is pushed to
@@ -1855,7 +1879,7 @@ function update(dt, t) {
   const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
   player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
-  camera.fov = (70 + 7 * near) * (arms ? arms.zoom : 1);
+  camera.fov = (70 + 7 * near) * (arms ? arms.zoom : 1) * (nav ? nav.zoom : 1);
   stepSpaceView(dt, groundY + 1.65 + bob);
   // shot down: the view steps out of you and slowly circles where you lie, until you get up
   if (arms && arms.down && !spaceOn) { if (!deathCam) { deathCam = { on: selfView, ang: selfAng, dist: selfDist }; selfView = true; selfAng = 2.2; selfDist = 3.8; } selfAng += dt * 0.22; }
@@ -1946,6 +1970,7 @@ let lastDraw = 0, FIXED_DT = null, holdLoop = false;
 let selfView = false, selfAng = 2.5, selfDist = 3.4, deathCam = null; const _selfT = new THREE.Vector3();
 function frame(once) {
   if (holdLoop && once !== true) { requestAnimationFrame(frame); return; }
+  if (film && film.active) { film.frame(FIXED_DT != null ? FIXED_DT : clock.getDelta()); if (once !== true) requestAnimationFrame(frame); return; }   // the story so far: the garden isn't drawn under it
   if (G.fpsCap && once !== true) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
   const rawDt = FIXED_DT != null ? (clock.elapsedTime += FIXED_DT, FIXED_DT) : clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
@@ -1985,8 +2010,10 @@ $('enter').disabled = false; $('enter').textContent = 'enter the garden'; $('int
 const roomQ = (QS.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 if (multi) {
   const eM = $('enterMp'); eM.hidden = false; if (roomQ) eM.textContent = `join room ${roomQ}`;
-  eM.addEventListener('click', e => { e.stopPropagation(); enterGarden(); multi.open(); if (roomQ) multi.join(roomQ); });
+  eM.addEventListener('click', e => { e.stopPropagation(); enterGarden(() => { multi.open(); if (roomQ) multi.join(roomQ); }); });
 }
+film = createFilm({ renderer, cat: starCat ? starCat.d : null, layout, audio: () => A, isTouch });
+{ const st = $('story'); if (st) { st.hidden = false; st.addEventListener('click', e => { e.stopPropagation(); playFilm(); }); } }
 setTimeout(() => document.body.classList.add('ready'), 250);   // the first frames are drawn: let the bubble come up out of the dark behind the title
 // ------------------------------------------------------------------ the space view: step outside the bubble and watch it go
 // The camera leaves your eyes, passes out through the skin and takes up an orbit round the bubble. You stay where you were (your body is
@@ -2055,7 +2082,7 @@ if (fsOk) $('bSettings').before(bFull);
 // every control on one sheet (help.js): ? opens it on what you are doing now
 help = createHelp({ isTouch, ready: () => started, pad: () => pad.connected ? pad : null,
   context: () => { const c = new Set(); if (spaceOn) c.add('space'); else if (walling.busy) c.add(walling.active && walling.active.free ? 'free' : 'wall'); else if (planter.open || planter.armed) c.add('plant'); else { c.add('walk'); c.add('gesture'); c.add('voids'); }
-    if (multi && multi.inRoom) c.add('room'); return c; } });
+    if (nav && nav.out) c.add('stars'); if (multi && multi.inRoom) c.add('room'); return c; } });
 const bHelp = document.createElement('button'); bHelp.id = 'bHelp'; bHelp.textContent = 'controls'; bHelp.title = 'every control (?)';
 bHelp.addEventListener('click', e => { e.stopPropagation(); help.toggle(); }); $('bSettings').before(bHelp);
 const bTogether = document.createElement('button'); bTogether.id = 'bTogether'; bTogether.title = 'together: up to six of you, with voices (Shift+G)';
@@ -2071,6 +2098,7 @@ function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
   if (arms) { arms.others(multi && multi.inRoom ? multi.players() : []); arms.update(dt); }
+  if (nav) { nav.others(multi && multi.inRoom ? multi.players() : []); nav.update(dt); }
   if (sphere) sphere.update(dt);
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
     if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
@@ -2079,7 +2107,7 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: arms ? arms.held : '', down: arms ? arms.down : false, climb: climb ? [climb.T.x, climb.T.z, climb.T.r(climb.h + 1)] : null, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: nav && nav.out ? 'sextant' : arms ? arms.held : '', down: arms ? arms.down : false, climb: climb ? [climb.T.x, climb.T.z, climb.T.r(climb.h + 1)] : null, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
@@ -2164,4 +2192,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get sphere() { return sphere; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get nav() { return nav; }, get film() { return film; }, get sphere() { return sphere; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

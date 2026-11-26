@@ -4,7 +4,7 @@ A compact English cottage garden (about 54 × 86 m, in a field inside a space bu
 
 Each void sleeps as a small dark bead. Walk close enough and it wakes (bigger voids notice you from farther away — ~10 m for a pinhole, ~28 m for the giant): it grows, lenses the scene behind it, twists and pulls nearby lights toward its horizon, drains the light from the ground, trees and globes around it, and draws streams of stolen light spiralling in. It also tugs on you. Walk away and the light seeps back over the next half-minute.
 
-**Play:** open `index.html` (or the GitHub Pages site). The page opens outside the bubble, watching it go by, with only the title over it while it loads. Enter, and the view holds a moment longer, then flies down through the skin and the trees into your own eyes.
+**Play:** open `index.html` (or the GitHub Pages site). The page opens outside the bubble, watching it go by, with only the title over it while it loads. Enter (the first time, the story so far plays first: see below), and the view holds a moment longer, then flies down through the skin and the trees into your own eyes.
 
 - **Space view (Z, or the button):** the camera leaves your eyes, passes out through the bubble's skin and takes up an orbit outside it. From there the bubble is a soap-film sphere with the land hanging in it (garden and wood on top, the torn rock beneath), and dust streaming past from the nebula it is heading for. Drag circles it, the wheel or a pinch comes nearer; left alone the view drifts round. Z again brings you back.
 - Desktop: WASD / arrows walk, mouse looks (click to capture, Esc to release), Shift runs (the ordinary pace is a walk), **E** opens a new void of random size ahead of you, **M** toggles sound. The **pull** slider sets how hard the voids tug on you (0–150%). **F** shows the frame rate and render resolution.
@@ -86,6 +86,30 @@ For now (a demo, before anything has come through) there's also a **crate of the
   - at nothing left you **go down**: you topple the way the round pushed you and lie there, and your view steps out to circle above where you lie. **You get up when you choose**: *get up here* (**E**) or *back to the gate* (**G**), or tap the buttons; the holes and cracks go when you do.
 - The guns lying about are part of the garden: saved with it, handed over in a room, kept online.
 
+## The story so far (the intro film)
+
+The first time you enter, the story plays before the garden does (`src/film.js`, from [STORY.md](STORY.md)): about a minute and a half, eight shots, with words under them. Earth in 2027 with its cities lit, and The Event putting them out; the fleet of bubbles leaving; our ship, the garden under its glass, and what its ground carries; the compass swinging loose as the navigation goes; the wormhole opening beside us and things tumbling through; the Shred Hole's ship, bare rock round a lit shaft; World Builder turning far off, under half-redacted coordinates; and us again, going on. Then it hands over to the game's own view of the bubble and the fly-in.
+
+- **Skip** with the button, Esc, Enter or Space. It plays once: after that, **the story so far** under the title (or Settings → Garden) plays it again. `?film` forces it, `?nofilm` never plays it.
+- It is made of the game's own things: the stars are the real catalogue; the ship is Brodie's miniature of your garden's layout, on torn-off ground under a bubble. The rest (an Earth whose city lights go out a region at a time, the fleet, the wormhole, the Shred Hole's ship, the vortex) is drawn in shaders in that file. Nothing is downloaded for it.
+- The score is synthesized as it plays (Web Audio): a drone, a chord for each shot, and a sound for each event. The garden's own sound waits outside until it ends.
+- While it runs the garden isn't drawn at all (the frame loop hands over), so it costs less than the garden does.
+
+## Star navigation
+
+The ship lost its navigation centuries ago. The first step to getting it back (`src/nav.js`, `src/navfix.js`, `src/navstars.js`) is the oldest one there is: the sky over the garden is the real one, so the stars can tell you where the ship is holding.
+
+- **The sextant comes from the Shred Hole.** Its *Instruments* shelf has a **bubble sextant** (an aircraft navigator's: it carries its own horizon, a bubble, so it needs no sea). Brass doesn't shred: send it through and it falls out of the wormhole by the junk heap, glinting. **N** picks it up. (Ask Brodie about the stars before you have one and he tells you where to get it.)
+- **N** takes it out and puts it away. With it out on a clear night, the 58 navigator's stars that are up are **named** in the sky. **Hold the right button (or L)** to put it to your eye: the view narrows to 12°, and the star nearest the cross is ringed.
+- **The bubble.** It lags when you turn and swings back, and your hands never quite hold it still. **Click (or K)** when it has settled in its ring: that is one sight, the star's height above the horizon at that moment.
+- **Climb first.** Near the ground the stars swim in the haze: a sight from the lawn is good to about ±45′ (tens of miles). The error falls away with height (it halves about every 5 m): from 15 m up a tree it is ±5′. Walk into a trunk, climb, and take the sextant out up there: you hold on with one arm and sight with the other.
+- **R works the fix**, once you have three different stars. Each sight says: *you are somewhere on this line*, a line square to the star's bearing (the altitude-intercept method, Marcq St Hilaire's, 1875: compare the height you measured with the height the almanac says the star should have from a guessed position; each minute of arc of difference is one nautical mile toward the star or away). The chart draws every line, the **cocked hat** where they cross, and the least-squares position, with each star's height and how far its line lies from the fix.
+- **Good sights are well spread.** Three stars about a third of the way round the sky from each other cross cleanly. Three in one part of the sky cross at thin angles and the fix slides along them; the log says so.
+- **The grades**: a *navigator's fix* (within ten miles, lines crossing cleanly), *position fixed* (within thirty, with lines that cross within forty miles of each other, or six sights to average), a *rough fix*, or *not a fix yet*. The first *position fixed* brings the ship's first navigation system back, and Brodie has something to say.
+- Brodie teaches it: "teach me… star navigation". On touch: the *sextant* button on the pad, then *raise / lower*, *sight*, *work the fix*. A controller has the same.
+- In a room, the others see you holding it. Your sights and fixes are your own (kept in this browser).
+- What the fix finds is the place whose sky the garden is showing (the same place the sun and weather use). It is drawn on your screen only.
+
 ## Brodie
 
 **Brodie** is a little glass sphere that floats at your left shoulder (`src/sphere.js`). Inside him is the garden, small: its brick walls, the loop walk, the pools and canal, the garden's trees and the ones you plant (they turn up in his glass as you plant them), the lamps, and the black hole over it all with its glowing ring. He turns to look at you, blinks, glows when he talks, and says "brody" a lot. It's slang.
@@ -95,7 +119,7 @@ For now (a demo, before anything has come through) there's also a **crate of the
   - **your own Anthropic API key**: Settings → Garden → *Use my own Anthropic API key*. It's kept in this browser and sent only to Anthropic (`api.anthropic.com`, straight from the page). Note that every site under linglab.org shares one browser storage, so any of them could read it.
   - **the garden's key**, behind the sphere Worker (below), for everyone else.
   - With neither (or offline) he answers from his written lines, and says so once.
-- **Lessons**: say "teach me…" (or ask him how to do something) and he walks you through getting about, planting, the dry stone wall, free builds, climbing trees or guns, a step at a time. Each step is done when you've actually done it; you can skip a step or stop.
+- **Lessons**: say "teach me…" (or ask him how to do something) and he walks you through getting about, planting, the dry stone wall, free builds, climbing trees, guns or star navigation, a step at a time. Each step is done when you've actually done it; you can skip a step or stop.
 - **His voice** (Settings → Garden → Brodie → Voice): off, the browser's own (free, a bit robotic), or **Brodie's**, an ElevenLabs voice spoken through the sphere Worker (it falls back to the browser's).
 - He's for everyone, children included: what he says (written, or from Haiku, `src/brodie.js` holds who he is) is kind and simple, he never asks for personal information, and if you tell him you're lonely he's glad of you and nudges you toward the people in your life.
 

@@ -582,6 +582,7 @@ export function createArms(o) {
     for (const p of othersList) {
       seen.add(p.id); let t = theirs.get(p.id);
       if (p.body && p.body.setDown) { const d = theirDir.get(p.id) || [0, 1]; p.body.setDown(!!p.down, d[0], d[1]); }
+      if (p.w === 'sextant' && !p.down) { if (t) { group.remove(t.prop); theirs.delete(p.id); } continue; }   // (a navigator: nav.js puts the sextant in their hand)
       if (!p.w || p.down || !UD[p.w]) { if (t) { group.remove(t.prop); theirs.delete(p.id); } if (p.body && p.body.setArmed) p.body.setArmed(false, null); continue; }
       if (!t || t.w !== p.w) { if (t) group.remove(t.prop); t = { w: p.w, prop: weaponProp(p.w), spec: null, rl: null }; t.prop.matrixAutoUpdate = false; group.add(t.prop); theirs.set(p.id, t); }
       const ud = UD[p.w];
@@ -658,6 +659,8 @@ export function createArms(o) {
       adopt(w, mine) { if (!guest && !mine) save(); guest = !mine; store = { seq: +((w && w.seq) || 0), lying: (w && Array.isArray(w.lying) ? w.lying : []).filter(okL) }; if (mine) own = store; redraw(); save(); },
       release() { if (!guest) return; guest = false; store = own; redraw(); },
     },
+    /** Put the gun away (something else is coming out: the sextant). */
+    holster() { if (held && held.drawn) stow(); },
     /** For tests: a gun in hand at once. */
     give(w) { if (okW(w)) take(w); },
     lyingCount: () => lying.size,

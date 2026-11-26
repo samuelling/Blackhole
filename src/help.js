@@ -29,6 +29,11 @@ const SECTIONS = [
     K('click', 'fire (hold, for the automatics)'), K('right button', 'aim'), K('R', 'reload'),
     K('rounds', 'leave craters and holes and throw real debris; shoot through a plant and it\'s gone (Settings → Garden puts the garden\'s own back); cut through a tree you planted and it falls; lamps can be shot out'),
     K('in a room', 'others can be shot, and so can you: hits flinch you, hole your suit (it leaks) and crack your visor; down at nothing left, you choose when to get up: E here, G at the gate (Settings → Garden turns being shot off for you)') ] },
+  { id: 'stars', title: 'Star navigation', note: 'The first step to getting the ship\'s nav back. The sky is the real one. The Shred Hole fabricates a bubble sextant (its Instruments shelf): it comes through the wormhole and lands by the junk heap.', rows: [
+    K('N', 'pick up the sextant · take it out · put it away'), K('right button', 'or L: hold it to your eye (the navigator\'s stars are named)'),
+    K('click', 'or K: take the sight, with the cross on a star and the bubble settled in its ring'), K('R', 'work the fix, once you have three different stars · well apart round the sky is best'),
+    K('climb first', 'near the ground the stars swim in the haze (tens of miles of error); from 15 m up a tree, a few'),
+    K('the chart', 'each star gives one line you must be on; where they cross is the ship\'s position') ] },
   { id: 'free', title: 'Free builds (Ultrahand)', note: 'Anywhere off the wall line: build with stone from the heaps and with the Shred Hole\'s junk, as with Ultrahand in Tears of the Kingdom.', rows: [
     K('B', 'away from the wall: start a free build where you stand, or take up the one that is there'),
     K('click', 'lift from the stone heaps, the junk heap, or the build · it hangs where you look · click lets it go'),
@@ -49,6 +54,7 @@ const TOUCH = [
     K('climb', 'walk into a tree trunk and keep pushing: up the stick climbs, down comes down, sideways goes round · jump lets go'),
     K('rail', 'down the right edge: walk, plant, build, space, me (see yourself), gesture · tap the lit one to come back to walking')] },
   { id: 'guns', title: 'Guns', note: 'Near a gun by the junk heap, “gun: pick up” takes it; with one in hand the pad has fire (hold), aim (hold), reload and put away. Aim by looking (drag right).', rows: [] },
+  { id: 'stars', title: 'Star navigation', note: 'With a sextant (the Shred Hole fabricates one; it lands by the junk heap): “sextant” on the pad takes it out. Then “raise / lower”, put the cross on a named star by looking, “sight” when the bubble is settled; three different stars, then “work the fix”. Climb a tree first: the haze is near the ground.', rows: [] },
   { id: 'voids', title: 'Voids', rows: [K('double-tap', 'or “open a void”: a new one ahead of you'), K('tap', 'on a void: evaporate it')] },
   { id: 'plant', title: 'Planting', rows: [K('plant', 'on the rail, then the plant list'), K('tap', 'the ground: plant it there'), K('dig up', 'the plant you look at'), K('done', 'trowel down')] },
   { id: 'space', title: 'The space view', rows: [K('one finger', 'turn the view round the bubble'), K('pinch', 'nearer / farther')] },

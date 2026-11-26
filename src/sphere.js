@@ -59,6 +59,15 @@ const TUTORIALS = [
     { say: 'R reloads.', done: s => s.reloading },
     { say: 'Q puts it away; Shift+Q puts it down.', done: s => !s.armed },
     { say: 'In a room you can shoot each other. If you’d rather not be, Settings → Garden.', end: true } ] },
+  { id: 'stars', title: 'star navigation', steps: [
+    { say: 'The ship lost its nav, brody, but the sky up there is the real one. First you need a sextant: the Shred Hole fabricates them (the Instruments shelf). One lands by the junk heap; press N to pick it up.', done: s => s.sextant },
+    { say: 'It only works on a clear night (T makes it night). Press N to take it out.', done: s => s.sextantOut },
+    { say: 'Down here the stars swim in the haze. Climb a tall tree: walk into the trunk and keep walking. The higher the better: fifteen metres is plenty. (Or skip this step and shoot from the ground: it’ll just be rougher.)', done: s => s.sextantOut && (s.climbH || 0) > 7 },
+    { say: 'Find a named star, hold the right button (or L) to put the sextant to your eye, and lay the cross on it.', done: s => s.scope > 0.8 },
+    { say: 'Wait for the bubble to settle in its ring, then click (or K). That’s one sight.', done: (s, a) => s.sights > (a.sights0 || 0) },
+    { say: 'Now two more, brody: different stars, far apart round the sky. A third of the way round from each other is ideal.', done: s => s.sightStars >= 3 },
+    { say: 'Press R to work the fix. Every star draws one line you must be on; where the lines cross is where we are.', done: (s, a) => s.navFixes > (a.fixes0 || 0) },
+    { say: 'That’s celestial navigation, brody: the first piece of our nav, back. Higher up and more stars makes it tighter.', end: true } ] },
 ];
 const TUT = Object.fromEntries(TUTORIALS.map(t => [t.id, t]));
 
@@ -83,9 +92,10 @@ const ANSWERS = [
   [/\b(wall|dry ?stone|stint)\b/i, 'Let’s do the wall together, brody. [[tutorial:wall]]'],
   [/\b(build|ultrahand|glue|stick|gate)\b/i, 'Free builds are the best, brody. I’ll walk you through. [[tutorial:free]]'],
   [/\b(climb|tree)\b/i, 'Climbing! Let’s go, brody. [[tutorial:climb]]'],
+  [/\b(navigat\w*|sextant|star ?fix|stars?|lost|where are we|position|celestial)\b/i, 'We can find out where we are, brody: three stars and a sextant. [[tutorial:stars]]'],
   [/\b(gun|shoot|reload|aim|fire)\b/i, 'Guns, brody. Careful with the flowers. [[tutorial:guns]]'],
   [/\b(walk|move|look|control|keys?|how do i)\b/i, 'Start with getting about, brody. [[tutorial:walk]]'],
-  [/\b(story|ship|probe|nav|world ?builder|shred ?hole|wormhole|earth)\b/i, () => pick(['We’re one of a fleet of probes, brody, looking for somewhere life can carry on. Our nav went centuries ago; the wormhole links us to the other ships.', 'The land under you carries Earth’s blueprint, brody, and a snapshot of everyone in 2027. Worth looking after.'])],
+  [/\b(story|ship|probe|world ?builder|shred ?hole|wormhole|earth)\b/i, () => pick(['We’re one of a fleet of probes, brody, looking for somewhere life can carry on. Our nav went centuries ago; the wormhole links us to the other ships.', 'The land under you carries Earth’s blueprint, brody, and a snapshot of everyone in 2027. Worth looking after.'])],
   [/\b(who|what) are you\b/i, `I’m ${PIP}, brody! The garden, only small: I keep a copy of it in my glass. I’m here to keep you company and show you how stuff works.`],
   [/\b(hi|hello|hey)\b/i, () => pick(['Yo brody! Good to see you.', 'Hey brody! What are we doing?'])],
   [/\b(thank|thanks)\b/i, () => pick(['Any time, brody.', 'You got it, brody.'])],
@@ -108,29 +118,8 @@ export function createSphere(o) {
   const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.8, 2.0), toneMapped: false });
   const eyes = [-1, 1].map(s => { const e = new THREE.Mesh(new THREE.CapsuleGeometry(0.008, 0.012, 4, 8), eyeMat); e.position.set(s * 0.035, 0.03, R * 0.985); face.add(e); return e; });
 
-  // ---------------------------------------------------------------- the garden inside: the real one, at 1 to 400
-  const mini = new THREE.Group(); root.add(mini); mini.position.y = -0.045;
-  const K = 0.105 / 43, CX = 0, CZ = 12, mx = x => (x - CX) * K, mz = z => (z - CZ) * K;
-  const M = c => new THREE.MeshLambertMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.35) });
-  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); mini.add(m); return m; };
-  add(new THREE.CylinderGeometry(0.13, 0.115, 0.016, 48), M(0x6f8f4a), 0, -0.008, 0);                                   // the field
-  const B = layout.B, bw = (B.x1 - B.x0) * K, bd = (B.z1 - B.z0) * K, bx = mx((B.x0 + B.x1) / 2), bz = mz((B.z0 + B.z1) / 2);
-  add(new THREE.BoxGeometry(bw, 0.002, bd), M(0x4f7a35), bx, 0.001, bz);                                                    // the lawns
-  const brick = M(0x8a3f2c);
-  for (const [w, d, x, z] of [[bw, 0.003, bx, bz - bd / 2], [bw, 0.003, bx, bz + bd / 2], [0.003, bd, bx - bw / 2, bz], [0.003, bd, bx + bw / 2, bz]]) add(new THREE.BoxGeometry(w, 0.007, d), brick, x, 0.0035, z);
-  { const pts = layout.loopCurve.getPoints(120).map(p => new THREE.Vector3(mx(p.x), 0.0025, mz(p.z)));                      // the loop walk
-    const c = new THREE.CatmullRomCurve3(pts, true); const t = new THREE.Mesh(new THREE.TubeGeometry(c, 160, 0.0012, 4, true), M(0xcdb38a)); t.scale.y = 0.4; mini.add(t); }
-  add(new THREE.BoxGeometry(0.0035, 0.002, (layout.B.z1 - 0) * K), M(0xcdb38a), 0, 0.002, mz(layout.B.z1 / 2));            // the long walk to the gate
-  const water = new THREE.MeshLambertMaterial({ color: 0x5fb3d9, emissive: new THREE.Color(0x1d5f80) });
-  for (const p of layout.pools) add(new THREE.CylinderGeometry(p.r * K, p.r * K, 0.003, 24), water, mx(p.x), 0.002, mz(p.z));
-  add(new THREE.BoxGeometry(layout.canal.hw * 2 * K, 0.003, (layout.canal.z1 - layout.canal.z0) * K), water, 0, 0.002, mz((layout.canal.z0 + layout.canal.z1) / 2));
-  add(new THREE.ConeGeometry(0.004, 0.012, 8), M(0xbfb8ad), mx(layout.pools[0].x), 0.008, mz(layout.pools[0].z));           // the fountain
-  const leaf = M(0x3f7a3a), leafLite = M(0x6fa04a), trunk = M(0x5a4030), gold = new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 1.5, 0.8), toneMapped: false });
-  const treeAt = (x, z, h, giant) => { const g = new THREE.Group(); g.position.set(mx(x), 0, mz(z)); const s = Math.min(0.05, 0.006 + h * K * (giant ? 1 : 1.6));
-    const tr = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.06, s * 0.08, s * 0.5, 5), trunk); tr.position.y = s * 0.25; const cr = new THREE.Mesh(new THREE.IcosahedronGeometry(s * 0.32, 0), Math.random() < 0.5 ? leaf : leafLite); cr.position.y = s * 0.62; g.add(tr, cr); mini.add(g); return g; };
-  for (const t of layout.trees) treeAt(t.x, t.z, 12, false);
-  for (const [x, z] of layout.lamps) add(new THREE.SphereGeometry(0.0018, 6, 4), gold, mx(x), 0.006, mz(z));
-  add(new THREE.BoxGeometry(0.008, 0.008, 0.002), M(0x2a2a2a), mx(layout.gate.x), 0.004, mz(layout.gate.z));               // the gate
+  // ---------------------------------------------------------------- the garden inside: the real one, at 1 to 400 (miniGarden, below)
+  const { group: mini, treeAt } = miniGarden(layout); root.add(mini); mini.position.y = -0.045;
   // the trees you've planted: redrawn when they change
   let mine = [], mineKey = '';
   function drawMine() {
@@ -207,7 +196,7 @@ export function createSphere(o) {
   let tut = null;   // { T, i, a }
   function startTutorial(id) {
     const T = TUT[id]; if (!T) return false; const s = o.state();
-    tut = { T, i: 0, a: { turn: 0, walked: 0, planted0: s.planted, fired0: s.fired, lastYaw: s.yaw, lastX: s.x, lastZ: s.z } };
+    tut = { T, i: 0, a: { turn: 0, walked: 0, planted0: s.planted, fired0: s.fired, sights0: s.sights || 0, fixes0: s.navFixes || 0, lastYaw: s.yaw, lastX: s.x, lastZ: s.z } };
     if (isOpen) close(); homeChips(); showStep(); return true;
   }
   function stopTutorial() { tut = null; bubT = 0; bubFixed = false; homeChips(); }
@@ -318,4 +307,34 @@ export function createSphere(o) {
     update, open, close, say, hear, startTutorial, stopTutorial,
     get isOpen() { return isOpen; }, get lesson() { return tut ? { id: tut.T.id, step: tut.i } : null; }, tutorials: TUTORIALS.map(t => [t.id, t.title]), context, root, set visibleButton(v) { btn.style.display = v ? '' : 'none'; },
   };
+}
+
+/**
+ * The garden in miniature (1 to 400, about 26 cm across): the field, the walls, the walks, the water, the garden's trees, the lamps,
+ * the gate. For Brodie's glass, and for the ship in the intro film. { group, treeAt(x, z, h, giant) (adds a tree, returns it) }
+ */
+export function miniGarden(layout) {
+  const mini = new THREE.Group();
+  const K = 0.105 / 43, CX = 0, CZ = 12, mx = x => (x - CX) * K, mz = z => (z - CZ) * K;
+  const M = c => new THREE.MeshLambertMaterial({ color: c, emissive: new THREE.Color(c).multiplyScalar(0.35) });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); mini.add(m); return m; };
+  add(new THREE.CylinderGeometry(0.13, 0.115, 0.016, 48), M(0x6f8f4a), 0, -0.008, 0);                                   // the field
+  const B = layout.B, bw = (B.x1 - B.x0) * K, bd = (B.z1 - B.z0) * K, bx = mx((B.x0 + B.x1) / 2), bz = mz((B.z0 + B.z1) / 2);
+  add(new THREE.BoxGeometry(bw, 0.002, bd), M(0x4f7a35), bx, 0.001, bz);                                                    // the lawns
+  const brick = M(0x8a3f2c);
+  for (const [w, d, x, z] of [[bw, 0.003, bx, bz - bd / 2], [bw, 0.003, bx, bz + bd / 2], [0.003, bd, bx - bw / 2, bz], [0.003, bd, bx + bw / 2, bz]]) add(new THREE.BoxGeometry(w, 0.007, d), brick, x, 0.0035, z);
+  { const pts = layout.loopCurve.getPoints(120).map(p => new THREE.Vector3(mx(p.x), 0.0025, mz(p.z)));                      // the loop walk
+    const c = new THREE.CatmullRomCurve3(pts, true); const t = new THREE.Mesh(new THREE.TubeGeometry(c, 160, 0.0012, 4, true), M(0xcdb38a)); t.scale.y = 0.4; mini.add(t); }
+  add(new THREE.BoxGeometry(0.0035, 0.002, (layout.B.z1 - 0) * K), M(0xcdb38a), 0, 0.002, mz(layout.B.z1 / 2));            // the long walk to the gate
+  const water = new THREE.MeshLambertMaterial({ color: 0x5fb3d9, emissive: new THREE.Color(0x1d5f80) });
+  for (const p of layout.pools) add(new THREE.CylinderGeometry(p.r * K, p.r * K, 0.003, 24), water, mx(p.x), 0.002, mz(p.z));
+  add(new THREE.BoxGeometry(layout.canal.hw * 2 * K, 0.003, (layout.canal.z1 - layout.canal.z0) * K), water, 0, 0.002, mz((layout.canal.z0 + layout.canal.z1) / 2));
+  add(new THREE.ConeGeometry(0.004, 0.012, 8), M(0xbfb8ad), mx(layout.pools[0].x), 0.008, mz(layout.pools[0].z));           // the fountain
+  const leaf = M(0x3f7a3a), leafLite = M(0x6fa04a), trunk = M(0x5a4030), gold = new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 1.5, 0.8), toneMapped: false });
+  const treeAt = (x, z, h, giant) => { const g = new THREE.Group(); g.position.set(mx(x), 0, mz(z)); const s = Math.min(0.05, 0.006 + h * K * (giant ? 1 : 1.6));
+    const tr = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.06, s * 0.08, s * 0.5, 5), trunk); tr.position.y = s * 0.25; const cr = new THREE.Mesh(new THREE.IcosahedronGeometry(s * 0.32, 0), Math.random() < 0.5 ? leaf : leafLite); cr.position.y = s * 0.62; g.add(tr, cr); mini.add(g); return g; };
+  for (const t of layout.trees) treeAt(t.x, t.z, 12, false);
+  for (const [x, z] of layout.lamps) add(new THREE.SphereGeometry(0.0018, 6, 4), gold, mx(x), 0.006, mz(z));
+  add(new THREE.BoxGeometry(0.008, 0.008, 0.002), M(0x2a2a2a), mx(layout.gate.x), 0.004, mz(layout.gate.z));               // the gate
+  return { group: mini, treeAt };
 }

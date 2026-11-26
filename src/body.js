@@ -180,7 +180,7 @@ export function createBody({ model, U, COMMON }) {
   wear(model, 'astro');   // the gloves get jointed fingers there (hands.js)
 
   // gait state
-  const prev = new THREE.Vector3(); let has = false, speed = 0, move = 0, cyc = 0, vf = 1, vr = 0, reachT = -9, bob = 0, enabled = true;
+  const prev = new THREE.Vector3(); let has = false, speed = 0, move = 0, cyc = 0, vf = 1, vr = 0, reachT = -9, bob = 0, enabled = true, hidden = false;
   // what keeps it from walking like a machine: weight carried over the stance foot, the hips dropping and turning, the spine leaning into
   // starts and turns, every joint arriving a little late and a little past (springs), strides that are never quite the same twice,
   // and, standing still, a person's slow shifting from foot to foot
@@ -223,7 +223,7 @@ export function createBody({ model, U, COMMON }) {
   // the same rhythm half a beat behind; the body leans in, head tipped back to look up. The rhythm is driven by how far you've
   // climbed (a cycle every 0.55 m), so going down plays it backwards and hanging still holds a grip, breathing.
   const clim = { on: false, x: 0, z: 0, r: 0.2, w: 0, ph: 0, lastY: null }, cQ = new THREE.Quaternion(), cN = v3(), cP = v3(), cH = v3(), qFoot = new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), -1.05);
-  function climbPose(dt, s) {
+  function climbPose(dt, s, gunW = 0) {
     clim.w += ((clim.on ? 1 : 0) - clim.w) * Math.min(1, dt * 7); const w = clim.w * clim.w * (3 - 2 * clim.w);
     const gy = s.gy || 0; if (clim.lastY == null) clim.lastY = gy; const dy = gy - clim.lastY; clim.lastY = gy;
     if (Math.abs(dy) < 0.5) clim.ph += dy / 0.55 * Math.PI * 2;
@@ -241,6 +241,8 @@ export function createBody({ model, U, COMMON }) {
     // lean in to the trunk, a little sit in the hips; the head tipped back to look up
     pel.position.copy(rest.pelvis); pel.position.y -= 0.1 * w; pel.position.z += 0.02 * w; pel.quaternion.slerp(cQ.setFromAxisAngle(XA, 0.18), w); qP.copy(pel.quaternion);
     tor.position.copy(rest.torso); tor.quaternion.slerp(cQ.setFromAxisAngle(XA, 0.12), w); B.head.quaternion.slerp(cQ.setFromAxisAngle(XA, -0.35), w);
+    if (gunW > 0) {   // something held to the eye: the shoulders turn out from the trunk toward where you look, as far as they can
+      let dl = (s.yaw || 0) + Math.PI - root.rotation.y; dl = Math.atan2(Math.sin(dl), Math.cos(dl)); tor.quaternion.multiply(cQ.setFromAxisAngle(UP, Math.max(-1.2, Math.min(1.2, dl)) * gunW * w)); B.head.quaternion.slerp(cQ.identity(), 0.7 * gunW * w); }
     qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
     // hands: up and round the trunk's sides, alternately reaching and pulling
     const sh = rest.pelvis.y + rest.torso.y + rest.armU_R.y - 0.1 * w;
@@ -250,7 +252,7 @@ export function createBody({ model, U, COMMON }) {
       cN.set(Math.sin(sg * 0.85), 0, -Math.cos(sg * 0.85));
       xh.copy(cN).multiplyScalar(sd === 'R' ? -1 : 1); yh.set(0, -1, 0); zh.crossVectors(xh, yh);   // palm to the bark, fingers up
       B['armU_' + sd].position.copy(rest['armU_' + sd]);
-      armTo(sd, palm, pole.set(-sg * 1, -0.6, -0.4), w);
+      armTo(sd, palm, pole.set(-sg * 1, -0.6, -0.4), sd === 'R' ? w * (1 - gunW) : w);   // (the right hand, if it holds something, is the hold's)
     }
     // feet: lower down, pushing, the same rhythm half a beat behind; knees out round the trunk
     for (const [sd, sg, off] of [['R', -1, Math.PI * 0.5], ['L', 1, Math.PI * 1.5]]) {
@@ -282,7 +284,7 @@ export function createBody({ model, U, COMMON }) {
     qU.copy(qTW).multiply(up.quaternion); q.copy(qU).invert().multiply(qS); lo.quaternion.slerp(q, w);
     qH.setFromRotationMatrix(M.makeBasis(xh, yh, zh)); q.copy(qU).multiply(lo.quaternion).invert().multiply(qH); hd.quaternion.slerp(q, w);
   }
-  function solveGun(w, s, bobNow) {
+  function solveGun(w, s, bobNow, climbK = 0) {
     const G = gunSpec;
     // the eye in the world (exactly where the camera is put), and the gun from it
     eQ.setFromEuler(eE.set(s.pitch || 0, s.yaw || 0, 0, 'YXZ')); eP.set(s.x, (s.gy || 0) + EYE.y + bobNow, s.z);
@@ -295,16 +297,19 @@ export function createBody({ model, U, COMMON }) {
     const onEye = (v, out) => out.copy(v).applyQuaternion(eQ).add(eP).sub(root.position).applyQuaternion(rQi);
     // bladed: the torso turns a little to the right, the head back the other way; the left shoulder comes forward
     // a gun held is held steady: the spine comes upright out of whatever the idle was doing (a slouch, a look at the feet)
-    const tor = B.torso, tw = 0.42 * w; qP.copy(B.pelvis.quaternion); qTW.copy(qP).multiply(tor.quaternion);
-    ptmp.set(0, 1, 0).applyQuaternion(qTW); qX.setFromUnitVectors(ptmp, UP); qH.identity().slerp(qX, 0.85 * w); qTW.premultiply(qH); tor.quaternion.copy(qP).invert().multiply(qTW);
-    // bladed into it: the torso turned a little to the right (the head turned back), the left shoulder forward
-    tor.quaternion.multiply(qX.setFromAxisAngle(UP, -tw)); B.head.quaternion.premultiply(qX.setFromAxisAngle(UP, tw));
-    B.armU_L.position.copy(rest.armU_L); B.armU_L.position.z += 0.07 * w; B.armU_L.position.y += 0.01 * w; B.armU_R.position.copy(rest.armU_R); B.armU_R.position.z += 0.015 * w;
+    const tor = B.torso, wb = w * (1 - climbK) * (G.oneHand ? 0.4 : 1), tw = 0.42 * wb; qP.copy(B.pelvis.quaternion); qTW.copy(qP).multiply(tor.quaternion);   // (on a trunk the climb has set the spine)
+    if (wb > 0.001) {
+      ptmp.set(0, 1, 0).applyQuaternion(qTW); qX.setFromUnitVectors(ptmp, UP); qH.identity().slerp(qX, 0.85 * wb); qTW.premultiply(qH); tor.quaternion.copy(qP).invert().multiply(qTW);
+      // bladed into it: the torso turned a little to the right (the head turned back), the left shoulder forward
+      tor.quaternion.multiply(qX.setFromAxisAngle(UP, -tw)); B.head.quaternion.premultiply(qX.setFromAxisAngle(UP, tw));
+      B.armU_L.position.copy(rest.armU_L); B.armU_L.position.z += 0.07 * wb; B.armU_L.position.y += 0.01 * wb; B.armU_R.position.copy(rest.armU_R); B.armU_R.position.z += 0.015 * wb;
+    }
     qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
     // right: the palm against the grip's right side, thumb up it, fingers round its front
     xh.copy(gR).negate(); zh.copy(gU).addScaledVector(gF, 0.35); zh.addScaledVector(xh, -zh.dot(xh)).normalize(); yh.crossVectors(zh, xh);
     onGun(G.grip, palm).addScaledVector(xh, -0.03);
     armTo('R', palm, pole.copy(gR).multiplyScalar(0.8).addScaledVector(gU, -1).addScaledVector(gF, -0.2), w);
+    if (G.oneHand && climbK > 0.5) return;   // (the left hand is on the bark)
     // left: palm up under the fore-end (or along the reload's path), fingers round to the right, thumb along the barrel
     xh.copy(gU).negate(); zh.copy(gF); yh.crossVectors(zh, xh);
     const lh = G.lh; let pt;
@@ -585,8 +590,10 @@ export function createBody({ model, U, COMMON }) {
     hp.x -= rest.pelvis.x + rest.torso.x + rest.head.x; hp.z -= rest.pelvis.z + rest.torso.z + rest.head.z; hp.y = 0;
     const hl = hp.length(), HL = 0.24; if (hl > HL) hp.multiplyScalar(HL / hl);
     hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
-    if (gunSpec && armed > 0.002 && work < 0.98) solveGun(armed * armed * (3 - 2 * armed) * (1 - work), s, bob); else gunOk = false;
-    if (clim.on || clim.w > 0.002) climbPose(dt, s); else clim.w = 0;
+    // up a tree with something in your hand (a sextant): the climb first (one hand stays on the bark), then the hold
+    const gunNow = gunSpec && armed > 0.002 && work < 0.98, gunW = gunNow ? armed * armed * (3 - 2 * armed) * (1 - work) : 0;
+    if (clim.on || clim.w > 0.002) climbPose(dt, s, gunW); else clim.w = 0;
+    if (gunNow) solveGun(gunW, s, bob, clim.w); else gunOk = false;
     tipOver(dt);
     return bob;
   }
@@ -617,12 +624,15 @@ export function createBody({ model, U, COMMON }) {
     setTalk(v) { own.uGlow.value = 0.85 + 1.6 * Math.max(0, Math.min(1, v)); },
     /** Free what this body made for itself (another player's body, when they leave). The suit's own geometry is shared and stays. */
     dispose(shared) { root.traverse(o => { if (o.isMesh) { if (!o.geometry.userData.shared && (!shared || !shared.has(o.geometry))) o.geometry.dispose(); } }); for (const m of [mat, headMat, ink, headInk]) m.dispose(); ctex.dispose(); },
-    setEnabled(v) { enabled = !!v; root.visible = enabled; },
+    setEnabled(v) { enabled = !!v; root.visible = enabled && !hidden; },
+    /** Out of your own sight for a moment (an instrument at your eye: your hands would be all you saw). */
+    setHidden(v) { hidden = !!v; root.visible = enabled && !hidden; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
     /** Holding a gun (arms.js). spec, each frame it's held: { off (m, in the eye's frame: x right, y up, z back), rot (Euler, the gun's
      *  own tilt), grip, sup (points on the gun, its own frame: -z forward), lh: null, or the left hand's way through a reload { a, b, k,
-     *  aEye, bEye } (a to b by k; each point on the gun, or in the eye's frame if aEye / bEye) }. Off: null. */
+     *  aEye, bEye } (a to b by k; each point on the gun, or in the eye's frame if aEye / bEye), oneHand (a sextant: up a tree it's held
+     *  in the right hand alone, the left staying on the bark) }. Off: null. */
     setArmed(on, spec) { armedOn = on ? 1 : 0; if (spec) gunSpec = spec; else if (!on && armed < 0.01) gunSpec = null; },
     /** Climbing a trunk at (x, z), radius r (m), or not (null). */
     setClimb(c) { if (c && isFinite(c.x) && isFinite(c.z)) { if (!clim.on) clim.lastY = null; clim.on = true; clim.x = c.x; clim.z = c.z; clim.r = Math.max(0.05, Math.min(3, +c.r || 0.2)); } else clim.on = false; },
