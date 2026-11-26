@@ -88,12 +88,24 @@ For now (a demo, before anything has come through) there's also a **crate of the
 
 ## The story so far (the intro film)
 
-The first time you enter, the story plays before the garden does (`src/film.js`, from [STORY.md](STORY.md)): about a minute and a half, eight shots, with words under them. Earth in 2027 with its cities lit, and The Event putting them out; the fleet of bubbles leaving; our ship, the garden under its glass, and what its ground carries; the compass swinging loose as the navigation goes; the wormhole opening beside us and things tumbling through; the Shred Hole's ship, bare rock round a lit shaft; World Builder turning far off, under half-redacted coordinates; and us again, going on. Then it hands over to the game's own view of the bubble and the fly-in.
+The first time you enter, the story plays before the garden does (`src/film.js`, from [STORY.md](STORY.md)): about a minute and a half, eight shots, **told by Brodie**, with his words under them.
+
+1. **Earth, 2027**, its night side from orbit: the real coasts and the real city lights (NASA's Blue Marble and Black Marble), the sun a diamond ring at the limb. Then The Event crosses the world from one place: ahead of its front the cities surge, behind it they are out, and the air turns the colour of ash.
+2. **The fleet**: eighty bubbles lifting off what's left and out past the camera, each a soap film round a piece of ground with a lit garden on it.
+3. **Our ship**: this is the game itself, its own bubble against the nebula it is flying toward, with the dust going by. The camera drops under the brink to the torn ground, where the blueprint and the snapshot show as lights.
+4. **The navigation lost**: the compass good, then gone; the ship rolls and the stars swing.
+5. **The wormhole**: the one in the east field, from the air beside it, the garden lit below; things fall out of it.
+6. **The Shred Hole's ship**: bare scorched ground, and the tower working in the middle of it under its floodlights.
+7. **World Builder**: something turning, a long way off, under half-redacted coordinates.
+8. **Home**: in at the gate, through the light tunnel, up over the garden; then the ship going on, and its name. It hands over to the game's own view of the bubble and the fly-in.
 
 - **Skip** with the button, Esc, Enter or Space. It plays once: after that, **the story so far** under the title (or Settings → Garden) plays it again. `?film` forces it, `?nofilm` never plays it.
-- It is made of the game's own things: the stars are the real catalogue; the ship is Brodie's miniature of your garden's layout, on torn-off ground under a bubble. The rest (an Earth whose city lights go out a region at a time, the fleet, the wormhole, the Shred Hole's ship, the vortex) is drawn in shaders in that file. Nothing is downloaded for it.
-- The score is synthesized as it plays (Web Audio): a drone, a chord for each shot, and a sound for each event. The garden's own sound waits outside until it ends.
-- While it runs the garden isn't drawn at all (the frame loop hands over), so it costs less than the garden does.
+- **Half of it is the game.** For shots 3, 4, 5 and 8 the film only says where the camera is: the game draws them, with everything it has (the soap film, the lensing, the bloom). A few things are laid into the game's scene for them: the lights in the ground, and what falls through the wormhole. If you replay it from Settings, those shots show your garden as it is at that moment.
+- **The other half** has a scene of its own, drawn through its own bloom and the game's tone curve: the Earth (day and night pictures, a sea mask for the sun's glint, clouds and air made in the shader), the fleet (instanced), the Shred Hole's tower (modelled here, part by part), and World Builder (46,000 points on a spiral).
+- **One grade over all of it**: a little lens colour toward the corners, grain, a vignette, cool shadows and warm lights, and the sun's flare; wide-screen bars. On an upright phone the lens widens so each shot keeps its width.
+- **Brodie's telling** was spoken once, in his ElevenLabs voice, and is kept in `assets/film/vo/`: playing the film spends nothing. `tools/narration.json` holds the lines; change one and push, and the workflow (`.github/workflows/narration.yml`) has the sphere Worker speak just that line again. It plays through his voice box (below), a touch slow.
+- **The score** is synthesized as it plays (Web Audio): a drone, a chord for each shot, a sound for each event, in a long reverb. The garden's own sound waits outside until it ends.
+- The pictures of Earth (about 0.9 MB) are fetched only if the film is going to play.
 
 ## Star navigation
 
@@ -121,6 +133,7 @@ The ship lost its navigation centuries ago. The first step to getting it back (`
   - With neither (or offline) he answers from his written lines, and says so once.
 - **Lessons**: say "teach me…" (or ask him how to do something) and he walks you through getting about, planting, the dry stone wall, free builds, climbing trees, guns or star navigation, a step at a time. Each step is done when you've actually done it; you can skip a step or stop.
 - **His voice** (Settings → Garden → Brodie → Voice): off, the browser's own (free, a bit robotic), or **Brodie's**, an ElevenLabs voice spoken through the sphere Worker (it falls back to the browser's).
+- **His voice box** (`src/voicefx.js`): Brodie is a small glass machine, so his own voice goes through a **harmonizer, half mixed**: what he said, plus two copies of it, a fourth below and a fifth above, with a short metallic ring. (The copies are made the way rack harmonizers made them: a delay line whose length is swept by a sawtooth, so what comes out is played slower or faster than it went in; two such taps half a sweep apart, cross-faded so the jump is never heard.) *Robot in his voice* in Settings sets the mix: 0 is his plain voice, 50% the default, 100% all machine. The browser's voice can't be routed through it.
 - He's for everyone, children included: what he says (written, or from Haiku, `src/brodie.js` holds who he is) is kind and simple, he never asks for personal information, and if you tell him you're lonely he's glad of you and nudges you toward the people in your life.
 
 **The sphere Worker** (`worker-sphere/`, `garden-sphere`) holds the keys so the page never does: `POST /chat` is Claude Haiku as Brodie, `POST /speak` is his ElevenLabs voice, `GET /health` says which are set. It only answers the garden's own sites (`ORIGINS`), twelve asks a minute per address. It is deployed by Workers Builds from this repo (root `/worker-sphere`), so a push redeploys it. Its keys are secrets you set in the dashboard (garden-sphere → Settings → Variables and Secrets): `ANTHROPIC_API_KEY`, and for his voice `ELEVENLABS_API_KEY`. His voice is ElevenLabs' Luis (`BRODIE_VOICE`). The page already looks for it at `https://garden-sphere.samuelling.workers.dev` (or `?sphere=<url>`). A spending limit on the Anthropic console caps what it can cost.
@@ -279,6 +292,8 @@ Small on purpose, so every surface can be close-up quality. Materials are photo-
 - **Rendering:** 4× multisampling with alpha-to-coverage (smooth leaf edges without sorting), screen-space ambient occlusion from the depth buffer, bloom, a light colour grade, ACES tone mapping. Quality is set per machine in the Graphics tab (below); `?gfx=`, `?q=low`, `?msaa=0` and `?ao=0` override it for one visit.
 
 ### Assets and credits
+
+- **Earth in the intro film** (`assets/film/earth_*.jpg`): NASA's Blue Marble (day), Black Marble (night lights) and a sea mask, public-domain imagery from NASA's Visible Earth, taken from the example images of the MIT-licensed [three-globe](https://github.com/vasturiano/three-globe) and resized.
 
 Star positions, magnitudes and colours: the Hipparcos catalogue via d3-celestial's `stars.6.json` (BSD-3-Clause, © 2015 Olaf Frohn). Textures and models are CC0: from [Poly Haven](https://polyhaven.com) (gravel_floor, sparse_grass, yellow_flower_mulch, cobblestone_square, castle_brick_02_red, white_plaster_02, bark_brown_02; street_lamp_01, large_iron_gate, painted_wooden_bench, concrete_cat_statue) and leaf scans from [ambientCG](https://ambientcg.com) (LeafSet and Foliage sets). `tools/build_assets.py` cuts the leaf scans into the atlas and foliage cards. Models are glTF with the buffer embedded, saved as `.json` so any static host will serve them (`tools/gltf_embed.py`). The water normal map is from the three.js examples (MIT).
 

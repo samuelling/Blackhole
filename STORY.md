@@ -35,7 +35,7 @@ We pass the time:
 
 ## Told and playable now
 
-- **The intro film** tells this story the first time you enter (`src/film.js`; made with Fable). *The story so far*, under the title, plays it again.
+- **The intro film** tells this story the first time you enter (`src/film.js`; made with Fable), in Brodie's voice. Half of it is shot in the game itself: our ship is the real bubble, the wormhole the real one. *The story so far*, under the title, plays it again.
 - **Star navigation**, the first step to getting our nav back (`src/nav.js`). The garden's sky is the real one, with true star positions. The Shred Hole fabricates a **bubble sextant**; it comes through the wormhole. You climb a tree above the haze, take the heights of three stars, and work the fix the way navigators did: each star gives a line the ship must be on, and where they cross is where we are.
 
 ## Still to come

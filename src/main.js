@@ -1893,6 +1893,7 @@ function update(dt, t) {
     const a = yaw + selfAng, d = selfDist; _selfT.set(player.x, groundY + 1.05, player.z);
     camera.position.set(player.x - Math.sin(a) * d, groundY + 1.35, player.z - Math.cos(a) * d); camera.lookAt(_selfT);
   }
+  if (filmCam) { camera.position.copy(filmCam.p); camera.quaternion.copy(filmCam.q); camera.fov = filmCam.fov; }   // a shot of the intro film: the camera is the film's
   camera.updateProjectionMatrix();
   if (body) body.setInk(0.0027 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));   // ink lines a constant width on screen
   camera.updateMatrixWorld();
@@ -1968,10 +1969,10 @@ function update(dt, t) {
 addEventListener('keydown', e => { if (e.code === 'KeyV' && e.shiftKey && !e.metaKey && !e.ctrlKey && started && !walling.busy) { selfView = !selfView; setHint(selfView ? 'seeing yourself · Shift+V to go back behind your eyes' : 'back behind your eyes', 3000); return; }
   if (e.code === 'KeyF' && e.shiftKey && !e.metaKey && !e.ctrlKey) { toggleFull(); return; } if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
 let lastDraw = 0, FIXED_DT = null, holdLoop = false;
-let selfView = false, selfAng = 2.5, selfDist = 3.4, deathCam = null; const _selfT = new THREE.Vector3();
+let selfView = false, selfAng = 2.5, selfDist = 3.4, deathCam = null, filmCam = null; const _selfT = new THREE.Vector3();
 function frame(once) {
   if (holdLoop && once !== true) { requestAnimationFrame(frame); return; }
-  if (film && film.active) { film.frame(FIXED_DT != null ? FIXED_DT : clock.getDelta()); if (once !== true) requestAnimationFrame(frame); return; }   // the story so far: the garden isn't drawn under it
+  filmCam = null; if (film && film.active) { const own = film.frame(); filmCam = film.cam; if (own) { if (once !== true) requestAnimationFrame(frame); return; } }   // the story so far: some of its shots are its own; for the rest it says where the game's camera is
   if (G.fpsCap && once !== true) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }
   const rawDt = FIXED_DT != null ? (clock.elapsedTime += FIXED_DT, FIXED_DT) : clock.getDelta(), dt = Math.min(rawDt, 0.05), t = clock.elapsedTime;
   U.uTime.value = t;
@@ -1983,7 +1984,7 @@ function frame(once) {
   precip.group.visible = false;      // rain and snow are drawn for the eye only, not for the water's mirror or the lens probe
   if (body) body.pass('mirror');   // a view from outside sees your helmet; you, inside it, don't
   garden.preRender(camera, bufW, bufH);
-  if (body) body.pass(U.uOut.value > 0.03 || selfView ? 'mirror' : 'eye');
+  if (body) body.pass(U.uOut.value > 0.03 || selfView || filmCam ? 'mirror' : 'eye');
   { let need = false; for (const v of voidSlots) if (v && v.wake > 0.08 && v.pos.distanceTo(camera.position) < 45) need = true;
     if (junk.hole.distanceTo(camera.position) < 45) need = true;
     renderEnv(need); lensMat.uniforms.uEnvOn.value = G.env && cubeReady && need ? 1 : 0; }
@@ -2013,7 +2014,9 @@ if (multi) {
   const eM = $('enterMp'); eM.hidden = false; if (roomQ) eM.textContent = `join room ${roomQ}`;
   eM.addEventListener('click', e => { e.stopPropagation(); enterGarden(() => { multi.open(); if (roomQ) multi.join(roomQ); }); });
 }
-film = createFilm({ renderer, cat: starCat ? starCat.d : null, layout, audio: () => A, isTouch });
+film = createFilm({ renderer, cat: starCat ? starCat.d : null, audio: () => A, isTouch, robot: () => S.brodieRobot ?? 0.5, game: { scene, hole: () => junk.hole } });
+composer.addPass(film.grade);   // the film's grade, on while one of its shots is the game's
+if (!film.seen && !TEST && !QS.has('nofilm')) setTimeout(() => film.preload(), 1500);
 { const st = $('story'); if (st) { st.hidden = false; st.addEventListener('click', e => { e.stopPropagation(); playFilm(); }); } }
 setTimeout(() => document.body.classList.add('ready'), 250);   // the first frames are drawn: let the bubble come up out of the dark behind the title
 // ------------------------------------------------------------------ the space view: step outside the bubble and watch it go
@@ -2030,10 +2033,10 @@ function setSpaceView(on, quiet) {
 const _spR = new THREE.Vector3(), _spF = new THREE.Vector3(), _spT = new THREE.Vector3();
 const _spEye = new THREE.Vector3(), _spPos = new THREE.Vector3(), _spC = new THREE.Vector3(), _spQ0 = new THREE.Quaternion(), _spQ1 = new THREE.Quaternion(), _spM = new THREE.Matrix4(), _spUp = new THREE.Vector3(0, 1, 0);
 function stepSpaceView(dt, eyeY) {
-  spaceT = Math.max(0, Math.min(1, spaceT + (spaceOn ? dt / 3.4 : -dt / flyIn)));
+  spaceT = filmCam ? filmCam.space : Math.max(0, Math.min(1, spaceT + (spaceOn ? dt / 3.4 : -dt / flyIn)));
   const e = spaceT * spaceT * spaceT * (spaceT * (spaceT * 6 - 15) + 10); U.uOut.value = e; spaceView && spaceView.update(e);
   spaceAnchor.position.set(player.x, eyeY, player.z);
-  const nearWant = e > 0 ? 0.07 + e * orbit.dist * 0.2 : 0.07;
+  const nearWant = filmCam ? filmCam.near : e > 0 ? 0.07 + e * orbit.dist * 0.2 : 0.07;
   if (camera.near !== nearWant) { camera.near = nearWant; aoMat.uniforms.uNear.value = nearWant; lensMat.uniforms.uNear.value = nearWant; }   // far off, a near plane this close would leave the depth buffer too coarse
   if (e <= 0) return;
   orbit.idle += dt; if (spaceOn && orbit.idle > 4) orbit.yaw += dt * 0.022 * Math.min(1, (orbit.idle - 4) / 3);
