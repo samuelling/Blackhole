@@ -260,7 +260,7 @@ export function createMulti(o) {
     } else if (m.k === 's') {
       const now = performance.now() / 1000;
       const lag = now - (+m.t || 0); p.off = p.off == null ? lag : Math.min(p.off + 0.002, lag);   // their clock against ours, from the quickest packet lately
-      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0, ar: typeof m.ar === 'string' ? m.ar.slice(0, 8) : '', dn: m.dn | 0 });
+      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0, ar: typeof m.ar === 'string' ? m.ar.slice(0, 8) : '', dn: m.dn | 0, cl: Array.isArray(m.cl) && m.cl.length === 3 && m.cl.every(isFinite) ? m.cl.map(Number) : null });
       if (p.snaps.length > 30) p.snaps.splice(0, p.snaps.length - 30);
       ensureBody(p);
       if (Array.isArray(m.e) && m.e[1] !== p.emoteN) { p.emoteN = m.e[1]; if (typeof m.e[0] === 'string' && /^[a-z0-9]{2,12}$/.test(m.e[0])) p.body.emote(m.e[0]); }   // a gesture of theirs
@@ -309,7 +309,7 @@ export function createMulti(o) {
     if (a === b || b.t <= a.t) return b;
     const k = Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
     return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k, y: a.y + (b.y - a.y) * k, yaw: a.yaw + wrapA(b.yaw - a.yaw) * k, pitch: a.pitch + (b.pitch - a.pitch) * k,
-      w: b.w, a: b.a, g: b.g, pn: b.pn, ar: b.ar, dn: b.dn };
+      w: b.w, a: b.a, g: b.g, pn: b.pn, ar: b.ar, dn: b.dn, cl: b.cl };
   }
 
   // ---------------------------------------------------------------- voices
@@ -384,7 +384,7 @@ export function createMulti(o) {
       if (self.point > 0.02) m.pn = r3(self.point);
       if (self.hold) m.h = self.hold;
       if (self.emote) m.e = self.emote;
-      if (self.arm) m.ar = self.arm; if (self.down) m.dn = 1;
+      if (self.arm) m.ar = self.arm; if (self.down) m.dn = 1; if (self.climb) m.cl = self.climb.map(r3);   // climbing: the trunk's x, z and radius
       const s = JSON.stringify(m);
       for (const pr of room.peers.values()) {
         if (pr.fast && pr.fast.readyState === 'open') { try { pr.fast.send(s); } catch (_) {} }
@@ -420,6 +420,7 @@ export function createMulti(o) {
       if (!s) { p.body.root.visible = false; p.tag.style.opacity = 0; continue; }
       p.body.root.visible = true;
       p.body.setWork(!!s.w, s.a ? _a.fromArray(s.a) : null); p.body.setGesture(s.w ? s.g : null); p.body.point(s.pn || 0);
+      if (p.body.setClimb) p.body.setClimb(s.cl ? { x: s.cl[0], z: s.cl[1], r: s.cl[2] } : null);
       p.body.update(dt, { x: s.x, z: s.z, gy: s.y, yaw: s.yaw, pitch: s.pitch, t });
       p.body.setInk(o.ink ? o.ink() : 0.004);
       _hp.set(s.x, s.y + 1.62, s.z);

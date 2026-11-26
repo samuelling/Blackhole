@@ -1716,7 +1716,7 @@ drawer = createDrawer({
     respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
     kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
     me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
-    free: () => started && !spaceOn && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+    free: () => started && !spaceOn && !climb && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
   addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (arms.down && ['KeyE', 'KeyG', 'Enter'].includes(e.code)) { arms.key(e.code, true, e.shiftKey); e.preventDefault(); e.stopPropagation(); return; } if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
   addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
@@ -1845,6 +1845,7 @@ function update(dt, t) {
   const moving = Math.min(1, Math.hypot(mx, mz));
   bobPhase += dt * moving * speed * 2.2;
   // with a body, the eye bobs with its footfalls; without one, the old slow sway
+  if (body && body.setClimb) body.setClimb(climb ? { x: climb.T.x, z: climb.T.z, r: climb.T.r(climb.h + 1) } : null);
   const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
   player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
@@ -2072,7 +2073,7 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: arms ? arms.held : '', down: arms ? arms.down : false, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: arms ? arms.held : '', down: arms ? arms.down : false, climb: climb ? [climb.T.x, climb.T.z, climb.T.r(climb.h + 1)] : null, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;

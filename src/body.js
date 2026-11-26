@@ -218,6 +218,51 @@ export function createBody({ model, U, COMMON }) {
     if (tip.th > 0) root.position.y += 0.17 * Math.sin(tip.th);   // lying, it rests on its back (or front), not through the ground
     if (gunOk) { tipT.makeTranslation(-root.position.x, -root.position.y, -root.position.z).premultiply(tipM.makeRotationFromQuaternion(tipQ)).premultiply(tipM.makeTranslation(root.position.x, root.position.y, root.position.z)); gunM.premultiply(tipT); }
   }
+  // Climbing a tree (main.js keeps you on the trunk): you face it and hold on. Hand over hand: each hand reaches up the bark round
+  // the trunk's side and pulls down as the other goes up; the feet push against it lower down, knees out, soles flat to the bark,
+  // the same rhythm half a beat behind; the body leans in, head tipped back to look up. The rhythm is driven by how far you've
+  // climbed (a cycle every 0.55 m), so going down plays it backwards and hanging still holds a grip, breathing.
+  const clim = { on: false, x: 0, z: 0, r: 0.2, w: 0, ph: 0, lastY: null }, cQ = new THREE.Quaternion(), cN = v3(), cP = v3(), cH = v3(), qFoot = new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), -1.05);
+  function climbPose(dt, s) {
+    clim.w += ((clim.on ? 1 : 0) - clim.w) * Math.min(1, dt * 7); const w = clim.w * clim.w * (3 - 2 * clim.w);
+    const gy = s.gy || 0; if (clim.lastY == null) clim.lastY = gy; const dy = gy - clim.lastY; clim.lastY = gy;
+    if (Math.abs(dy) < 0.5) clim.ph += dy / 0.55 * Math.PI * 2;
+    // face the trunk (root about your own feet: in first person the camera stays where it is)
+    const dx = clim.x - s.x, dz = clim.z - s.z, dist = Math.hypot(dx, dz) || 1, ry = Math.atan2(dx / dist, dz / dist);
+    let cur = root.rotation.y, d = Math.atan2(Math.sin(ry - cur), Math.cos(ry - cur)); root.rotation.y = cur + d * w;
+    // seen from outside, right in against the bark; from your own eyes, where the camera is (it can't go into the bark)
+    const inset = ghost.value > 0.5 ? -0.06 : Math.max(-0.06, dist - (clim.r + 0.3));
+    root.position.x = s.x + dx / dist * inset * w; root.position.z = s.z + dz / dist * inset * w; root.position.y = gy;
+    root.updateMatrixWorld();
+    // the trunk in the body's own frame: its axis straight ahead at c, radius r
+    const c = Math.max(clim.r + 0.12, dist - inset * w), r = clim.r, ph = clim.ph, still = 0.03 * Math.sin(nowT * 1.3);
+    const onBark = (a, y, off, out) => { cN.set(Math.sin(a), 0, -Math.cos(a)); return out.set(r * Math.sin(a), y, c - r * Math.cos(a)).addScaledVector(cN, off); };
+    const pel = B.pelvis, tor = B.torso;
+    // lean in to the trunk, a little sit in the hips; the head tipped back to look up
+    pel.position.copy(rest.pelvis); pel.position.y -= 0.1 * w; pel.position.z += 0.02 * w; pel.quaternion.slerp(cQ.setFromAxisAngle(XA, 0.18), w); qP.copy(pel.quaternion);
+    tor.position.copy(rest.torso); tor.quaternion.slerp(cQ.setFromAxisAngle(XA, 0.12), w); B.head.quaternion.slerp(cQ.setFromAxisAngle(XA, -0.35), w);
+    qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+    // hands: up and round the trunk's sides, alternately reaching and pulling
+    const sh = rest.pelvis.y + rest.torso.y + rest.armU_R.y - 0.1 * w;
+    for (const [sd, sg, off] of [['R', -1, 0], ['L', 1, Math.PI]]) {
+      const reach = 0.5 + 0.5 * Math.sin(ph + off), y = sh + 0.05 + 0.32 * reach + still;
+      onBark(sg * 0.85, y, 0.035, palm);
+      cN.set(Math.sin(sg * 0.85), 0, -Math.cos(sg * 0.85));
+      xh.copy(cN).multiplyScalar(sd === 'R' ? -1 : 1); yh.set(0, -1, 0); zh.crossVectors(xh, yh);   // palm to the bark, fingers up
+      B['armU_' + sd].position.copy(rest['armU_' + sd]);
+      armTo(sd, palm, pole.set(-sg * 1, -0.6, -0.4), w);
+    }
+    // feet: lower down, pushing, the same rhythm half a beat behind; knees out round the trunk
+    for (const [sd, sg, off] of [['R', -1, Math.PI * 0.5], ['L', 1, Math.PI * 1.5]]) {
+      const lift = 0.5 + 0.5 * Math.sin(ph + off), y = 0.12 + 0.42 * lift;
+      onBark(sg * 0.5, y, 0.1, A);
+      H.copy(hipRest[sd]).applyQuaternion(qP).add(pel.position);
+      pole.set(-sg * 0.7, 0.1, 1); q.copy(qFoot);
+      const tq = B['thigh_' + sd].quaternion.clone(), sq = B['shin_' + sd].quaternion.clone(), fq = B['foot_' + sd].quaternion.clone();
+      solveLeg(sd);
+      if (w < 0.999) { B['thigh_' + sd].quaternion.copy(tq.slerp(B['thigh_' + sd].quaternion, w)); B['shin_' + sd].quaternion.copy(sq.slerp(B['shin_' + sd].quaternion, w)); B['foot_' + sd].quaternion.copy(fq.slerp(B['foot_' + sd].quaternion, w)); }
+    }
+  }
   const axisFor = (dx, dz, out) => { const l = Math.hypot(dx, dz) || 1; return out.set(dz / l, 0, -dx / l); };   // tipping about this carries the top along (dx, dz)
   let gunSpec = null, gunOk = false; const gunM = new THREE.Matrix4(), gunShort = { L: 0, R: 0 };
   const gP = v3(), gQ = new THREE.Quaternion(), eQ = new THREE.Quaternion(), eP = v3(), rQi = new THREE.Quaternion(), lQ = new THREE.Quaternion(), lP = v3(), gF = v3(), gU = v3(), gR = v3(),
@@ -541,6 +586,7 @@ export function createBody({ model, U, COMMON }) {
     const hl = hp.length(), HL = 0.24; if (hl > HL) hp.multiplyScalar(HL / hl);
     hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
     if (gunSpec && armed > 0.002 && work < 0.98) solveGun(armed * armed * (3 - 2 * armed) * (1 - work), s, bob); else gunOk = false;
+    if (clim.on || clim.w > 0.002) climbPose(dt, s); else clim.w = 0;
     tipOver(dt);
     return bob;
   }
@@ -578,6 +624,9 @@ export function createBody({ model, U, COMMON }) {
      *  own tilt), grip, sup (points on the gun, its own frame: -z forward), lh: null, or the left hand's way through a reload { a, b, k,
      *  aEye, bEye } (a to b by k; each point on the gun, or in the eye's frame if aEye / bEye) }. Off: null. */
     setArmed(on, spec) { armedOn = on ? 1 : 0; if (spec) gunSpec = spec; else if (!on && armed < 0.01) gunSpec = null; },
+    /** Climbing a trunk at (x, z), radius r (m), or not (null). */
+    setClimb(c) { if (c && isFinite(c.x) && isFinite(c.z)) { if (!clim.on) clim.lastY = null; clim.on = true; clim.x = c.x; clim.z = c.z; clim.r = Math.max(0.05, Math.min(3, +c.r || 0.2)); } else clim.on = false; },
+    get climbing() { return clim.on; },
     /** Hit: flinch away along the round's way (dx, dz in the world), harder for a heavier round (k ~ 1). */
     react(dx, dz, k = 1) { axisFor(dx, dz, tip.ax); tip.v += 2.4 * Math.max(0.2, Math.min(2, k)); },
     /** Down (shot down) or up again; falling the round's way (dx, dz). */
