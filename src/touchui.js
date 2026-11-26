@@ -42,6 +42,9 @@ const PADS = {
   build: [['lift / set', 'click', 'big'], ['turn ⟲', 'KeyQ', 'repeat'], ['turn ⟳', 'KeyE', 'repeat'], ['fine', 'shift', 'toggle'],
     ['tip', 'KeyR'], ['roll', 'KeyV'], ['length in', 'KeyT'], ['on edge', 'KeyC'], ['press', 'Space', 'hold'], ['pass through', 'KeyG', 'hold'],
     ['hearting', 'KeyH'], ['more stone', 'KeyN'], ['glue', 'KeyJ'], ['undo', 'Backspace'], ['finish (twice)', 'Enter'], ['put away', 'KeyP']],
+  free: [['lift / let go', 'click', 'big'], ['turn ⟲', 'KeyQ'], ['turn ⟳', 'KeyE'], ['fine', 'shift', 'toggle'],
+    ['tip', 'KeyR'], ['roll', 'KeyV'], ['nearer', 'Minus', 'repeat'], ['farther', 'Equal', 'repeat'], ['stick', 'KeyJ'], ['unglue', 'KeyJ', 'sh'],
+    ['pass through', 'KeyG', 'hold'], ['more stone', 'KeyN'], ['undo', 'Backspace'], ['put away', 'KeyP']],
   plant: [['plant list', 'KeyP', 'big'], ['dig up', 'KeyX'], ['done', 'KeyQ']],
   space: [],
 };
@@ -64,6 +67,7 @@ export function createTouchUI(o) {
     const down = e => { e.preventDefault(); e.stopPropagation(); b.classList.add('held'); if (navigator.vibrate) try { navigator.vibrate(8); } catch (_) {}
       if (code === 'click') { o.click(); return; }
       if (how === 'toggle') { fine = !fine; b.classList.toggle('on', fine); return; }
+      if (how === 'sh') { o.key(code, true, true, false); o.key(code, false, true, false); return; }   // with Shift
       o.key(code, true, fine, false);
       if (how === 'repeat') { let first = true; timer = setInterval(() => { o.key(code, true, fine, true); if (first) first = false; }, 130); }
       if (how !== 'hold' && how !== 'repeat') o.key(code, false, fine, false); };
@@ -85,13 +89,13 @@ export function createTouchUI(o) {
   ];
   function leaveMode() {   // back to walking from whatever you are in
     const c = o.context(); tray.classList.remove('open');
-    if (c === 'space') press('KeyZ'); else if (c === 'build') press('KeyP'); else if (c === 'plant') { press('KeyQ'); if (o.context() === 'plant') press('KeyP'); }   // trowel down, and shut the list if it is open
+    if (c === 'space') press('KeyZ'); else if (c === 'build' || c === 'free') press('KeyP'); else if (c === 'plant') { press('KeyQ'); if (o.context() === 'plant') press('KeyP'); }   // trowel down, and shut the list if it is open
   }
   const railB = {};
   for (const [id, icon, label, fn] of MODES) {
     const b = document.createElement('button'); b.innerHTML = `<i>${icon}</i><span>${label}</span>`; b.title = label; railB[id] = b; rail.appendChild(b);
     b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (!o.started()) return;
-      const c = o.context(); if (id !== 'walk' && id !== 'self' && id !== 'gest' && c === id) leaveMode(); else fn(); refresh(true); });
+      const c = o.context(); if (id !== 'walk' && id !== 'self' && id !== 'gest' && (c === id || (id === 'build' && c === 'free'))) leaveMode(); else fn(); refresh(true); });
     b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); });
   }
   for (const [label, d] of GESTURES) { const b = document.createElement('button'); b.textContent = label; tray.appendChild(b); wire(b, 'Digit' + d); b.addEventListener('pointerup', () => tray.classList.remove('open')); }
@@ -101,11 +105,11 @@ export function createTouchUI(o) {
   let shown = null;
   function refresh(force) {
     const c = o.started() ? o.context() : 'none';
-    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id);
+    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id || (id === 'build' && c === 'free'));
     railB.self.classList.toggle('on', !!(o.selfView && o.selfView()));
     rail.style.display = o.started() ? '' : 'none';
     if (c === shown && !force) return; shown = c; pad.innerHTML = ''; fine = false;
-    const rows = PADS[c] || []; pad.style.setProperty('--cols', c === 'build' ? 4 : 2);
+    const rows = PADS[c] || []; pad.style.setProperty('--cols', c === 'build' || c === 'free' ? 4 : 2);
     for (const [label, code, how] of rows) { const b = document.createElement('button'); b.textContent = label; if (how === 'big') b.className = 'big'; pad.appendChild(b); wire(b, code, how === 'big' ? '' : how); }
   }
   setInterval(() => refresh(false), 200);

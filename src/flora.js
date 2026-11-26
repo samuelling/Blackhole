@@ -11,9 +11,10 @@
 // Inside the bubble nothing is killed by cold; a tender plant simply comes up late and dies down like any other perennial.
 import { LOOKS, SIZE } from './looks.js';
 import { addSpecies, GROW_YEARS, bloomLabel } from './seasons.js';
+import { TREE_SPEC } from './arbor.js';
 
 export const CATS = [['cottage', 'Cottage border'], ['prairie', 'Prairie & meadow'], ['grass', 'Grasses & sedges'], ['shade', 'Woodland shade'], ['med', 'Mediterranean'],
-  ['desert', 'Desert & succulents'], ['tropic', 'Tropical'], ['bog', 'Water’s edge'], ['alpine', 'Alpine & rock'], ['bulb', 'Bulbs']];
+  ['desert', 'Desert & succulents'], ['tropic', 'Tropical'], ['bog', 'Water’s edge'], ['alpine', 'Alpine & rock'], ['bulb', 'Bulbs'], ['trees', 'Trees'], ['giants', 'Giant trees']];
 
 // [key, common name, botanical name, category] for the plants the garden already grew
 const OLD = [
@@ -196,5 +197,12 @@ for (const f of FLORA) {
   f.h = h; f.w = w; f.years = GROW_YEARS[f.k] || 2.5; f.space = Math.round(w * 0.9);           // set them their spread apart, a little less, and they knit
   f.bloom = bloomLabel(f.k); f.leafCol = L.leafCol; f.flCol = L.flStyle ? L.flCol : null;
   f.meta = `${ft(h)} tall · ${ft(w)} wide · space ${ft(f.space)} · full size in ${f.years === 1 ? 'a year' : f.years + ' years'}` + (f.bloom ? ` · flowers ${f.bloom}` : ' · foliage');
+}
+// trees (arbor.js): a sapling that grows for decades; the giants, in the bubble's weak pull, for longer and to a hundred metres
+const LEAF = { saccharum: '#5f8a3c', rubra: '#4f7a3a', rubrum: '#6a8a40', papyrifera: '#7a9a48', lime: '#6f9a44', liquidambar: '#4f8040', biloba: '#8aa848', willow: '#8aa860' };
+for (const [k, t] of Object.entries(TREE_SPEC)) {
+  const yrs = Math.round(t.tau * 1.6 / 5) * 5;
+  FLORA.push({ k, name: t.name, latin: t.latin, cat: t.giant ? 'giants' : 'trees', tree: true, h: t.H, years: yrs, leafCol: LEAF[t.sp], flCol: t.giant ? '#c8b070' : null,
+    meta: t.giant ? `a sapling · up to ${t.H} m, or as high as the bubble allows · most of that in ${yrs} years · climbable` : `a sapling · grows to ${t.H} m · most of that in ${yrs} years · climbable` });
 }
 export const FLORA_BY_KEY = Object.fromEntries(FLORA.map(f => [f.k, f]));

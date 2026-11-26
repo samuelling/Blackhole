@@ -11,6 +11,7 @@ import { buildFlowers3D, PALETTES, HEAD3D, SPIRE3D } from './flowers3d.js';
 import { createPlantModels } from './plantmodels.js';
 import { plantState, flagsFor, lawnTint, sizeAt } from './seasons.js';
 import { FLORA_BY_KEY } from './flora.js';
+import { createArbor, TREE_SPEC, FORM as TREE_FORM } from './arbor.js';
 import { HEAP as JUNK_HEAP } from './junk.js';   // (also adds the newer species to LOOKS, SIZE and the calendar, before anything here reads them)
 import { simulate, SPECIES, SP_INDEX, ND, NC } from './senescence.js';
 import { patchCanopy, createLeafFall, twigRect, HABIT } from './leaves.js';
@@ -389,8 +390,10 @@ export function createGarden({ scene, renderer, U, COMMON, layout, assets, treeS
   const farTrunks = new Map();   // beyond the grid (the field's trees): trunks by 8 m cell
   const blockFar = (x, z, r) => { const key = Math.floor(x / 8) + ',' + Math.floor(z / 8); let L = farTrunks.get(key); if (!L) farTrunks.set(key, L = []); L.push(x, z, r); };
   let extraBlocked = null;                                  // what you have built freely (walling.js)
+  let arbor = null, treeKit = null;                         // the trees you plant (arbor.js), once the tree forms are loaded
   const blocked = (x, z) => { const i = Math.floor((x - MAP.x0) * CG), j = Math.floor((z - MAP.z0) * CG);
     if (extraBlocked && extraBlocked(x, z)) return true;
+    if (arbor && arbor.blocks(x, z)) return true;
     if (i >= 0 && j >= 0 && i < CW && j < CW && colliders[j * CW + i] !== 0) return true;
     const rr = Math.hypot(x, z - 12); if (rr > 88 && rr > edgeR(x, z) - 0.9) return true;   // the brink: as far as the land goes
     const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
@@ -1185,7 +1188,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       { sway: 0.1, swayH: 6, translucent: true, key: 'treeleaf', grow: true, part: 'leaf', puff: true, atlas: true, extra: sh => patchCanopy(sh, U, false) });
     const leafD = P.depth(TX.trees_atlas, { sway: 0.1, swayH: 6, key: 'treeleaf', grow: true, part: 'leaf', atlas: true, extra: sh => patchCanopy(sh, U, true) });
     const spOf = T => SP_INDEX[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')];
-    const addTree = (T, pid, inside) => { TREES.push({ x: T.x, z: T.z, gy: heightAt(T.x, T.z), A: T.A, B: T.B, cy: T.cy, sp: spOf(T), pid, inside, k: T.k || 1 }); treeSp[pid] = spOf(T); };
+    const addTree = (T, pid, inside) => { TREES.push({ x: T.x, z: T.z, gy: heightAt(T.x, T.z), A: T.A, B: T.B, cy: T.cy, sp: spOf(T), pid, inside, k: T.k || 1, r: T.r || 0.15 * (T.s || 1.4) + 0.07, top: T.top || T.cy }); treeSp[pid] = spOf(T); };
     const pos = [], uvs = [], idx = [], cards = [];
     const limb = (pts, r0, r1, flare = 0, sides = 10) => {   // pts: V3[]; a smooth tube along a Catmull-Rom curve
       const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal'), len = curve.getLength(), n = Math.max(3, Math.ceil(len / (r0 > 0.08 ? 0.3 : 0.22))), base = pos.length / 3;
@@ -1265,7 +1268,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
       const sxz = T.A / NOM[k][0], M = new THREE.Matrix4().compose(new V3(T.x, heightAt(T.x, T.z), T.z), new Q().setFromAxisAngle(_Y, rng() * TAU), new V3(sxz, (T.cy + T.B) / NOM[k][1], sxz));
       // leaves keep proportion with their tree: one scale per tree (its linear size against the form it was grown from), the same along
       // every axis, so a tall narrow tree's leaves are not stretched and a tree twice the size carries leaves twice the size
-      const sy = (T.cy + T.B) / NOM[k][1], kL = Math.cbrt(sxz * sxz * sy); T.k = kL;
+      const sy = (T.cy + T.B) / NOM[k][1], kL = Math.cbrt(sxz * sxz * sy); T.k = kL; T.r = TREE_FORM[k].r0 * sxz; T.top = TREE_FORM[k].cy * sy;
       { const wk = far && TV[k].woodlo ? k + '~' : k; woodM[wk].push(M); woodC[wk].push(HABIT[T.sp || (T.kind === 'weep' ? 'willow' : 'lime')].bark); } addTree(T, tpid, layout.inWalls(T.x, T.z));
       // how much sky a bough sees (baked in Blender) is how sunlit its leaves are: the outside of the crown turns first and reddest
       vCards[k].forEach((c, i) => { if (thin > 1 && (i >> 1) % thin) return; cards.push({ M: boughM(M, c.m, kL), pid: tpid, c: Math.min(1.3, c.c * 1.4) * rr(0.92, 1.08), s: 1, sp: spOf(T), e: Math.pow(Math.min(1, Math.max(0, (c.c - 0.3) / 0.7)), 1.2) }); });
@@ -1280,6 +1283,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
         const far = beyondWall(x, z) > 20;
         plantTree({ x, z, h, s: rr(1.2, 1.7), cy: h + rr(1.8, 2.6) * tall, A: A * wide, B: A * rr(0.75, 0.95) * tall, kind, sp }, far && !woodFull ? thin * 2 : thin, far); }
       const barkT = P.std({ map: BK.diff, normalMap: BK.nor, roughness: 1, vertexColors: true, color: new THREE.Color(1.25, 1.2, 1.15) }, { tri: { arm: BK.arm, scale: 0.9, moss: 0.4 }, sway: 0.02, swayH: 9, key: 'barkT' });
+      treeKit = { TV, vCards, barkT, leafM, leafD, cardGeo };   // for the trees you plant (arbor.js)
       const bc = new THREE.Color();
       for (const k of [...VAR, ...VAR.map(v => v + '~')]) { if (!woodM[k].length) continue; const lo = k.endsWith('~'), im = new THREE.InstancedMesh(lo ? TV[k.slice(0, -1)].woodlo : TV[k].wood, barkT, woodM[k].length); woodM[k].forEach((M, i) => { im.setMatrixAt(i, M); im.setColorAt(i, bc.setRGB(...woodC[k][i])); }); im.castShadow = im.receiveShadow = true; im.frustumCulled = false; scene.add(im); }
     } else
@@ -1494,6 +1498,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     const th = Math.atan2(-d.tx, -d.tz), c = Math.cos(th), sn = Math.sin(th), S = d.across, W = d.along;
     for (const side of [-1, 1]) { const z = side * (W / 2 + 0.065); for (let x = -S / 2 + 0.1; x <= S / 2 - 0.1; x += 0.15) blockWall(d.x + x * c + z * sn, d.z - x * sn + z * c, 0.12); } }
   const leafFall = createLeafFall({ U, COMMON, P, trees: TREES, tex: TX, blocked, pools: layout.pools, canal: layout.canal, WATER_Y, lite, heightAt }); scene.add(leafFall.group);
+  if (treeKit) arbor = createArbor({ scene, kit: treeKit, HABIT, SP_INDEX, twigRect, heightAt, registerPlant, PT, pa, texA, treeSp, flagsFor, nearestPid, onChange: () => writeStates() });
   let autumn = null;
   function setAutumn(settings, real) { autumn = simulate(settings, real); leafTab.image.data.set(autumn.table); leafTab.needsUpdate = true; leafFall.setStats(autumn.stats); writeStates(); return autumn; }
   console.log(`[garden] leaves: ${TREES.length} trees, ${leafFall.count.litter} litter, ${leafFall.count.falling} falling`);
@@ -1525,7 +1530,21 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     return ratio;
   };
   const crowdOf = ratio => clamp(ratio / 0.85, 0.5, 1);
+  // a tree (arbor.js): room for its trunk, away from the paths and the water, and from other trunks (a giant wants more room)
+  function checkTree(k, x, z) {
+    const spec = TREE_SPEC[k], r = Math.min(14, spec.H * (spec.giant ? 0.22 : 0.33));
+    if (!arbor) return { ok: false, why: 'trees need the full tree models (graphics)', r };
+    if (blocked(x, z)) return { ok: false, why: 'something is in the way', r };
+    if (nearBrook(x, z, 0.8)) return { ok: false, why: 'too near the water', r };
+    const g = kindAt(x, z); if (g === 'gravel' || g === 'paving') return { ok: false, why: 'not in the path', r };
+    if (arbor.count >= arbor.max) return { ok: false, why: `that is ${arbor.max} trees: dig one up first`, r };
+    const need = spec.giant ? 6 : 3; let gap = arbor.gap(x, z) - (spec.giant ? 3 : 0);
+    for (const T of TREES) gap = Math.min(gap, Math.hypot(T.x - x, T.z - z) - T.r);
+    if (gap < need) return { ok: false, why: `too near another trunk (it needs ${need} m)`, r };
+    return { ok: true, r, crowd: 1, ground: g };
+  }
   function checkSpot(k, x, z) {
+    if (TREE_SPEC[k]) return checkTree(k, x, z);
     if (!LOOKS[k] || !SIZE[k]) return { ok: false, why: 'no such plant' };
     const r = radiusOf(k);
     if (blocked(x, z)) return { ok: false, why: 'something is in the way', r };
@@ -1548,6 +1567,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   function recrowd() { for (const o of OWN) PT.crowd[o.id] = crowdOf(nearRatio(o.x, o.z, o.cl[2], o.cl)); }
   function setOut(k, x, z, ageDays = 0, quiet = false) {
     const c = checkSpot(k, x, z); if (!c.ok) return null;
+    if (TREE_SPEC[k]) return arbor.plant(k, x, z, ageDays);
     const [h, w] = SIZE[k], near = nearestPid(x, z);
     addPlant(k, x, z, { y: heightAt(x, z) || 1e-4, salt: (OWN.length * 7919 + 3) | 0 });
     const id = curPid; PT.own[id] = clamp(9 / Math.max(h, w), 0.16, 0.5);            // a pot about nine inches across
@@ -1573,18 +1593,19 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   }
   function digUp(id) {
     if (id < NP0) return digGarden(id);
+    if (arbor && arbor.has(id)) return arbor.remove(id);
     const i = OWN.findIndex(o => o.id === id); if (i < 0) return false; const o = OWN[i];
     const L = placed.get(Math.floor(o.x / 2) + ',' + Math.floor(o.z / 2)); if (L) { const j = L.indexOf(o.cl); if (j >= 0) L.splice(j, 1); }
     PT.gone[id] = 1; OWN.splice(i, 1); recrowd(); ownChanged(); writeStates(); return true;
   }
   const planting = {
-    check: checkSpot, plant: setOut, digUp, max: OWN_MAX, get count() { return OWN.length; }, refresh: writeStates,
+    check: checkSpot, plant: setOut, digUp, max: OWN_MAX, get count() { return OWN.length + (arbor ? arbor.count : 0); }, refresh: writeStates,
     /** Your plant nearest a point, within d metres: { id, k, age (years), size (fraction of full), crowd }. */
-    near(x, z, d = 1.2) { let best = null, bd = d; for (const o of OWN) { const q = Math.hypot(o.x - x, o.z - z); if (q < Math.max(bd, 0)) { bd = q; best = o; } }
+    near(x, z, d = 1.2) { const tr = arbor && arbor.near(x, z, d); if (tr) return tr; let best = null, bd = d; for (const o of OWN) { const q = Math.hypot(o.x - x, o.z - z); if (q < Math.max(bd, 0)) { bd = q; best = o; } }
       if (!best) return null; const age = (PT.tau[best.id] - PT.planted[best.id]) / 365; return { id: best.id, k: best.k, x: best.x, z: best.z, age, crowd: PT.crowd[best.id], size: sizeAt(best.k, age, PT.own[best.id]) * PT.crowd[best.id] }; },
     /** Everything you have planted, for saving: [species, x, z, age in days]. */
-    list: () => OWN.map(o => [o.k, Math.round(o.x * 100) / 100, Math.round(o.z * 100) / 100, Math.round(PT.tau[o.id] - PT.planted[o.id])]),
-    clear() { for (const o of OWN.slice()) digUp(o.id); },
+    list: () => OWN.map(o => [o.k, Math.round(o.x * 100) / 100, Math.round(o.z * 100) / 100, Math.round(PT.tau[o.id] - PT.planted[o.id])]).concat(arbor ? arbor.list() : []),
+    clear() { for (const o of OWN.slice()) digUp(o.id); if (arbor) arbor.clear(); },
     /** Any plant near a point, yours first: as near() for yours; the garden's own come with garden: true. Trees aren't dug. */
     nearAny(x, z, d = 0.6) {
       const mine = this.near(x, z, d); if (mine) return mine;
@@ -1599,7 +1620,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     /** Put every one of the garden's own plants you dug up back. */
     undigAll() { for (const [id, d] of DUG) { PT.gone[id] = 0; const c = d[4]; if (c) { const key = Math.floor(c[0] / 2) + ',' + Math.floor(c[1] / 2); let L = placed.get(key); if (!L) placed.set(key, L = []); L.push(c); } } const n = DUG.size; DUG.clear(); recrowd(); writeStates(); return n; },
     get dug() { return DUG.size; },
-    flora: FLORA_BY_KEY, radius: radiusOf,
+    flora: FLORA_BY_KEY, radius: k => TREE_SPEC[k] ? checkTree(k, 0, 0).r : radiusOf(k),
   };
 
   const lt = [1, 1, 1];
@@ -1609,6 +1630,7 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   const v2 = new THREE.Vector2(), clipPlane = [new THREE.Plane(new V3(0, 1, 0), -WATER_Y)];
   function update(dt, t, camera) {
     if (plantModels) plantModels.update(camera);
+    if (arbor) arbor.update();
     U.uCam.value.copy(camera.position); brook.update(dt, t, camera.position.x, camera.position.z);
     sheetT.offset.y = (sheetT.offset.y - dt * 1.5) % 1; foamT.offset.x = (foamT.offset.x + dt * 0.05) % 1;
     TX.waternormals.offset.set(t * 0.011, t * 0.017);
@@ -1639,5 +1661,14 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   }
   /** Where the plants of one species stand ([x, z, pid]), nearest a point first: for tests and screenshots. */
   const plantsOf = (k, x = 0, z = 0) => PT.k.map((kk, i) => [kk, PT.x[i], PT.z[i], i]).filter(r => r[0] === k && !PT.gone[r[3]]).map(r => r.slice(1)).sort((a, b) => (a[0] - x) ** 2 + (a[1] - z) ** 2 - (b[0] - x) ** 2 - (b[1] - z) ** 2);
-  return { plantsOf, plantModels, update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook };
+  return { plantsOf, plantModels, update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook,
+    get arbor() { return arbor; },
+    /** The trunk nearest a point within reach of its bark, for climbing: { x, z, gy, top (m above its ground), r(y) (radius at a height) }. */
+    trunkNear(x, z, reach = 0.7) {
+      let best = null, bd = reach;
+      for (const T of TREES) { const q = Math.hypot(T.x - x, T.z - z) - T.r; if (q < bd) { bd = q; best = T; } }
+      const mine = arbor && arbor.trunkNear(x, z, bd); if (mine) return mine;
+      if (!best) return null; const T = best, top = Math.max(1.5, T.cy + T.B - 1.4);   // up till your head is out of the crown
+      return { x: T.x, z: T.z, gy: T.gy, top, r: y => T.r * (1 - 0.55 * Math.min(1, Math.max(0, y) / top)), H: T.cy + T.B };
+    } };
 }

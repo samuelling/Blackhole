@@ -17,6 +17,8 @@ export const MAP = {
     [1, 'KeyX', 'vaporize the junk you look at'], [8, 'KeyZ', 'the space view'], [12, 'Digit1', 'wave'], [13, 'Digit2', 'bow'], [14, 'Digit4', 'this way'], [15, 'Digit3', 'beckon'], [4, 'Digit5', 'nod'], [5, 'Digit6', 'arms up'], [11, 'Digit8', 'dance'], [17, 'KeyT', 'night / live time']],
   build: [[7, 'click', 'lift the stone you look at · set it down'], [4, 'KeyQ+', 'turn it left'], [5, 'KeyE+', 'turn it right'], [6, 'shift', 'hold: finer turns'], [12, 'KeyR', 'tip it'], [13, 'KeyV', 'roll it'], [14, 'KeyT', 'length into the wall'], [15, 'KeyC', 'on edge'],
     [0, 'Space', 'hold: press it down'], [1, 'KeyG', 'hold: pass through the other stones'], [2, 'KeyH', 'hearting'], [3, 'KeyN', 'more stone'], [11, 'KeyJ', 'glue (with L2: unglue)'], [8, 'Backspace', 'undo the last stone'], [17, 'KeyP', 'put the work away'], [16, 'Enter', 'twice: finish the stint']],
+  free: [[7, 'click', 'lift the piece you look at · let it go'], [4, 'KeyQ', 'turn it left, an eighth'], [5, 'KeyE', 'turn it right, an eighth'], [6, 'shift', 'hold: finer turns'], [12, 'Equal+', 'farther'], [13, 'Minus+', 'nearer'],
+    [14, 'KeyR', 'tip it'], [15, 'KeyV', 'roll it'], [11, 'KeyJ', 'stick it where the green line shows (with L2: unglue)'], [1, 'KeyG', 'hold: pass through the other pieces'], [3, 'KeyN', 'more stone'], [8, 'Backspace', 'undo'], [17, 'KeyP', 'put the work away']],
   plant: [[7, 'click', 'plant where the ring is'], [1, 'KeyX', 'dig up the plant you look at'], [3, 'KeyP', 'the plant list'], [0, 'KeyQ', 'trowel down']],
   space: [[8, 'KeyZ', 'back inside'], [1, 'KeyZ', 'back inside']],
 };
@@ -41,7 +43,7 @@ export function createGamepad(o) {
     const curve = v => v * (0.35 + 0.65 * Math.abs(v)); st.lx = curve(rx); st.ly = curve(ry); if (rx || ry) used = true;
     st.on = used;
     if (!o.started()) { if (gp.buttons.some((q, i) => i < 4 && q.pressed) && !was.some(Boolean)) o.start(); for (let i = 0; i < gp.buttons.length; i++) was[i] = b(i); return st; }
-    const ctx = o.context(), map = (MAP[ctx] || []).concat(MAP.any), shift = b(6) && ctx === 'build';
+    const ctx = o.context(), map = (MAP[ctx] || []).concat(MAP.any), shift = b(6) && (ctx === 'build' || ctx === 'free');
     if (ctx === 'space') st.zoom = (gp.buttons[7] ? gp.buttons[7].value : 0) - (gp.buttons[6] ? gp.buttons[6].value : 0);
     for (let i = 0; i < gp.buttons.length; i++) {
       const down = b(i), w = !!was[i]; was[i] = down;

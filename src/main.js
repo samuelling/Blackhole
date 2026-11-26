@@ -1056,17 +1056,43 @@ const paceFor = m => m <= 0.55 ? WALK * m / 0.55 : WALK + (RUN - WALK) * Math.po
 const grav = new THREE.Vector3();
 // jumping: gravity here is a little under half the Earth's (4.2 m/s², between Mars and the Moon), so a hop lifts you about 1.4 m and hangs
 let jumpY = 0, jumpV = 0; const JUMP_G = 4.2, JUMP_V = 3.4;
+// climbing (any tree's trunk): walk into it and keep pushing, and you go up it. Up and down the stick or W S, round it sideways;
+// Space lets go, a little out from the bark, and you fall in the bubble's weak pull. Your height on the trunk is jumpY, held.
+let climb = null, climbPush = 0, climbAgain = 0, offV = null, climbHinted = false; const CLIMB_V = 0.9;
+function letGo(push = 2.2) {
+  if (!climb) return; const c = climb; climb = null; climbAgain = performance.now() + 900;
+  offV = { x: Math.cos(c.th) * push, z: Math.sin(c.th) * push }; jumpV = c.h > 0.15 ? JUMP_V * 0.5 : 0;
+}
+function seekClimb(dt, f, mz) {
+  if (!started || spaceOn || walling.busy || planter.armed || planter.open || mz < 0.5 || performance.now() < climbAgain) { climbPush = 0; return; }
+  const T = garden.trunkNear(player.x, player.z, 0.62); if (!T) { climbPush = 0; return; }
+  const dx = T.x - player.x, dz = T.z - player.z, d = Math.hypot(dx, dz); if (d < 1e-3 || (dx * f.x + dz * f.z) / d < 0.55) { climbPush = 0; return; }
+  climbPush += dt; if (climbPush < (jumpY > 0.25 ? 0 : 0.3)) return;   // in the air you catch hold at once
+  const h = Math.max(0, jumpY + heightAt(player.x, player.z) - T.gy); if (h > T.top) return;
+  climb = { T, th: Math.atan2(-dz, -dx), h }; climbPush = 0; jumpV = 0; offV = null;
+  if (!climbHinted) { climbHinted = true; setHint(isTouch ? 'climbing · push up to climb, down to come down, sideways to go round · jump lets go' : 'climbing · W up · S down · A D round the trunk · Shift faster · Space lets go', 7000); }
+}
+function stepClimb(dt, mx, mz, speed) {
+  const c = climb, T = c.T, run = speed > WALK * 1.3 ? 1.8 : 1;
+  c.h += mz * CLIMB_V * run * dt;
+  if (c.h <= 0 && mz < 0) { climb = null; jumpY = 0; jumpV = 0; climbAgain = performance.now() + 600; return; }   // down at the foot: walking again
+  c.h = Math.max(0, Math.min(T.top, c.h));
+  const R = T.r(c.h) + 0.42; c.th -= mx * 1.1 * run * dt / R;
+  player.x = T.x + Math.cos(c.th) * R; player.z = T.z + Math.sin(c.th) * R;
+  jumpY = c.h + T.gy - heightAt(player.x, player.z); jumpV = 0;
+  if (c.h >= T.top - 0.01 && !c.topHint) { c.topHint = true; setHint(`as high as this one goes (${Math.round(c.h + 1.65)} m up) · look round · ${isTouch ? 'jump' : 'Space'} lets go`, 5000); }
+}
 addEventListener('keydown', e => {
   keys.add(e.code);
   if (!started) return;
   if (e.code === 'KeyE') { openVoid(); e.preventDefault(); }
-  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && !planter.open && !spaceOn && jumpY === 0) jumpV = JUMP_V; }   // a jump (the wall and free builds take Space before this sees it)
+  if (e.code === 'Space') { e.preventDefault(); if (climb) { if (!e.repeat) letGo(); } else if (!e.repeat && !planter.open && !spaceOn && jumpY === 0) jumpV = JUMP_V; }   // a jump (the wall and free builds take Space before this sees it)
   if (e.code === 'KeyM') setSound(!A.on);
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 // at the wall: while a stint is open these keys belong to the stone in hand, and not to voids, seasons or replanting
-const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'KeyJ', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN']);
+const WALL_KEYS = new Set(['KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyT', 'KeyC', 'KeyH', 'KeyG', 'KeyJ', 'Space', 'Backspace', 'Enter', 'KeyP', 'KeyN', 'Minus', 'Equal']);
 let help = null;
 const wallKey = (e, down) => {
   if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const t = e.target; if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
@@ -1107,7 +1133,7 @@ function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(
 canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) act(e.button); });
 // a controller (gamepad.js): its buttons arrive as the keys and the click they stand for
 let padAim = false, lastPace = 0;
-const modeNow = () => spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk';
+const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && walling.active.free ? 'free' : 'build') : (planter.open || planter.armed) ? 'plant' : 'walk';
 const sendKey = (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true }));
 const padClick = () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); };
 const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000), context: modeNow, key: sendKey, click: padClick,
@@ -1681,6 +1707,7 @@ function update(dt, t) {
   const ml = Math.hypot(mx, mz); if (ml > 0) { mx /= ml; mz /= ml; }
   const speed = byKey ? ((keys.has('ShiftLeft') || keys.has('ShiftRight')) ? RUN : WALK) : paceFor(Math.min(1, ml));
   const move = f.clone().multiplyScalar(mz * speed).addScaledVector(r, mx * speed); lastPace = ml > 0 ? speed : 0;
+  if (climb) stepClimb(dt, mx, mz, speed); else seekClimb(dt, f, mz);
 
   // voids: wake, drift, pull
   grav.set(0, 0, 0);
@@ -1721,7 +1748,8 @@ function update(dt, t) {
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
   if (grav.length() > 2.8) grav.setLength(2.8);
-  { // walk, sliding along hedges, pools and trunks
+  if (!climb) { // walk, sliding along hedges, pools and trunks (and, having let go of a tree, drifting out from it as you fall)
+    if (offV) { if (jumpY <= 0) offV = null; else { move.x += offV.x; move.z += offV.z; const k = Math.exp(-dt * 0.6); offV.x *= k; offV.z *= k; } }
     const sx = (move.x + grav.x) * dt, sz = (move.z + grav.z) * dt, nx = player.x + sx, nz = player.z + sz;
     if (!garden.blocked(nx, nz)) { player.x = nx; player.z = nz; }
     else if (!garden.blocked(nx, player.z)) player.x = nx;
@@ -1736,7 +1764,7 @@ function update(dt, t) {
   }
   { const rx = player.x - CENTRE.x, rz = player.z - CENTRE.z, r = Math.hypot(rx, rz), lim = RIM - 2.2; if (r > lim) { player.x = CENTRE.x + rx * lim / r; player.z = CENTRE.z + rz * lim / r; } }   // the bubble's skin is as far as you can go
   const groundY0 = heightAt(player.x, player.z);
-  if (jumpV > 0 || jumpY > 0) { jumpV -= JUMP_G * dt; jumpY = Math.max(0, jumpY + jumpV * dt); if (jumpY === 0) jumpV = 0; }   // in the air: the ground still under you, you over it
+  if (!climb && (jumpV > 0 || jumpY > 0)) { jumpV -= JUMP_G * dt; jumpY = Math.max(0, jumpY + jumpV * dt); if (jumpY === 0) jumpV = 0; }   // in the air: the ground still under you, you over it
   const groundY = groundY0 + jumpY;
 
   const moving = Math.min(1, Math.hypot(mx, mz));
@@ -1965,6 +1993,7 @@ function stepWalling(dt, t) {
     const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
     if (id !== wallPrompt) { wallPrompt = id; if (st) { const k = isTouch ? 'build ▦' : 'B'; setHint(st.state === 'paused' ? `${k} · take up stint ${id + 1} again` : `${k} · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } } }
   wallKeysEl.style.opacity = walling.busy && !(drawer && drawer.isOpen) ? 0.85 : 0;
+  if (!isTouch && walling.busy) { const h = walling.active && walling.active.free ? FREE_KEYS_HTML : WALL_KEYS_HTML; if (wallKeysEl._h !== h) wallKeysEl.innerHTML = wallKeysEl._h = h; }
   if (body && (wallDirty || (walling.busy && t - consoleAt > 0.2))) { wallDirty = false; consoleAt = t; drawConsole(); drawer && drawer.sync && drawer.sync('wallInfo'); }
 }
 const CLS_NAME = { foundation: 'FOUNDATION', builder: 'BUILDER', through: 'THROUGH', cope: 'COPE', hearting: 'HEARTING', pinning: 'PIN' };
@@ -2008,6 +2037,7 @@ function drawConsole() {
 const wallKeysEl = document.createElement('div');
 wallKeysEl.style.cssText = 'position:fixed;left:50%;top:40px;transform:translateX(-50%);font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;color:#bff6ff;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center;white-space:nowrap;z-index:5';
 wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish<br>free builds: J glue what it touches · Shift+J unglue · ? every control';
+const WALL_KEYS_HTML = wallKeysEl.innerHTML, FREE_KEYS_HTML = 'click lift · it hangs where you look · wheel or - = nearer / farther · Q E turn · R tip · V roll (an eighth; Shift finer)<br>J sticks it where the green line shows · shake it apart · Shift+J unglue · G pass through · N more stone · click lets go · P put away · ? every control';
 if (isTouch) wallKeysEl.innerHTML = 'put the cross on a stone · lift / set picks it up and sets it down · hold turn to turn it · the pad has the rest';
 document.body.append(wallKeysEl);
 function wallSummary() {
@@ -2022,7 +2052,7 @@ window.__umbra = { // debug handle
   multi,
   selfie(on, ang = 2.5, dist = 3.4) { selfView = !!on; selfAng = ang; selfDist = dist; },
   /** For tests: run n frames at a fixed step, capturing the canvas every k-th (data URLs). */
-  get pace() { return lastPace; }, get padContext() { return spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk'; },
+  get pace() { return lastPace; }, get padContext() { return modeNow(); },
   /** Tests: n steps of the garden with nothing drawn (keys held as in capture). */
   step(n, dt = 1 / 30, walk = null) { const held = walk ? [].concat(walk) : []; for (const k of held) keys.add(k); try { for (let i = 0; i < n; i++) { clock.elapsedTime += dt; update(dt, clock.elapsedTime); } } finally { for (const k of held) keys.delete(k); clock.getDelta(); } return [player.x, player.z, yaw, pitch]; },
   capture(n, dt = 1 / 30, every = 1, walk = null) {
@@ -2041,4 +2071,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

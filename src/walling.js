@@ -276,6 +276,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
 
   // ---------------------------------------------------------------- the stint in hand
   let RAPIER = null, Physics = null, physFail = '';
+  let uhD = 3, glueTo = null, glueN = 0; const shake = { sign: 0, at: [] };   // free builds, as Ultrahand: how far out the piece is held; the piece it would stick to
   let held = null, hover = null, placing = false, placeT = 0, placeY = 0, placeXZ = null, landing = null, ghosted = false, press = false, effort = 0, effortRaw = 0, confirmT = -9, notesAt = 0;
   const target = new THREE.Vector3(), smooth = new THREE.Vector3(), targetQ = new THREE.Quaternion(), undo = [];
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.066, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7ff0ff, transparent: true, opacity: 0.7, depthWrite: false }));
@@ -526,14 +527,15 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   function pick(st) {
     undo.push(snapshot(A.stones)); if (undo.length > 20) undo.shift(); act();
-    held = st; placing = false; effort = 0; ghosted = false; press = false;
+    held = st; placing = false; effort = 0; ghosted = false; press = false; shake.at.length = 0; glueTo = null;
+    if (A.s.free) { const { o } = ray(), t = st.body.translation(); uhD = clamp(Math.hypot(t.x - o.x, t.y - o.y, t.z - o.z), 1.4, UH_FAR); }
     const b = st.body; b.setGravityScale(0, true); b.wakeUp();
     for (const x of groupOf(st)) { x.body.setGravityScale(0, true); x.body.wakeUp(); }   // glued to it: they come too
     const r = b.rotation(), t = b.translation(); targetQ.set(r.x, r.y, r.z, r.w); smooth.set(t.x, t.y + 0.06, t.z); target.copy(smooth); landing = null;
     look(st, true); ring.visible = true; onChange();
   }
   function drop(force) {
-    const st = held; if (!st) return;
+    const st = held; if (!st) return; glueTo = null; showGlue(null);
     if (!force && !placing) { const t = st.body.translation(); placing = true; placeT = 0; placeXZ = { x: t.x, z: t.z }; placeY = t.y; return; }
     placing = false; const b = st.body; b.setGravityScale(1, true); b.setLinvel({ x: 0, y: 0, z: 0 }, true); b.setAngvel({ x: 0, y: 0, z: 0 }, true);
     if (A) for (const x of groupOf(st)) { x.body.setGravityScale(1, true); x.body.setLinvel({ x: 0, y: 0, z: 0 }, true); x.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }
@@ -576,6 +578,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   function carry(dt) {
     const st = held, w = A.physics.world;
+    if (A.s.free && !placing) { carryFree(dt); return; }
     if (placing) {
       placeT += dt; const touch = A.physics.touching(st), v = st.body.linvel(), still = Math.hypot(v.x, v.y, v.z) < 0.08;
       placeY -= clamp(0.22 / Math.sqrt(Math.max(1, st.mass / 10)), 0.07, 0.22) * dt; if (landing) placeY = Math.max(placeY, landing.y - 0.012);
@@ -596,6 +599,68 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     smooth.lerp(target, 1 - Math.exp(-dt * (14 / Math.pow(Math.max(1, st.mass / 8), 0.6))));
   }
 
+
+  // ---------------------------------------------------------------- free builds, as Ultrahand (Tears of the Kingdom)
+  // In a free build what you hold hangs in the air where you look, as far out as it was when you took it (the wheel, or - and =, changes
+  // that), and turns in eighths of a turn about the way you are looking. Bring it close to another piece and a green
+  // line shows where the two would meet; J sticks them there (the held piece is pulled in until they touch, and welded) and you go on
+  // holding the whole assembly. Shake it from side to side and it comes apart. Letting go (click) drops it where it hangs.
+  const UH_FAR = 9, GLUE_R = 0.5;
+  const glueLineMat = new THREE.MeshBasicMaterial({ color: 0x8cff5a, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const glueLine = new THREE.Mesh(beamGeo, glueLineMat), glueEnds = [0, 1].map(() => new THREE.Mesh(glueGeo, glueLineMat));
+  glueLine.visible = false; glueLine.renderOrder = 5; scene.add(glueLine); for (const e of glueEnds) { e.visible = false; e.renderOrder = 5; scene.add(e); }
+  const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3();
+  let glueHi = null;   // the piece it would stick to, lit
+  function showGlue(g) {
+    const b = g ? g.b : null; if (glueHi !== b) { if (glueHi && A && A.stones.includes(glueHi) && glueHi !== held) look(glueHi, false); glueHi = b; if (b) look(b, true); }
+    const on = !!g; glueLine.visible = on; for (const e of glueEnds) e.visible = on; if (!on) return;
+    _g1.set(g.p1.x, g.p1.y, g.p1.z).applyMatrix4(A.group.matrixWorld); _g2.set(g.p2.x, g.p2.y, g.p2.z).applyMatrix4(A.group.matrixWorld);
+    const L = Math.max(0.004, _g1.distanceTo(_g2)); glueLine.position.copy(_g1); glueLine.lookAt(_g2); glueLine.scale.set(0.012, 0.012, L);
+    glueEnds[0].position.copy(_g1); glueEnds[1].position.copy(_g2); for (const e of glueEnds) e.scale.setScalar(0.034 + 0.012 * Math.sin(nowT * 9));
+  }
+  /** The nearest place the held assembly could stick to some other piece: { a (ours), b (theirs), dist, p1, p2 } in the site's frame. */
+  function glueCandidate(st) {
+    const grp = groupOf(st); let best = null;
+    for (const m of grp) { const p = m.body.translation();
+      for (const o of A.stones) { if (grp.has(o)) continue; const q = o.body.translation(); if ((q.x - p.x) ** 2 + (q.y - p.y) ** 2 + (q.z - p.z) ** 2 > 6.25) continue;
+        let c = null; try { c = m.collider.contactCollider(o.collider, GLUE_R); } catch (e) {}
+        if (c && (!best || c.distance < best.dist)) best = { a: m, b: o, dist: Math.max(0, c.distance), p1: { x: c.point1.x, y: c.point1.y, z: c.point1.z }, p2: { x: c.point2.x, y: c.point2.y, z: c.point2.z } }; } }
+    return best;
+  }
+  function stickHeld() {
+    const g = glueTo || glueCandidate(held);
+    if (!g) { hint('bring it near another piece (a green line shows where they would meet), then J sticks them', 3500); return; }
+    const dx = g.p2.x - g.p1.x, dy = g.p2.y - g.p1.y, dz = g.p2.z - g.p1.z, L = Math.hypot(dx, dy, dz), k = L > 0.004 ? (L - 0.002) / L : 0;
+    const grp = groupOf(held);
+    for (const m of grp) { const t = m.body.translation(); m.body.setTranslation({ x: t.x + dx * k, y: t.y + dy * k, z: t.z + dz * k }, true); m.body.setLinvel({ x: 0, y: 0, z: 0 }, true); m.body.setAngvel({ x: 0, y: 0, z: 0 }, true); }
+    smooth.x += dx * k; smooth.y += dy * k; smooth.z += dz * k;
+    if (joinStones(g.a, g.b, g.p2)) netSend({ b: 'gl', s: A.s.id, a: g.a.uid, c: g.b.uid, p: [r3(g.p2.x), r3(g.p2.y), r3(g.p2.z)] });
+    for (const x of groupOf(held)) { x.body.setGravityScale(0, true); x.body.wakeUp(); }   // what it stuck to comes up with it
+    glueTo = null; showGlue(null); act(); onChange();
+    hint(`stuck · ${groupOf(held).size} pieces in hand · shake to pull them apart · click lets go`, 3000);
+  }
+  function shakeApart() {
+    const grp = [...groupOf(held)]; let n = 0;
+    for (const m of grp) { const k = unglue(m); if (k) { n += k; netSend({ b: 'ug', s: A.s.id, u: m.uid }); } }
+    for (const m of grp) if (m !== held) { m.body.setGravityScale(1, true); m.body.wakeUp(); }
+    if (n) { hint('shaken apart', 2000); onTurn(1); onChange(); }
+  }
+  function carryFree(dt) {
+    const st = held, w = A.physics.world, { o, d } = ray();
+    target.set(o.x + d.x * uhD, o.y + d.y * uhD, o.z + d.z * uhD);
+    target.x = clamp(target.x, -27, 27); target.z = clamp(target.z, -27, 27); target.y = Math.max(target.y, -1);
+    smooth.lerp(target, 1 - Math.exp(-dt * (14 / Math.pow(Math.max(1, st.mass / 8), 0.6))));
+    effort += (effortRaw - effort) * (1 - Math.exp(-dt * 6));
+    // the guide: a ring on whatever is straight below it
+    const t = st.body.translation(), down = w.castRay(new RAPIER.Ray({ x: t.x, y: t.y, z: t.z }, { x: 0, y: -1, z: 0 }), 40, true, undefined, undefined, undefined, st.body);
+    if (down) { ring.position.set(t.x, t.y - down.timeOfImpact + 0.004, t.z); ring.visible = true; } else ring.visible = false;
+    // what it would stick to
+    if ((glueN++ & 1) === 0) { glueTo = glueCandidate(st); showGlue(glueTo); }
+    // shaking: the held point swung from side to side, fast, five times in under a second
+    camera.getWorldDirection(_v).transformDirection(A.inv); _n.crossVectors(_v, UP).normalize();
+    const lat = ((target.x - (shake.px ?? target.x)) * _n.x + (target.z - (shake.pz ?? target.z)) * _n.z) / Math.max(dt, 1e-3); shake.px = target.x; shake.pz = target.z;
+    if (Math.abs(lat) > 3.2) { const sg = Math.sign(lat); if (sg !== shake.sign) { shake.sign = sg; shake.at.push(nowT); while (shake.at.length && nowT - shake.at[0] > 1) shake.at.shift(); if (shake.at.length >= 5) { shake.at.length = 0; shakeApart(); } } }
+  }
 
   // ---------------------------------------------------------------- building together
   // A stone's name within its site (uid) says where it came from: the site's own pile (its seed), a fieldstone heap (heap and place),
@@ -880,18 +945,30 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   // ---------------------------------------------------------------- input (main.js hands these on while the pointer is locked)
   function onDown(button) {
     if (!A || A.queue.length) return false;
-    if (held) { if (button === 0) drop(false); return true; }
+    if (held) { if (button === 0) drop(!!A.s.free); return true; }   // a free build lets go where it hangs; the wall sets it down gently
     if (button === 0 && hover && hover.ext) { const h = hover; setHover(null); const st = pluck(h); if (st) pick(st); return true; }
     if (button === 0 && hover) { const h = hover; hover = null; pick(h); return true; }
     return false;
   }
-  function onWheel(dy, shift) { if (!held) return false; rotateWorld(UP, (dy > 0 ? 1 : -1) * (shift ? Math.PI / 60 : Math.PI / 12)); return true; }
+  function onWheel(dy, shift) { if (!held) return false; if (A.s.free && !shift) { uhD = clamp(uhD * Math.exp((dy > 0 ? -1 : 1) * 0.12), 1.2, UH_FAR); return true; } rotateWorld(UP, (dy > 0 ? 1 : -1) * (shift ? Math.PI / 60 : Math.PI / 12)); return true; }
   function onKey(code, down, shift) {
     if (!A) return false;
     if (code === 'Space') { press = down && !!held; return !!held; }
     if (code === 'KeyG') { if (held && down !== ghosted) { ghosted = down; held.collider.setCollisionGroups(down ? 0 : 0xffffffff); } return !!held; }
     if (!down) return false;
-    if (code === 'KeyJ') { glueKey(shift); return true; }
+    if (code === 'KeyJ') { if (held && A.s.free && !shift) stickHeld(); else glueKey(shift); return true; }
+    if (A.s.free && held) {   // Ultrahand: eighths of a turn about the view (Shift: twenty-fourths); nearer and farther
+      const step = shift ? Math.PI / 12 : Math.PI / 4;
+      camera.getWorldDirection(_v).transformDirection(A.inv); _v.y = 0; _v.normalize(); _n.crossVectors(_v, UP).normalize();
+      switch (code) {
+        case 'KeyQ': rotateWorld(UP, step); return true;
+        case 'KeyE': rotateWorld(UP, -step); return true;
+        case 'KeyR': rotateWorld(_n, -step); return true;
+        case 'KeyV': rotateWorld(_v, step); return true;
+        case 'Equal': uhD = clamp(uhD + 0.3, 1.2, UH_FAR); return true;   // = (+): farther
+        case 'Minus': uhD = clamp(uhD - 0.3, 1.2, UH_FAR); return true;   // -: nearer
+      }
+    }
     const fine = shift ? Math.PI / 12 : Math.PI / 2;
     camera.getWorldDirection(_v).transformDirection(A.inv); _v.y = 0; _v.normalize(); _n.crossVectors(_v, UP).normalize();
     switch (code) {
@@ -956,6 +1033,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     net: { attach(n) { net = n; }, isMine: w => !!w && !!w.wid && w.wid === (own ? own.store.wid : store.wid), onMsg: onNet, snapshot: netSnapshot, adopt, release, peerGone, remoteHold, holdState, get guest() { return guest; }, get mirrors() { return mirrors; } },
     _t: { pickExt, pluck, touching: st => touchingStones(st), join: (a, b, P) => joinStones(a, b, P), groupOf: st => groupOf(st), get glue() { return A ? A.glue : []; }, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
     get active() { return A ? A.s : null; }, get holding() { return !!held; }, get busy() { return !!A; },
+    get dbg() { return A && { stones: A.stones, held, glueTo, uhD, glue: A.glue.length, group: A.group, heldGroup: held ? groupOf(held).size : 0, queue: A.queue.length }; },
     /** What the hands should be doing: for the body's gestures. */
     get gesture() { return { held: !!held, effort, hover: !!hover, press: press && !!held, placing, ghost: ghosted, kg: held ? held.mass : 0 }; },
     get stone() { return store.stone; }, set stone(k) { if (STONE_TYPES[k]) { store.stone = k; persist(); } }, types: Object.keys(STONE_TYPES).filter(k => !STONE_TYPES[k].unit).map(k => ({ value: k, label: STONE_TYPES[k].name })) };
