@@ -19,12 +19,13 @@ const fnv = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^=
 export function toParts(w) {
   const j = w.junk || null;
   const parts = { wall: JSON.stringify(w.wall || null), plants: JSON.stringify(w.plants || null) };
+  if (w.arms) parts.arms = JSON.stringify(w.arms);   // the guns lying about (arms.js)
   if (j) { parts.heap = JSON.stringify({ heap: j.heap, seq: j.seq, since: j.since, recipes: j.recipes }); parts.pieces = JSON.stringify(j.pieces || {}); }
   return parts;
 }
 export function fromParts(p) {
   const P = k => { try { return p[k] ? JSON.parse(p[k]) : null; } catch (e) { return null; } };
-  const w = { wall: P('wall'), plants: P('plants') }, h = P('heap'), pc = P('pieces');
+  const w = { wall: P('wall'), plants: P('plants'), arms: P('arms') }, h = P('heap'), pc = P('pieces');
   if (h) w.junk = { ...h, pieces: pc || {} };
   return w;
 }

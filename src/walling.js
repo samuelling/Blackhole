@@ -484,6 +484,16 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (d.y < -0.02) { const t = Math.min(REACH, -o.y / d.y); return { point: new THREE.Vector3(o.x + d.x * t, Math.max(0, o.y + d.y * t), o.z + d.z * t), stone: null }; }
     return { point: new THREE.Vector3(o.x + d.x * 3, Math.max(0.2, o.y + d.y * 3), o.z + d.z * 3), stone: null, air: true };
   }
+  /** A round (arms.js) through the open build: the first stone or piece of junk on its line, within maxD (world units), takes the round's momentum (N·s) at the point it hits. -> { d } or null. */
+  function shoot(Ow, Dw, maxD, momentum) {
+    if (!A || !A.physics) return null;
+    const o = Ow.clone().applyMatrix4(A.inv), d = Dw.clone().transformDirection(A.inv);
+    const hit = A.physics.world.castRay(new RAPIER.Ray(o, d), maxD, true); if (!hit) return null;
+    const st = A.physics.bodies.get(hit.collider.handle); if (!st || !st.body) return null;
+    const t = hit.timeOfImpact, P = { x: o.x + d.x * t, y: o.y + d.y * t, z: o.z + d.z * t };
+    if (st.body.isDynamic && st.body.isDynamic()) { st.body.wakeUp(); st.body.applyImpulseAtPoint({ x: d.x * momentum, y: d.y * momentum, z: d.z * momentum }, P, true); }
+    return { d: t };
+  }
   function look(st, hot) { st.mesh.material = st.type === 'junk' ? (hot ? junkHot : junk.material) : hot ? hotMat(st.type || A.type) : matOf(st.type || A.type, false); }
   // ---------------------------------------------------------------- stone in the heaps and the junk: pointed at, lifted out
   const ghost = new THREE.Mesh(new THREE.BufferGeometry(), junkHot); ghost.visible = false; ghost.renderOrder = 4; scene.add(ghost);
@@ -1033,6 +1043,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     net: { attach(n) { net = n; }, isMine: w => !!w && !!w.wid && w.wid === (own ? own.store.wid : store.wid), onMsg: onNet, snapshot: netSnapshot, adopt, release, peerGone, remoteHold, holdState, get guest() { return guest; }, get mirrors() { return mirrors; } },
     _t: { pickExt, pluck, touching: st => touchingStones(st), join: (a, b, P) => joinStones(a, b, P), groupOf: st => groupOf(st), get glue() { return A ? A.glue : []; }, pick: st => pick(st), drop: () => drop(true), heaps, pickHeap, flush() { while (jobs.length) { const j = jobs[0]; while (!j.step()); jobs.shift(); } for (const h of heaps) if (h.heap) h.heap.visible = true; } },
     get active() { return A ? A.s : null; }, get holding() { return !!held; }, get busy() { return !!A; },
+    shoot,
     get dbg() { return A && { stones: A.stones, held, glueTo, uhD, glue: A.glue.length, group: A.group, heldGroup: held ? groupOf(held).size : 0, queue: A.queue.length }; },
     /** What the hands should be doing: for the body's gestures. */
     get gesture() { return { held: !!held, effort, hover: !!hover, press: press && !!held, placing, ghost: ghosted, kg: held ? held.mass : 0 }; },

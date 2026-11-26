@@ -158,7 +158,8 @@ export function recipeKey(r) {
 /** The recipe as kept: what is needed to build it again. */
 export function keepRecipe(r) {
   if (!r || !Array.isArray(r.parts) || !r.parts.length) return null;
-  return { name: String(r.name || 'something').slice(0, 40), icon: typeof r.icon === 'string' ? r.icon.slice(0, 4) : '', mass: num(r.mass, 1, 0.001, 250000), parts: r.parts.slice(0, 40) };
+  return { name: String(r.name || 'something').slice(0, 40), icon: typeof r.icon === 'string' ? r.icon.slice(0, 4) : '', mass: num(r.mass, 1, 0.001, 250000), parts: r.parts.slice(0, 40),
+    ...(typeof r.weapon === 'string' && /^[a-z0-9]{2,8}$/.test(r.weapon) ? { weapon: r.weapon } : {}) };   // one of Betamax's guns (the Shred Hole's Arsenal): arms.js makes it the real thing
 }
 
 /** The junk material learns to read each vertex's own surface (from whole things) when it has one. */

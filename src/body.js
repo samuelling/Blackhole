@@ -193,6 +193,7 @@ export function createBody({ model, U, COMMON }) {
   const tune = { crane: 0.2, reach: null, work: null, paneX: 0.2 };
   // working at the wall: the left forearm comes up with its console, the right hand points at the stone the suit is lifting
   let workOn = 0, work = 0; const workAim = v3(), wAim = v3(); let hasAim = false;
+  let armedOn = 0, armed = 0;   // holding a gun (arms.js): both arms up to it, along where you look
   const qTW = new THREE.Quaternion(), S = v3(), T = v3(), E = v3(), nd = v3(), md = v3(), fw = v3(), upv = v3();
   const PHI = 0.733, CP = Math.cos(PHI), SP = Math.sin(PHI);                       // the wrist display faces 42 degrees round the forearm from its front
   // the console: a pane of light the wrist display throws up over the forearm, lettered along the arm
@@ -441,6 +442,20 @@ export function createBody({ model, U, COMMON }) {
         lo.rotation.x = lerp(lo.rotation.x, -0.28, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.55, w * (hasAim ? 1 : 0.4));
       }
     }
+    // holding a gun: the right hand out along the view, at the shoulder's height; the left reaching under the fore-end
+    armed += (armedOn - armed) * Math.min(1, dt * 8);
+    if (armed > 0.002 && work < 0.98) {
+      const w = armed * armed * (3 - 2 * armed) * (1 - work), pe = Math.max(-1.0, Math.min(0.6, s.pitch));
+      qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+      E.set(0, EYE.y + bob, back); fw.set(0, Math.sin(pe), Math.cos(pe));
+      for (const sd of ['R', 'L']) {
+        const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd];
+        S.copy(up.position).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(qP).add(pel.position);
+        aim.copy(E).addScaledVector(fw, sd === 'R' ? 0.55 : 0.8); aim.y -= 0.32; aim.x += sd === 'R' ? -0.1 : -0.06;
+        tmp.subVectors(aim, S).normalize(); q.setFromUnitVectors(DOWN, tmp); q.premultiply(qI); up.quaternion.slerp(q, w);
+        lo.rotation.x = lerp(lo.rotation.x, sd === 'R' ? -0.35 : -0.15, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.1, w);
+      }
+    }
     // the hands, last: gestures, springs and their own inertia on top of the arms' pose
     turnKick *= Math.exp(-dt * 5);
     hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
@@ -491,6 +506,8 @@ export function createBody({ model, U, COMMON }) {
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
+    /** Holding a gun (arms.js): arms up to it along the view. */
+    setArmed(on) { armedOn = on ? 1 : 0; },
     /** What the hands are doing at the wall: { held, effort, hover, press, placing, ghost }; turn(sign) when the stone in hand is turned; point(0..1) aims a finger. */
     setGesture(g) { gesture = g || {}; }, turn(sign) { turnKick = Math.max(-0.5, Math.min(0.5, turnKick + 0.22 * sign)); }, point(v) { point += (v - point) * 0.2; },
     get hands() { return hands; },

@@ -260,11 +260,13 @@ export function createMulti(o) {
     } else if (m.k === 's') {
       const now = performance.now() / 1000;
       const lag = now - (+m.t || 0); p.off = p.off == null ? lag : Math.min(p.off + 0.002, lag);   // their clock against ours, from the quickest packet lately
-      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0 });
+      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0, ar: typeof m.ar === 'string' ? m.ar.slice(0, 8) : '', dn: m.dn | 0 });
       if (p.snaps.length > 30) p.snaps.splice(0, p.snaps.length - 30);
       ensureBody(p);
       if (Array.isArray(m.e) && m.e[1] !== p.emoteN) { p.emoteN = m.e[1]; if (typeof m.e[0] === 'string' && /^[a-z0-9]{2,12}$/.test(m.e[0])) p.body.emote(m.e[0]); }   // a gesture of theirs
       if (W && synced) { try { W.remoteHold(pr.id, Array.isArray(m.h) ? m.h : null); } catch (e) {} }   // the stone in their beam
+    } else if (m.k === 'ev') {   // guns (arms.js): shots, hits, guns put down and picked up
+      if (o.onEvent && m.m && typeof m.m === 'object') { try { o.onEvent(pr.id, m.m); } catch (e) { console.warn(e); } }
     } else if (m.k === 'sky') {
       if (followSky && isHost(pr.id) && o.setSky) o.setSky(m);
     }
@@ -307,7 +309,7 @@ export function createMulti(o) {
     if (a === b || b.t <= a.t) return b;
     const k = Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
     return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k, y: a.y + (b.y - a.y) * k, yaw: a.yaw + wrapA(b.yaw - a.yaw) * k, pitch: a.pitch + (b.pitch - a.pitch) * k,
-      w: b.w, a: b.a, g: b.g, pn: b.pn };
+      w: b.w, a: b.a, g: b.g, pn: b.pn, ar: b.ar, dn: b.dn };
   }
 
   // ---------------------------------------------------------------- voices
@@ -382,6 +384,7 @@ export function createMulti(o) {
       if (self.point > 0.02) m.pn = r3(self.point);
       if (self.hold) m.h = self.hold;
       if (self.emote) m.e = self.emote;
+      if (self.arm) m.ar = self.arm; if (self.down) m.dn = 1;
       const s = JSON.stringify(m);
       for (const pr of room.peers.values()) {
         if (pr.fast && pr.fast.readyState === 'open') { try { pr.fast.send(s); } catch (_) {} }
@@ -439,7 +442,17 @@ export function createMulti(o) {
   return {
     open, close, toggle: () => (isOpen ? close() : open()), update, key, join,
     get isOpen() { return isOpen; }, get inRoom() { return !!room; }, get code() { return code; }, get count() { return room ? others.size + 1 : 0; },
-    get outfit() { return outfit; }, get synced() { return synced; }, get keeper() { return !!room && synced && isHost(room.id); }, _others: others,
+    get outfit() { return outfit; }, get synced() { return synced; },
+    /** Guns (arms.js): an event to everyone in the room; the others as they are drawn now: [{ id, x, gy, z, yaw, pitch, w (their gun), down, body }]. */
+    event(m) { if (room && room.peers.size) room.send({ k: 'ev', m }); },
+    players() {
+      if (!room) return []; const now = performance.now() / 1000, out = [];
+      for (const p of others.values()) { if (!p.body || !p.body.root.visible) continue; const s = sample(p, now); if (!s) continue;
+        out.push({ id: p.id, x: s.x, gy: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, w: s.ar || '', down: !!s.dn, body: p.body, name: p.name }); }
+      return out;
+    },
+    get myId() { return room ? room.id || '' : ''; },
+    nameOf(id) { const p = others.get(id); return p ? p.name || 'someone' : 'someone'; }, get keeper() { return !!room && synced && isHost(room.id); }, _others: others,
     _talk: on => setTalk(on),
     _dbg: () => ({ synced, gardenOf, asked, pending: pendingW.length, big: [...bigIn.values()].map(b => b.got + '/' + b.parts.length), alone: room && room.alone, id: room && room.id, host: !!room && isHost(room.id), peers: room ? [...room.peers.values()].map(p => [p.path, !!p.opened, p.dc && p.dc.readyState, p.n]) : [] }),
     _stats: async () => { const out = { ctx: o.audio && o.audio().ctx ? o.audio().ctx.state : null, links: [] };

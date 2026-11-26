@@ -25,6 +25,7 @@ import { sky as skyAt, eqMatrix, eqToScene, PLANETS, bvToRGB, phaseName, compass
 import { doyLabel, doyToMonthDay } from './seasons.js';
 import { createMulti } from './multi.js';
 import { createWorlds } from './worlds.js';
+import { createArms } from './arms.js';
 
 // ------------------------------------------------------------------ setup
 const MAXV = 12;
@@ -602,19 +603,19 @@ let lobbyView = null;   // the self view as it was before the lobby turned you r
 // the one garden of a room (and of your online saves, worlds.js): what the wall, the junk heap and the planting each hand over, take on and tell (their own .net)
 const gardenWorld = {
     attach(net) { walling.net.attach(net); junk.net.attach({ send: m => net.send(m), host: net.host }); planter.net.attach({ send: m => net.send(m) }); },
-    snapshot(light) { return { wall: walling.net.snapshot(), junk: light ? null : junk.net.snapshot(), plants: planter.net.snapshot() }; },   // light: over the relay, without the junk heap
+    snapshot(light) { return { wall: walling.net.snapshot(), junk: light ? null : junk.net.snapshot(), plants: planter.net.snapshot(), arms: arms ? arms.net.snapshot() : null }; },   // light: over the relay, without the junk heap
     adopt(w) {
       if (!w || !w.wall) return false; const mine = walling.net.isMine(w.wall);
       if (w.junk || !mine) junk.net.adopt(w.junk || {}, mine);   // (the heap first: junk built into walls is drawn from it)
-      walling.net.adopt(w.wall); if (w.plants) planter.net.adopt(w.plants, mine);
+      walling.net.adopt(w.wall); if (w.plants) planter.net.adopt(w.plants, mine); if (arms && (w.arms || !mine)) arms.net.adopt(w.arms || {}, mine);
       if (drawer && drawer.sync) drawer.sync('junkInfo'); return mine;
     },
-    release() { walling.net.release(); junk.net.release(); planter.net.release(); },
+    release() { walling.net.release(); junk.net.release(); planter.net.release(); if (arms) arms.net.release(); },
     onMsg(from, m) { if (!m) return; if (m.b) walling.net.onMsg(from, m); else if (m.j) junk.net.onMsg(m); else if (m.p) planter.net.onMsg(m); },
     peerGone: id => walling.net.peerGone(id), remoteHold: (id, h) => walling.net.remoteHold(id, h),
   get guest() { return walling.net.guest; },
 };
-let worlds = null;
+let worlds = null, arms = null;   // (arms.js: guns, made once the rest is)
 // the Shred Hole (linglab.org/tunnel) is where new junk comes from: opened set to send here
 const SHRED_URL = 'https://linglab.org/tunnel/?to=garden';
 function openShredHole() { try { window.open(SHRED_URL, '_blank', 'noopener'); } catch (e) { location.href = SHRED_URL; } }
@@ -635,13 +636,13 @@ const multi = assets.models.astronaut ? createMulti({ scene, camera, model: asse
     else if (lobbyView) { selfView = lobbyView.on; selfAng = lobbyView.ang; selfDist = lobbyView.dist; lobbyView = null; }
   },
   onRoom: () => togetherLabel(),
-  world: gardenWorld,
+  world: gardenWorld, onEvent: (id, m) => arms && arms.onMsg(id, m),
   roomGarden: c => worlds ? worlds.roomGarden(c) : Promise.resolve(null), newCode: () => worlds ? worlds.newCode() : Promise.resolve(null),
  }) : null;
 // the long task: a dry stone wall round the garden, a stint at a time (walling.js)
 let wallDirty = true;
 // the wormhole in the east clearing, and the junk heap the Shred Hole fills (junk.js)
-const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), mailbox: !QS.has('nomail'), onVaporize: pos => burst(pos, 0.22) });   // ?nomail: tests keep off the live mailbox
+const junk = createJunk({ scene, U, COMMON, P: garden.P, heightAt, lite: LITE, hint: (t, ms) => setHint(t, ms), onArrive: o => junkArrived(o), onWeapon: w => arms && arms.arrive(w), mailbox: !QS.has('nomail'), onVaporize: pos => burst(pos, 0.22) });   // ?nomail: tests keep off the live mailbox
 const walling = createWalling({ scene, camera, U, patchFrag: garden.patchFrag, garden, junk, lite: LITE || /phone|laptop/.test(G.preset === 'auto' ? GPU.preset : G.preset), hint: (t, ms) => setHint(t, ms), onChange: () => { wallDirty = true; }, onTurn: sg => { if (body) body.turn(sg); } });
 // planting (planter.js): the plant menu, the ring on the ground, the trowel
 const planter = createPlanter({ scene, camera, garden, heightAt, hint: (m, ms) => setHint(m, ms), lock: tryLock, unlock: () => { if (document.pointerLockElement === canvas) document.exitPointerLock(); },
@@ -1144,10 +1145,11 @@ function beginStint() {
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 /** What a click does where you are looking (the mouse's button, or the controller's trigger). */
 function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(button)) return; if (!walling.busy && button === 0 && walling.idleHover) { walling.pluckIdle(player.x, player.z, yaw); return; } if (button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); }
-canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) act(e.button); });
+canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started && !(arms && arms.mouse(e.button, true))) act(e.button); });
+canvas.addEventListener('contextmenu', e => { if (arms && arms.armed) e.preventDefault(); });
 // a controller (gamepad.js): its buttons arrive as the keys and the click they stand for
 let padAim = false, lastPace = 0;
-const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && walling.active.free ? 'free' : 'build') : (planter.open || planter.armed) ? 'plant' : 'walk';
+const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && walling.active.free ? 'free' : 'build') : (planter.open || planter.armed) ? 'plant' : arms && arms.armed ? 'armed' : 'walk';
 const sendKey = (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true }));
 const padClick = () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); };
 const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000), context: modeNow, key: sendKey, click: padClick,
@@ -1156,7 +1158,7 @@ const pad = createGamepad({ started: () => started, start: () => enterGarden(), 
 const tui = isTouch ? createTouchUI({ context: modeNow, key: sendKey, click: padClick, selfView: () => selfView, started: () => started }) : null;
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas || padAim));
 if (tui) setInterval(() => $('aim').classList.toggle('on', started && !spaceOn && walling.busy), 250);   // on touch the crosshair shows what you will lift while building
-addEventListener('mouseup', () => { mouseDown = false; });
+addEventListener('mouseup', e => { mouseDown = false; if (arms) arms.mouse(e.button, false); });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
   if (spaceOn) { if (document.pointerLockElement === canvas || mouseDown) orbitBy(e.movementX, e.movementY); return; }
@@ -1239,7 +1241,7 @@ function collapseVoid(v, self = false) {
 let firstCollapse = false, firstSelf = false, waterAt = 0; const _wormV = new THREE.Vector3();
 function junkArrived(o) {
   const d = Math.hypot(player.x - junk.hole.x, player.z - junk.hole.z);
-  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${[o.whole ? (o.whole === 1 && !o.pieces ? 'in one piece' : `${o.whole} whole`) : '', o.pieces ? `${o.pieces} pieces` : ''].filter(Boolean).join(', ')}`, 6000);
+  if (started && d < 60) setHint(`${o.icon ? o.icon + ' ' : ''}${o.name} came through the wormhole: ${[o.guns ? (o.guns === 1 ? 'a gun, by the heap (Q picks it up)' : `${o.guns} guns, by the heap (Q picks one up)`) : '', o.whole ? (o.whole === 1 && !o.pieces ? 'in one piece' : `${o.whole} whole`) : '', o.pieces ? `${o.pieces} pieces` : ''].filter(Boolean).join(', ')}`, 6000);
   if (!A.ctx || !A.on || !A.noise) return;   // a rush down from high to low, louder the nearer you are
   const ac = A.ctx, t0 = ac.currentTime, v = Math.min(1, 14 / Math.max(6, d)), s = ac.createBufferSource(); s.buffer = A.noise; s.loop = true;
   const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2.2; f.frequency.setValueAtTime(2400, t0); f.frequency.exponentialRampToValueAtTime(160, t0 + 2.6);
@@ -1365,7 +1367,7 @@ $('bReplant').addEventListener('click', e => { e.stopPropagation(); garden.seaso
 addEventListener('keydown', e => {
   if (!started) return;
   if (e.code === 'KeyY') $('bSpeed').click();   // (it was S, which is also the key for walking backwards)
-  if (e.code === 'KeyR') $('bReplant').click();
+  if (e.code === 'KeyR' && !(arms && arms.armed)) $('bReplant').click();
 });
 
 let timeMode = 'night', manualHour = 12;
@@ -1567,6 +1569,7 @@ const SETTINGS = [
   { id: 'meadow', tab: 'garden', label: 'Meadow sounds', kind: 'toggle', get: () => S.meadow, set: v => { S.meadow = v; save(); if (A.meadow) A.meadow.setEnabled(v); },
     note: 'gusting wind in the grass and leaves, birdsong by day, crickets on summer and autumn nights, an owl now and then' },
   { id: 'keysInfo', tab: 'garden', group: 'Keys', label: '', kind: 'info', get: () => KEYS_HELP.replace(/<br>/g, ' · ') },
+  { id: 'canBeShot', tab: 'garden', group: 'Guns', label: 'Others can shoot me', kind: 'toggle', get: () => S.canBeShot !== false, set: v => { S.canBeShot = !!v; }, note: 'in a room: off, their rounds pass through you (your own gun still works)' },
   { id: 'saveInfo', tab: 'garden', group: 'Keeping your garden', label: '', kind: 'info', get: () => `Kept in this browser, and online: ${worlds ? worlds.status : 'not yet'}. Open your garden's link on another device to build there. A room keeps its own garden online, by its code.` },
   { id: 'saveLink', tab: 'garden', label: 'Copy the link to your garden', kind: 'action', set: () => worlds && worlds.copyLink(), note: 'open it on another device (an iPad, say) and your garden is there; keep it to yourself' },
   { id: 'saveEarlier', tab: 'garden', label: 'Earlier saves…', kind: 'action', set: () => { drawer.close(); worlds && worlds.earlier(); }, note: 'the last twelve saves of the garden you are in' },
@@ -1688,6 +1691,22 @@ drawer = createDrawer({
   onOpenChange: open => { if (open && document.pointerLockElement === canvas) document.exitPointerLock(); },
 });
 // your garden kept online, and a room's (worlds.js; ?noworlds keeps to this browser only)
+// guns (arms.js): from the Shred Hole's Arsenal, through the wormhole
+{ let trunkList = null;
+  arms = createArms({ scene, camera, heightAt, blocked: (x, z) => garden.blocked(x, z), walling, body,
+    trees: () => { if (!trunkList) trunkList = garden.trees.map(T => ({ x: T.x, z: T.z, r: T.r, gy: T.gy, top: T.cy + T.B }));
+      const mine = garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, r: t.S.r, gy: t.gy, top: t.H })) : []; return mine.length ? trunkList.concat(mine) : trunkList; },
+    audio: () => A, hint: (t, ms) => setHint(t, ms), players: () => window.__fakePlayers || (multi && multi.inRoom ? multi.players() : []),   // (__fakePlayers, __sent: tests)
+    send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '',
+    heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }),
+    respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
+    kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
+    me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
+    free: () => started && !spaceOn && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+    onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
+  addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
+  addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
+}
 if (!QS.has('noworlds')) { worlds = createWorlds({ world: gardenWorld, multi, hint: (t, ms) => setHint(t, ms), started: () => started }); worlds.init(); }
 if (hands) { const box = document.createElement('div'); box.className = 'hands'; box.append(hands.panel());
   const link = document.createElement('a'); link.textContent = 'open the console ↗'; link.target = '_blank'; link.rel = 'noopener'; link.style.cssText = 'display:inline-block;margin-top:14px;color:inherit;opacity:.7';
@@ -1770,7 +1789,7 @@ function update(dt, t) {
     const prox = w * Math.max(0, 1 - d / (18 * Math.pow(k, 0.7))) * Math.min(1, 0.4 + 0.6 * k); near = Math.max(near, prox); nearPull = Math.max(nearPull, pull);
   }
   if (grav.length() > 2.8) grav.setLength(2.8);
-  if (!climb) { // walk, sliding along hedges, pools and trunks (and, having let go of a tree, drifting out from it as you fall)
+  if (!climb && !(arms && arms.down)) { // walk, sliding along hedges, pools and trunks (and, having let go of a tree, drifting out from it as you fall)
     if (offV) { if (jumpY <= 0) offV = null; else { move.x += offV.x; move.z += offV.z; const k = Math.exp(-dt * 0.6); offV.x *= k; offV.z *= k; } }
     const sx = (move.x + grav.x) * dt, sz = (move.z + grav.z) * dt, nx = player.x + sx, nz = player.z + sz;
     if (!garden.blocked(nx, nz)) { player.x = nx; player.z = nz; }
@@ -1795,7 +1814,7 @@ function update(dt, t) {
   const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
   player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
-  camera.fov = 70 + 7 * near;
+  camera.fov = (70 + 7 * near) * (arms ? arms.zoom : 1);
   stepSpaceView(dt, groundY + 1.65 + bob);
   if (selfView && !spaceOn) {   // see yourself: the camera steps out and looks back at you, turning with you
     const a = yaw + selfAng, d = selfDist; _selfT.set(player.x, groundY + 1.05, player.z);
@@ -2003,6 +2022,7 @@ const _mpAim = new THREE.Vector3();
 function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint('this is not your garden: only its owner can clear things wholesale', 4500); return true; } return false; }
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
+  if (arms) { arms.update(dt); if (multi && multi.inRoom) arms.others(multi.players()); }
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
     if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
@@ -2010,7 +2030,7 @@ function stepWalling(dt, t) {
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z), yaw, pitch, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: arms ? arms.held : '', down: arms ? arms.down : false, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
@@ -2095,4 +2115,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

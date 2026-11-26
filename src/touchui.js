@@ -38,7 +38,8 @@ body.tui #aim.on { width:14px; height:14px; margin:-7px 0 0 -7px; border:1.5px s
 // what each mode's pad holds: [label, what it sends, how it behaves]. 'click' is the tap where you are looking; '+' repeats while held;
 // 'hold' keeps the key down while the finger is; 'shift' is a toggle for finer turns.
 const PADS = {
-  walk: [['jump', 'Space', 'big'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click']],
+  walk: [['jump', 'Space', 'big'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click'], ['gun: pick up / draw', 'KeyQ']],
+  armed: [['fire', 'KeyK', 'bighold'], ['aim', 'KeyL', 'hold'], ['reload', 'KeyR'], ['put away', 'KeyQ'], ['jump', 'Space']],
   build: [['lift / set', 'click', 'big'], ['turn ⟲', 'KeyQ', 'repeat'], ['turn ⟳', 'KeyE', 'repeat'], ['fine', 'shift', 'toggle'],
     ['tip', 'KeyR'], ['roll', 'KeyV'], ['length in', 'KeyT'], ['on edge', 'KeyC'], ['press', 'Space', 'hold'], ['pass through', 'KeyG', 'hold'],
     ['hearting', 'KeyH'], ['more stone', 'KeyN'], ['glue', 'KeyJ'], ['undo', 'Backspace'], ['finish (twice)', 'Enter'], ['put away', 'KeyP']],
@@ -105,12 +106,12 @@ export function createTouchUI(o) {
   let shown = null;
   function refresh(force) {
     const c = o.started() ? o.context() : 'none';
-    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id || (id === 'build' && c === 'free'));
+    for (const id of ['walk', 'plant', 'build', 'space']) railB[id].classList.toggle('on', c === id || (id === 'build' && c === 'free') || (id === 'walk' && c === 'armed'));
     railB.self.classList.toggle('on', !!(o.selfView && o.selfView()));
     rail.style.display = o.started() ? '' : 'none';
     if (c === shown && !force) return; shown = c; pad.innerHTML = ''; fine = false;
     const rows = PADS[c] || []; pad.style.setProperty('--cols', c === 'build' || c === 'free' ? 4 : 2);
-    for (const [label, code, how] of rows) { const b = document.createElement('button'); b.textContent = label; if (how === 'big') b.className = 'big'; pad.appendChild(b); wire(b, code, how === 'big' ? '' : how); }
+    for (const [label, code, how] of rows) { const b = document.createElement('button'); b.textContent = label; if (how === 'big' || how === 'bighold') b.className = 'big'; pad.appendChild(b); wire(b, code, how === 'big' ? '' : how === 'bighold' ? 'hold' : how); }
   }
   setInterval(() => refresh(false), 200);
 

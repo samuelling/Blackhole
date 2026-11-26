@@ -63,6 +63,16 @@ Not modelled for junk: material (the drop carries none, so friction and bounce a
 
 Not in this version: the hammer and the fit light from Dry Stack, and any collision between you and loose stones (you walk through the pile).
 
+## Guns
+
+The Shred Hole has an **Arsenal** at the end of its shelf: Betamax's guns (SIG M7, IWI Tavor X95, SIG M250, IWI Negev NG7, HK416 A5, HK MP7A2, Benelli M1014, HK M110A1 CSASS, SIG M18, Glock 17). Gun steel doesn't shred, so they go through the portal whole, and in the garden each comes out of the wormhole as the real gun (Betamax's own models, `src/betamax/`), falling to the grass by the junk heap.
+
+- **Q** picks up the gun you look at (putting down the one you hold), or draws and puts away your own; **Shift+Q** puts it down. **Click** fires (held, for the automatics), the **right button** aims down the sight, **R** reloads. On an iPad the pad has *gun: pick up / draw*, then fire (hold), aim (hold), reload and put away; on a controller L3 picks up, R2 fires, L2 aims, □ reloads.
+- Each gun keeps Betamax's numbers: rate of fire, magazine, spread (more moving, much less aimed), recoil, the shotgun's nine pellets, damage. Its report is synthesized the way Betamax does it (fitted to recordings of real rifles).
+- Firing is hitscan from your eye. A round stops at the first thing on its line: another player, a stone or piece of junk in an open free build (it takes the round's real momentum, about 4 to 9 N·s, and moves), a tree trunk (bark and leaves fly), a hedge or the ground (a puff of dust).
+- **In a room you can shoot each other.** The shooter decides the hit (what you saw is what you hit) and tells whoever it was. A body shot takes the gun's damage off 100, a head shot its head damage (an M7 round: 46, or 200 to the head). At nothing left you go down, and four seconds later you're on your feet at the gate. You heal after four seconds without being hit. *Settings → Garden → Others can shoot me* turns it off for you (their rounds pass through; your gun still works).
+- The guns lying about are part of the garden: saved with it, handed over in a room, kept online.
+
 ## Keeping your garden
 
 Your garden is kept in your browser, and online (`src/worlds.js`, and the `garden-worlds` Cloudflare Worker in `worker/`):

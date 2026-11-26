@@ -24,6 +24,10 @@ const SECTIONS = [
     K('Space', 'hold: press it down'), K('G', 'hold: pass through the other stones'),
     K('H', 'hearting: pour small stone into the middle'), K('N', 'more stone'), K('Backspace', 'undo the last stone'),
     K('P', 'put the stint away, as it stands'), K('Enter', 'twice: finish the stint · what stands is fixed') ] },
+  { id: 'guns', title: 'Guns', note: 'Betamax\'s guns come through the wormhole when the Shred Hole sends them (its Arsenal shelf): they land by the junk heap.', rows: [
+    K('Q', 'pick up the gun you look at (swapping for yours) · draw or put away your own'), K('Shift+Q', 'put it down'),
+    K('click', 'fire (hold, for the automatics)'), K('right button', 'aim'), K('R', 'reload'),
+    K('in a room', 'others can be shot, and so can you: down at nothing left, back at the gate in four seconds (Settings → Garden turns that off for you)') ] },
   { id: 'free', title: 'Free builds (Ultrahand)', note: 'Anywhere off the wall line: build with stone from the heaps and with the Shred Hole\'s junk, as with Ultrahand in Tears of the Kingdom.', rows: [
     K('B', 'away from the wall: start a free build where you stand, or take up the one that is there'),
     K('click', 'lift from the stone heaps, the junk heap, or the build · it hangs where you look · click lets it go'),
@@ -43,6 +47,7 @@ const TOUCH = [
   { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('jump', 'the big button, or a quick flick up on the walking side'),
     K('climb', 'walk into a tree trunk and keep pushing: up the stick climbs, down comes down, sideways goes round · jump lets go'),
     K('rail', 'down the right edge: walk, plant, build, space, me (see yourself), gesture · tap the lit one to come back to walking')] },
+  { id: 'guns', title: 'Guns', note: 'Near a gun by the junk heap, “gun: pick up” takes it; with one in hand the pad has fire (hold), aim (hold), reload and put away. Aim by looking (drag right).', rows: [] },
   { id: 'voids', title: 'Voids', rows: [K('double-tap', 'or “open a void”: a new one ahead of you'), K('tap', 'on a void: evaporate it')] },
   { id: 'plant', title: 'Planting', rows: [K('plant', 'on the rail, then the plant list'), K('tap', 'the ground: plant it there'), K('dig up', 'the plant you look at'), K('done', 'trowel down')] },
   { id: 'space', title: 'The space view', rows: [K('one finger', 'turn the view round the bubble'), K('pinch', 'nearer / farther')] },
@@ -82,7 +87,7 @@ export function createHelp(o) {
     if (pd) {   // a controller is connected: its buttons, from the same table it is read by (gamepad.js)
       const N = pd.names(), M = pd.MAP, rows = k => M[k].map(r => K(N[r[0]] || 'button ' + r[0], r[2]));
       const pads = [{ id: 'pad', title: 'Controller', note: 'Its buttons do what the keys do, by what you are doing.', rows: [K('left stick', 'walk · a lean strolls, half way is the ordinary walk, all the way runs'), K('right stick', 'look'), ...rows('any')], now: true },
-        { id: 'pad-walk', title: 'Controller: walking', rows: rows('walk'), now: now.has('walk') }, { id: 'pad-build', title: 'Controller: building a wall', rows: rows('build'), now: now.has('wall') }, { id: 'pad-free', title: 'Controller: free builds (Ultrahand)', rows: rows('free'), now: now.has('free') },
+        { id: 'pad-walk', title: 'Controller: walking', rows: rows('walk'), now: now.has('walk') }, { id: 'pad-build', title: 'Controller: building a wall', rows: rows('build'), now: now.has('wall') }, { id: 'pad-free', title: 'Controller: free builds (Ultrahand)', rows: rows('free'), now: now.has('free') }, { id: 'pad-armed', title: 'Controller: with a gun', rows: rows('armed'), now: false },
         { id: 'pad-plant', title: 'Controller: planting', rows: rows('plant'), now: now.has('plant') }, { id: 'pad-space', title: 'Controller: the space view', rows: [K('right stick', 'turn the view round the bubble'), K(N[6], N[7], 'farther / nearer'), ...rows('space')], now: now.has('space') }];
       for (const q of pads) if (q.now) now.add(q.id);
       list = pd.used ? pads.concat(list) : list.concat(pads);
