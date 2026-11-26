@@ -1,5 +1,6 @@
-# garden-sphere: Brodie's thinking (Claude Haiku) and his voice (ElevenLabs), for the Garden of Delight. Not deployed by any push:
-# deploy it yourself (wrangler deploy, from this folder), then set the secrets: ANTHROPIC_API_KEY, and for the voice ELEVENLABS_API_KEY.
+# garden-sphere: Brodie's thinking (Claude Haiku) and his voice (ElevenLabs), for the Garden of Delight. Built and deployed by
+# Workers Builds from this repo (root /worker-sphere) on every push. Its keys are secrets, set in the dashboard: ANTHROPIC_API_KEY,
+# and for the voice ELEVENLABS_API_KEY.
 name = "garden-sphere"
 main = "sphere.js"
 compatibility_date = "2026-11-01"
