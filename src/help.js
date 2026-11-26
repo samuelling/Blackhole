@@ -24,9 +24,10 @@ const SECTIONS = [
     K('Space', 'hold: press it down'), K('G', 'hold: pass through the other stones'),
     K('H', 'hearting: pour small stone into the middle'), K('N', 'more stone'), K('Backspace', 'undo the last stone'),
     K('P', 'put the stint away, as it stands'), K('Enter', 'twice: finish the stint · what stands is fixed') ] },
-  { id: 'guns', title: 'Guns', note: 'Betamax\'s guns come through the wormhole when the Shred Hole sends them (its Arsenal shelf): they land by the junk heap.', rows: [
+  { id: 'guns', title: 'Guns', note: 'Betamax\'s guns come through the wormhole when the Shred Hole sends them (its Arsenal shelf): they land by the junk heap. For now there\'s also a crate of them just inside the gate.', rows: [
     K('Q', 'pick up the gun you look at (swapping for yours) · draw or put away your own'), K('Shift+Q', 'put it down'),
     K('click', 'fire (hold, for the automatics)'), K('right button', 'aim'), K('R', 'reload'),
+    K('rounds', 'leave craters and holes and throw real debris; shoot through a plant and it\'s gone (Settings → Garden puts the garden\'s own back); cut through a tree you planted and it falls; lamps can be shot out'),
     K('in a room', 'others can be shot, and so can you: down at nothing left, back at the gate in four seconds (Settings → Garden turns that off for you)') ] },
   { id: 'free', title: 'Free builds (Ultrahand)', note: 'Anywhere off the wall line: build with stone from the heaps and with the Shred Hole\'s junk, as with Ultrahand in Tears of the Kingdom.', rows: [
     K('B', 'away from the wall: start a free build where you stand, or take up the one that is there'),

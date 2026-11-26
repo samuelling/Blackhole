@@ -488,11 +488,13 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   function shoot(Ow, Dw, maxD, momentum) {
     if (!A || !A.physics) return null;
     const o = Ow.clone().applyMatrix4(A.inv), d = Dw.clone().transformDirection(A.inv);
-    const hit = A.physics.world.castRay(new RAPIER.Ray(o, d), maxD, true); if (!hit) return null;
+    const hit = A.physics.world.castRayAndGetNormal(new RAPIER.Ray(o, d), maxD, true); if (!hit) return null;
     const st = A.physics.bodies.get(hit.collider.handle); if (!st || !st.body) return null;
     const t = hit.timeOfImpact, P = { x: o.x + d.x * t, y: o.y + d.y * t, z: o.z + d.z * t };
     if (st.body.isDynamic && st.body.isDynamic()) { st.body.wakeUp(); st.body.applyImpulseAtPoint({ x: d.x * momentum, y: d.y * momentum, z: d.z * momentum }, P, true); }
-    return { d: t };
+    // where it went in (the surface's normal, in the world) and what was hit: its mesh carries the hole
+    const n = hit.normal ? new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z).transformDirection(A.group.matrixWorld) : Dw.clone().negate();
+    return { d: t, n, mesh: st.mesh || null, junk: st.type === 'junk' };
   }
   function look(st, hot) { st.mesh.material = st.type === 'junk' ? (hot ? junkHot : junk.material) : hot ? hotMat(st.type || A.type) : matOf(st.type || A.type, false); }
   // ---------------------------------------------------------------- stone in the heaps and the junk: pointed at, lifted out

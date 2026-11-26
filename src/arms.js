@@ -1,33 +1,50 @@
 // arms.js: guns. They come through the wormhole from the Shred Hole (its Arsenal: Betamax's guns, sent whole), land by the junk
 // heap as the real thing (Betamax's models, src/betamax/), and can be picked up and fired: at the stones and junk of a free build
-// (a round carries real momentum), at the trees and the ground, and, in a room, at each other.
+// (a round carries real momentum), at the trees, the plants, the lamps and the ground, and, in a room, at each other.
+//
+// Holding one: the gun is placed in the frame of your eye (at the hip, or aimed with its sight on your eye), and your suit's own arms
+// hold it (body.js solves them to it every frame): the right glove round the grip with the index finger along the guard, the left
+// under the fore-end. It's the same body and the same hold you see in first person, in the mirror view, and on everyone else.
+// Reloading is Betamax's own choreography, played on those arms: the rifle comes in to the workspace canted, the magazine drops out
+// (a spent one falls to the ground and lies there), the left hand goes to the pouch, seats a fresh one, tugs it, and slaps the bolt
+// catch or racks the handle; the Benelli has its shells thumbed in one at a time. Each step has its own sound.
 //
 // Firing is hitscan from the eye along where you look, with each gun's own numbers from Betamax (rate, magazine, spread, damage,
 // a shotgun's nine pellets), its report synthesized as Betamax does it (fitted to recordings of real rifles), a tracer, a flash at
-// the muzzle and a puff where it lands. In a room: the shooter decides the hit (what you saw is what you hit) and tells whoever it
-// was; a body shot takes the gun's damage off 100, a head shot its head damage. At nothing left you go down, and four seconds later
-// you're back on your feet at the gate. Anyone can turn off being shot (Settings → Garden); their own guns still work.
+// the muzzle and brass flying out of the port. What the round hits shows it, and some of it stays (havoc.js): craters in the ground,
+// holes in wood and stone, debris that bounces and settles. Plants shot through are destroyed (dug up, as a trowel would: "put back"
+// in Settings brings the garden's own back). A planted tree cut through falls, away from you. Lamps shot out go dark until you reload.
+// In a room: the shooter decides the hit (what you saw is what you hit) and tells whoever it was; a body shot takes the gun's damage
+// off 100, a head shot its head damage. At nothing left you go down, and four seconds later you're back on your feet at the gate.
+// Anyone can turn off being shot (Settings → Garden); their own guns still work.
 //
 // Keys: Q picks up the gun you're looking at (swapping for the one you hold), or draws / puts away your own; Shift+Q puts it down.
 // Click fires (held, for the automatics), right button aims, R reloads. For now there's also a crate of the whole arsenal just
 // inside the gate: Q at it takes a gun (the next one each time, the one you held going back in). Touch and the controller have their own buttons.
 import * as THREE from 'three';
 import { WEAPONS, weaponProp } from './betamax/arsenal.js';
-import { reloadDuration } from './betamax/weapons.js';
+import { reloadDuration, evalReload, pathPoint } from './betamax/weapons.js';
 import { synthRifle, synthImpact, mulberry32 } from './betamax/gunsound.js';
+import { createHavoc } from './havoc.js';
 
 export const GUN_IDS = Object.keys(WEAPONS).filter(k => k !== 'm2');
-const KEY = 'gd.arms.v1', REACH = 2.2, HP = 100, MOMENTUM = [4, 7, 9];   // N·s a round carries, by calibre (a shotgun pellet: 1.6)
+const KEY = 'gd.arms.v1', REACH = 2.2, HP = 100, MOMENTUM = [4, 7, 9, 12];   // N·s a round carries, by calibre (a shotgun pellet: 1.6)
 const okW = w => GUN_IDS.includes(w);
 const r3 = v => Math.round(v * 1000) / 1000;
-const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
+const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ'), _m = new THREE.Matrix4();
+const UP = new THREE.Vector3(0, 1, 0);
+const KC = { ground: 'g', water: 'w', hedge: 'h', tree: 't', piece: 's', junk: 'j', lamp: 'l', post: 'm', crate: 'c', plant: 'p', body: 'b' };
+const KIND = Object.fromEntries(Object.entries(KC).map(([k, v]) => [v, k]));
 
 /**
- * o: { scene, camera, heightAt, blocked(x,z), nearBrook(x,z), trees(): [{x,z,r,gy,top}], walling, audio(): {ctx, master}, hint(t,ms),
- *      players(): [{id, x, gy, z, down}], send(m) (to the room, or null), heapSpot(): {x,z}, respawn(), kick(pitch, yaw), canBeShot(): bool, me(): {x,gy,z,yaw,pitch}, selfView(): bool, body }
+ * o: { scene, camera, heightAt, blocked(x,z), trees(): [{x,z,r,gy,top,id?}], walling, audio(): {ctx, master}, hint(t,ms),
+ *      players(): [{id, x, gy, z, down}], send(m) (to the room, or null), heapSpot(): {x,z}, respawn(), kick(pitch, yaw), canBeShot(): bool,
+ *      me(): {x,gy,z,yaw,pitch}, selfView(): bool, body, waterAt(x, z) (the water's surface there, or null), lamps(): [[x, y, z]], breakLamp(i), arborTree(id): {wood, leaves, x, z, gy, H},
+ *      plants: { near(x, z, d), destroy(rec) }, crateSpot() }
  */
 export function createArms(o) {
   const { scene, camera } = o;
+  const havoc = createHavoc({ scene, heightAt: o.heightAt, waterAt: o.waterAt || (() => null), audio: o.audio });
   let own = { seq: 0, lying: [] };   // guns on the ground: [uid, w, x, z, yaw]
   try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && Array.isArray(s.lying)) own = { seq: s.seq | 0, lying: s.lying.filter(okL) }; } catch (e) {}
   function okL(l) { return Array.isArray(l) && typeof l[0] === 'string' && okW(l[1]) && isFinite(l[2]) && isFinite(l[3]); }
@@ -75,20 +92,32 @@ export function createArms(o) {
   redraw();
 
   // ---------------------------------------------------------------- the gun in hand
-  let held = null;   // { w, ud, gun (Object3D, in view), prop (in the hand, seen from outside), mag, reloadAt, nextAt, drawn }
-  let trigger = false, aiming = 0, aimOn = false, recoil = 0, lastShot = 0;
+  let held = null;   // { w, ud, gun (Betamax's model, in the world where your hands hold it), mag, rl (a reload under way), nextAt, drawn }
+  let trigger = false, aiming = 0, aimOn = false, recoil = 0, lastShot = 0, flashT = 0;
+  const flashTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,250,230,1)'); gr.addColorStop(0.25, 'rgba(255,200,110,.9)'); gr.addColorStop(1, 'rgba(255,120,40,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    for (let k = 0; k < 6; k++) { g.save(); g.translate(32, 32); g.rotate(k * Math.PI / 3 + 0.3); g.fillStyle = 'rgba(255,220,150,.7)'; g.beginPath(); g.moveTo(-2, 0); g.lineTo(0, -31); g.lineTo(2, 0); g.fill(); g.restore(); }
+    return new THREE.CanvasTexture(c); })();
+  const flashMat = new THREE.MeshBasicMaterial({ map: flashTex, color: new THREE.Color(4, 2.4, 1.1), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
   function take(w, mag) {
-    if (held) { group.remove(held.gun); group.remove(held.prop); }
-    const gun = WEAPONS[w].build(); gun.traverse(m => { if (m.isMesh) { m.castShadow = false; m.frustumCulled = false; } });
-    const prop = weaponProp(w); const ud = gun.userData;
-    held = { w, ud, gun, prop, mag: mag == null ? ud.magSize || 20 : mag, reloadAt: 0, nextAt: 0, drawn: true, name: WEAPONS[w].name };
-    group.add(gun); group.add(prop); hud();
+    if (held) unhold();
+    const gun = WEAPONS[w].build(), ud = gun.userData; gun.traverse(m => { if (m.isMesh) { m.castShadow = true; m.frustumCulled = false; } });
+    gun.matrixAutoUpdate = false; gun.visible = false;
+    ud.handMag = ud.makeMag ? ud.makeMag() : null; if (ud.handMag) { ud.handMag.visible = false; ud.handMag.traverse(m => { if (m.isMesh) m.frustumCulled = false; }); }
+    ud.chHome = ud.chargeHandle ? ud.chargeHandle.position.z : 0;
+    const s = ud.suppressed ? 0.12 : ud.pistol ? 0.16 : ud.tube ? 0.42 : 0.3;   // the flash: a star across the muzzle and a flame along it (Betamax's sizes)
+    const f1 = new THREE.Mesh(new THREE.PlaneGeometry(s, s), flashMat); f1.position.set(0, 0, (ud.muzzleZ || -0.6) - s * 0.3);
+    const f2 = new THREE.Mesh(new THREE.PlaneGeometry(s * 0.6, s * 1.8), flashMat); f2.rotation.y = Math.PI / 2; f2.position.copy(f1.position);
+    gun.add(f1, f2); f1.visible = f2.visible = false; ud.flash = f1; ud.flash2 = f2;
+    held = { w, ud, gun, mag: mag == null ? ud.magSize || 20 : mag, rl: null, nextAt: 0, drawn: true, name: WEAPONS[w].name };
+    group.add(gun); hud(); foley('tug', 0.4, 1.2);
   }
-  function stow() { if (!held) return; held.drawn = !held.drawn; trigger = false; aimOn = false; hud(); o.hint(held.drawn ? `${held.name} drawn` : `${held.name} put away · Q draws it`, 2000); }
+  function unhold() { if (!held) return; group.remove(held.gun); const hm = held.ud.handMag; if (hm && hm.parent) hm.parent.remove(hm); held = null; trigger = false; aimOn = false; }
+  function stow() { if (!held) return; held.drawn = !held.drawn; held.rl = null; trigger = false; aimOn = false; hud(); foley('tug', 0.35, held.drawn ? 1.2 : 0.9); o.hint(held.drawn ? `${held.name} drawn` : `${held.name} put away · Q draws it`, 2000); }
   function dropHeld() {
     if (!held) return; const me = o.me();
     const l = ['a' + (store.seq++).toString(36) + Math.random().toString(36).slice(2, 5), held.w, r3(me.x - Math.sin(me.yaw) * 1.2), r3(me.z - Math.cos(me.yaw) * 1.2), r3(Math.random() * 6.28)];
-    group.remove(held.gun); group.remove(held.prop); held = null; trigger = false; aimOn = false;
+    unhold();
     store.lying.push(l); layDown(l, false); save(); if (o.send) o.send({ a: 'put', l }); hud();
   }
   function nearest() {
@@ -140,8 +169,19 @@ export function createArms(o) {
     src.connect(g); g.connect(pn); pn.connect(A.master); src.start();
   }
   // each gun's sound numbers, for guns not in hand (someone else's)
-  const CAL = {}, RATE = {}, GAIN = {};
-  for (const w of GUN_IDS) { try { const g = WEAPONS[w].build(); CAL[w] = g.userData.cal; RATE[w] = g.userData.rate; GAIN[w] = g.userData.gainK; } catch (e) {} }
+  const CAL = {}, RATE = {}, GAIN = {}, UD = {};   // (UD: each gun's numbers and points, for the guns in other hands)
+  for (const w of GUN_IDS) { try { const g = WEAPONS[w].build(); UD[w] = g.userData; CAL[w] = g.userData.cal; RATE[w] = g.userData.rate; GAIN[w] = g.userData.gainK; } catch (e) {} }
+  // handling noises, synthesized as Betamax does them: a few short struck, damped partials over a little noise
+  const FOLEY = { magOut: [[0, 0.5, 2400], [0.03, 0.3, 900]], magIn: [[0, 0.9, 1600], [0.012, 0.6, 3800], [0.05, 0.3, 700]], tug: [[0, 0.3, 1200]],
+    bolt: [[0, 1.0, 900], [0.004, 0.8, 4200], [0.03, 0.4, 300]], rack: [[0, 0.7, 2000], [0.09, 1.0, 1000], [0.1, 0.6, 4000]], drop: [[0, 0.5, 400], [0.06, 0.25, 600]], click: [[0, 0.5, 3000], [0.002, 0.3, 6000]] };
+  const fbufs = {};
+  function foley(name, gain = 0.5, rate = 1) {
+    const A = o.audio(); if (!A || !A.ctx || !A.master || !FOLEY[name]) return; const ac = A.ctx, sr = ac.sampleRate;
+    if (!fbufs[name]) { const b = ac.createBuffer(1, Math.floor(0.25 * sr), sr), d = b.getChannelData(0), r = mulberry32(name.length * 131);
+      for (let i = 0; i < d.length; i++) { const t = i / sr; let v = 0; for (const [t0, amp, f] of FOLEY[name]) { const dt = t - t0; if (dt < 0) continue; v += amp * Math.exp(-dt / 0.012) * (Math.sin(2 * Math.PI * f * dt) * 0.6 + (r() * 2 - 1) * 0.5); } d[i] = v * 0.7; }
+      fbufs[name] = b; }
+    const src = ac.createBufferSource(); src.buffer = fbufs[name]; src.playbackRate.value = rate; const g = ac.createGain(); g.gain.value = gain * 0.6; src.connect(g); g.connect(A.master); src.start();
+  }
 
   // ---------------------------------------------------------------- what a shot shows: flash, tracer, puff
   const flash = new THREE.PointLight(0xffc070, 0, 9, 2); group.add(flash);
@@ -190,31 +230,74 @@ export function createArms(o) {
     }
     return best;
   }
+  const felled = new Set(), treeDmg = new Map(), plantDmg = new Map(), lampOut = new Set();
   function hitTrunk(O, D, maxD) {
     let best = null;
     for (const T of o.trees()) {
+      if (T.id != null && felled.has(T.id)) continue;
       const ax = T.x - O.x, az = T.z - O.z, dd = D.x * D.x + D.z * D.z; if (dd < 1e-6) continue;
       const t = (ax * D.x + az * D.z) / dd; if (t < 0 || t > maxD) continue;
       const cx = O.x + D.x * t - T.x, cz = O.z + D.z * t - T.z, h2 = cx * cx + cz * cz, r = T.r; if (h2 > r * r) continue;
       const t0 = t - Math.sqrt((r * r - h2) / dd), y = O.y + D.y * t0 - T.gy;
-      if (y > 0 && y < T.top && (!best || t0 < best)) best = t0;
+      if (y > 0 && y < T.top && (!best || t0 < best.d)) best = { d: t0, kind: 'tree', T, y };
     }
     return best;
   }
   function hitGround(O, D, maxD) {
     let prev = 0;
     for (let t = 0.3; t < maxD; t += t < 20 ? 0.2 : 0.6) {
-      const x = O.x + D.x * t, y = O.y + D.y * t, z = O.z + D.z * t;
+      const x = O.x + D.x * t, y = O.y + D.y * t, z = O.z + D.z * t, wy = o.waterAt ? o.waterAt(x, z) : null;
+      if (wy != null && y < wy && D.y < 0 && o.heightAt(x, z) < wy) { const tw = (wy - O.y) / D.y; return { d: Math.max(0.3, Math.min(t, Math.max(prev, tw))), kind: 'water' }; }
       if (y < o.heightAt(x, z)) { let a = prev, b = t; for (let k = 0; k < 8; k++) { const m = (a + b) / 2; if (O.y + D.y * m < o.heightAt(O.x + D.x * m, O.z + D.z * m)) b = m; else a = m; } return { d: b, kind: 'ground' }; }
-      if (y < o.heightAt(x, z) + 1.4 && o.blocked(x, z)) return { d: t, kind: 'hedge' };
+      if (y < o.heightAt(x, z) + 1.4 && o.blocked(x, z) && wy == null && !(o.notHedge && o.notHedge(x, z)) && !o.trees().some(T => Math.abs(T.x - x) < T.r + 0.8 && Math.abs(T.z - z) < T.r + 0.8) && !(o.lamps && o.lamps().some(L => Math.hypot(L[0] - x, L[2] - z) < 0.6))) return { d: t, kind: 'hedge' };   // (blocked ground that's a hedge: not the rim of the water, a trunk's or a lamp's foot)
       prev = t;
     }
     return null;
   }
+  // the lamp posts: a glass head (a ball, near enough) on an iron post
+  function hitLamp(O, D, maxD) {
+    if (!o.lamps) return null; let best = null;
+    o.lamps().forEach(([x, y, z], i) => {
+      _v.set(x, y, z).sub(O); const tc = _v.dot(D);
+      if (tc > 0 && !lampOut.has(i)) { const d2 = _v.lengthSq() - tc * tc, r = 0.2; if (d2 < r * r) { const t = tc - Math.sqrt(r * r - d2); if (t < maxD && (!best || t < best.d)) best = { d: t, kind: 'lamp', i }; } }
+      const ax = x - O.x, az = z - O.z, dd = D.x * D.x + D.z * D.z; if (dd < 1e-6) return;
+      const t = (ax * D.x + az * D.z) / dd, cx = O.x + D.x * t - x, cz = O.z + D.z * t - z, h2 = cx * cx + cz * cz, r = 0.07;
+      if (t > 0 && h2 < r * r) { const t0 = t - Math.sqrt((r * r - h2) / dd), yy = O.y + D.y * t0; if (yy < y - 0.15 && yy > o.heightAt(x, z) && t0 < maxD && (!best || t0 < best.d)) best = { d: t0, kind: 'post', i, c: [x, z] }; }
+    });
+    return best;
+  }
+  function hitCrate(O, D, maxD) {   // the demo crate: a box, in its own frame
+    if (!crate) return null; const g = crate.g, c = Math.cos(-g.rotation.y), s = Math.sin(-g.rotation.y);
+    const ox = O.x - g.position.x, oz = O.z - g.position.z, lo = [ox * c - oz * s, O.y - g.position.y, ox * s + oz * c], ld = [D.x * c - D.z * s, D.y, D.x * s + D.z * c];
+    const mn = [-0.63, 0, -0.32], mx = [0.63, 0.47, 0.32]; let t0 = 0, t1 = maxD, ax = -1;
+    for (let k = 0; k < 3; k++) { if (Math.abs(ld[k]) < 1e-8) { if (lo[k] < mn[k] || lo[k] > mx[k]) return null; continue; }
+      let a = (mn[k] - lo[k]) / ld[k], b = (mx[k] - lo[k]) / ld[k]; if (a > b) [a, b] = [b, a]; if (a > t0) { t0 = a; ax = k; } t1 = Math.min(t1, b); if (t0 > t1) return null; }
+    if (ax < 0) return null;
+    const nl = [0, 0, 0]; nl[ax] = -Math.sign(ld[ax]); const n = new THREE.Vector3(nl[0], nl[1], nl[2]).applyAxisAngle(UP, g.rotation.y);
+    return { d: t0, kind: 'crate', n };
+  }
+  const groundN = (x, z, out = new THREE.Vector3()) => { const e = 0.15; return out.set(o.heightAt(x - e, z) - o.heightAt(x + e, z), 2 * e, o.heightAt(x, z - e) - o.heightAt(x, z + e)).normalize(); };
+  // how big a round's mark and spray are, by calibre (a pellet much less)
+  const calK = (cal, pellet) => pellet ? 0.35 : [0.8, 1, 1.3, 1.8][cal] || 1;
+  /** What a round does where it lands: the mark, the spray, the sound. (Ours and the others' alike; what it destroys is decided by the shooter.) */
+  function impact(kind, at, n, D, k, mesh, first) {
+    const holeAt = (m, size) => havoc.hole(m, at, n, size, mesh);
+    if (kind === 'ground' || kind === 'plant') {
+      holeAt('soil', 0.08 + 0.09 * k); havoc.spray('soil', at, n, D, null, k); puff(at, 'dust', 4);
+      if (kind === 'plant') { havoc.spray('leaf', at.clone().add(_w.set(0, 0.25, 0)), n, D, 12); havoc.spray('petal', at.clone().add(_w.set(0, 0.35, 0)), n, D, 8); }
+      if (first) havoc.thud('iSand', at);
+    } else if (kind === 'water') { havoc.splash(at, k); if (first) havoc.thud('iWater', at, 0.25); }
+    else if (kind === 'hedge') { havoc.spray('leaf', at, n, D, 16, k); puff(at, 'leaf', 4); if (first) havoc.thud('iSand', at, 0.12, 1.3); }
+    else if (kind === 'tree' || kind === 'crate') { holeAt('wood', 0.03 + 0.03 * k); havoc.spray('wood', at, n, D, null, k); if (kind === 'tree') havoc.spray('bark', at, n, D, null, k); if (first) havoc.thud('iHard', at, 0.2, 0.7); }
+    else if (kind === 'piece' || kind === 'junk') { holeAt(kind === 'junk' ? 'metal' : 'stone', 0.03 + 0.025 * k); havoc.spray('stone', at, n, D, null, k); if (kind === 'junk') havoc.spray('metal', at, n, D, null, k); puff(at, 'spark', 6); puff(at, 'dust', 3); if (first) havoc.thud('iHard', at); }
+    else if (kind === 'post') { holeAt('metal', 0.025 + 0.015 * k); havoc.spray('metal', at, n, D, 5); puff(at, 'spark', 10); if (first) havoc.thud('iHard', at, 0.25, 1.4); }
+    else if (kind === 'lamp') { havoc.spray('glass', at, n, D, 30); havoc.glass(at); puff(at, 'spark', 12); }
+    else if (kind === 'body') puff(at, 'suit', 5);
+  }
   function fire() {
     const h = held, ud = h.ud, now = performance.now() / 1000;
-    if (h.reloadAt) return;
-    if (h.mag <= 0) { reload(); return; }
+    if (h.rl) return;
+    if (h.mag <= 0) { foley('click', 0.5); trigger = false; reload(); return; }
     h.mag--; h.nextAt = now + 60 / (ud.rpm || 600); lastShot = now; hud();
     const O = camera.getWorldPosition(new THREE.Vector3()); camera.getWorldDirection(_d);
     const moving = o.moving ? o.moving() : 0;
@@ -227,44 +310,119 @@ export function createArms(o) {
       D.addScaledVector(_w, Math.cos(a) * r).addScaledVector(_v, Math.sin(a) * r).normalize();
       shots.push(trace(O, D, ud, k === 0));
     }
-    // what the others see and hear: from your muzzle to where each round landed
-    if (o.send) o.send({ a: 'shot', w: h.w, f: [r3(muzzle.x), r3(muzzle.y), r3(muzzle.z)], e: shots.slice(0, 3).map(s => [r3(s.x), r3(s.y), r3(s.z)]) });
-    for (const s of shots.slice(0, 3)) tracer(muzzle, s);
-    flash.position.copy(muzzle); flash.intensity = 6;
+    // what the others see and hear: from your muzzle to where each round landed, and what it landed in
+    if (o.send) o.send({ a: 'shot', w: h.w, f: [r3(muzzle.x), r3(muzzle.y), r3(muzzle.z)], e: shots.slice(0, 4).map(s => [r3(s.at.x), r3(s.at.y), r3(s.at.z), KC[s.kind] || 'g']) });
+    for (const s of shots.slice(0, 3)) tracer(muzzle, s.at);
+    flash.position.copy(muzzle); flash.intensity = 6; flashT = 0.05; if (ud.flash) { ud.flash.rotation.z = Math.random() * 6.28; }
     report(h.w, null, 1);
+    // the brass (a red hull from the Benelli), out of the port to the right
+    { const g = h.gun.matrix, fw = ud.bullpup ? 0.12 : ud.pistol ? -0.02 : -0.06;
+      _o.set(0.03, 0.025, fw).applyMatrix4(g); _v.set(2.2 + Math.random(), 1.4 + Math.random(), 0.6 + Math.random() * 0.6).transformDirection(g).multiplyScalar(2.2 + Math.random());
+      havoc.brass(_o, _v, (ud.cal || 0) >= 1, !!ud.tube); }
     recoil = Math.min(1, recoil + (ud.kick || 0.025) * 6);
     if (o.kick) o.kick((ud.kick || 0.025) * (1 - 0.5 * aiming) * (0.7 + Math.random() * 0.6), (Math.random() - 0.5) * (ud.kick || 0.025) * 0.5);
   }
-  // one round: the nearest of a body, a stone or piece of junk, a trunk, the ground or a hedge
+  // one round: the nearest of a body, a stone or piece of junk, a trunk, a lamp, the crate, the water, the ground or a hedge
   function trace(O, D, ud, first) {
-    const maxD = 400; let d = maxD, what = null;
-    const g = hitGround(O, D, maxD); if (g) { d = g.d; what = g; }
-    const tr = hitTrunk(O, D, d); if (tr != null && tr < d) { d = tr; what = { kind: 'tree' }; }
-    const pc = o.walling && o.walling.shoot ? o.walling.shoot(O, D, d, ((ud.pellets || 1) > 1 ? 1.6 : MOMENTUM[ud.cal] || 7)) : null;
-    if (pc && pc.d < d) { d = pc.d; what = { kind: 'piece' }; }
+    const maxD = 400, pellet = (ud.pellets || 1) > 1, k = calK(ud.cal, pellet), dmg = ud.dmg || 40; let d = maxD, hit = null;
+    const g = hitGround(O, D, maxD); if (g) { d = g.d; hit = g; }
+    const tr = hitTrunk(O, D, d); if (tr && tr.d < d) { d = tr.d; hit = tr; }
+    const lp = hitLamp(O, D, d); if (lp && lp.d < d) { d = lp.d; hit = lp; }
+    const cr = hitCrate(O, D, d); if (cr && cr.d < d) { d = cr.d; hit = cr; }
     let who = null;
-    for (const p of players()) { if (p.down) continue; const b = hitBody(O, D, p, d); if (b && b.d < d) { d = b.d; who = { p, head: b.head }; what = { kind: 'body' }; } }
+    for (const p of players()) { if (p.down) continue; const b = hitBody(O, D, p, d); if (b && b.d < d) { d = b.d; who = { p, head: b.head }; hit = { kind: 'body' }; } }
+    if (!who) { const pc = o.walling && o.walling.shoot ? o.walling.shoot(O, D, d, pellet ? 1.6 : MOMENTUM[ud.cal] || 7) : null; if (pc && pc.d < d) { d = pc.d; hit = { kind: pc.junk ? 'junk' : 'piece', n: pc.n, mesh: pc.mesh }; } }
     const at = O.clone().addScaledVector(D, d);
-    if (who) {
-      const dmg = who.head ? (ud.head || ud.dmg * 3) : ud.dmg; puff(at, 'suit', 5);
-      if (o.send) o.send({ a: 'hit', to: who.p.id, d: Math.round(dmg), h: who.head ? 1 : 0, w: held.w });
-      marker(who.head);
-    } else if (what) {
-      const k = what.kind; puff(at, k === 'piece' ? 'spark' : k === 'tree' ? 'leaf' : 'dust', k === 'piece' ? 8 : 6);
-      if (first) thud(k === 'piece' ? 'iHard' : 'iSand', at);
+    if (!hit) return { at, kind: null };
+    let kind = hit.kind, n = hit.n || null;
+    if (kind === 'ground') {
+      n = groundN(at.x, at.z);
+      // a plant where it lands: the round goes through it; enough of them and it's destroyed
+      const rec = o.plants && o.plants.near(at.x, at.z, pellet ? 0.22 : 0.3);
+      if (rec && !rec.tree) {
+        kind = 'plant'; const key = rec.garden ? 'g' + rec.id : 'o' + rec.id, left = (plantDmg.has(key) ? plantDmg.get(key) : 40 + 40 * Math.min(1, rec.size || 0.5)) - dmg;
+        plantDmg.set(key, left); if (left <= 0) { plantDmg.delete(key); o.plants.destroy(rec); havoc.spray('leaf', at.clone().add(_w.set(0, 0.3, 0)), UP, null, 30); havoc.spray('petal', at.clone().add(_w.set(0, 0.45, 0)), UP, null, 24); }
+      }
     }
-    return at;
+    if (kind === 'tree') {
+      const T = hit.T; n = _w.set(at.x - T.x, 0, at.z - T.z).normalize().clone();
+      if (T.id != null && o.arborTree) {   // one you planted: cut through, it falls (the wood a round takes out goes as the trunk's cross-section)
+        const hp0 = 120 * (T.r / 0.05) ** 2, left = (treeDmg.has(T.id) ? treeDmg.get(T.id) : hp0) - dmg; treeDmg.set(T.id, left);
+        if (left <= 0) fellTree(T, D, true);
+      }
+    }
+    if (kind === 'post') n = _w.set(at.x - hit.c[0], 0, at.z - hit.c[1]).normalize().clone();
+    if (kind === 'lamp' && !lampOut.has(hit.i)) { lampOut.add(hit.i); if (o.breakLamp) o.breakLamp(hit.i); if (o.send) o.send({ a: 'lamp', i: hit.i }); }
+    if (!n) n = D.clone().negate();
+    impact(kind, at, n, D, k, hit.mesh || null, first);
+    if (who) {
+      const dm = who.head ? (ud.head || ud.dmg * 3) : ud.dmg;
+      if (o.send) o.send({ a: 'hit', to: who.p.id, d: Math.round(dm), h: who.head ? 1 : 0, w: held.w });
+      marker(who.head);
+    }
+    return { at, kind };
+  }
+  function fellTree(T, D, mine) {
+    if (felled.has(T.id)) return; felled.add(T.id);
+    const tree = o.arborTree(T.id); if (!tree) return;
+    const foot = new THREE.Vector3(tree.x, tree.gy, tree.z);
+    havoc.fell([tree.wood, tree.leaves].filter(Boolean), foot, D.x, D.z, tree.H, mine ? () => { if (o.plants) o.plants.destroy({ id: T.id, x: tree.x, z: tree.z, tree: true }); } : null);
+    if (mine && o.send) o.send({ a: 'fell', x: r3(tree.x), z: r3(tree.z), dx: r3(D.x), dz: r3(D.z) });
+    if (mine) o.hint('timber!', 2500);
   }
   function muzzleWorld(out) {
     if (!held) return out.copy(camera.position);
     const g = held.gun; g.updateMatrixWorld(); return out.set(0, 0, held.ud.muzzleZ || -0.6).applyMatrix4(g.matrixWorld);
   }
-  function reload() {
-    const h = held; if (!h || h.reloadAt || h.mag >= (h.ud.magSize || 20)) return;
-    let dur = 2.2; try { dur = reloadDuration(h.ud, h.mag > 0) || 2.2; } catch (e) {}
-    h.reloadAt = performance.now() / 1000 + dur; trigger = false; hud('reloading');
-  }
 
+  // ---------------------------------------------------------------- reloading: Betamax's timeline, played on your own arms
+  function reload() {
+    const h = held; if (!h || h.rl || !h.drawn || downUntil) return;
+    const ud = h.ud, size = ud.magSize || 20;
+    if (h.mag >= size + (ud.tube ? 0 : 1) || (ud.tube && h.mag >= size)) return;
+    const tac = h.mag > 0, missing = size - h.mag;
+    let dur = 2.2; try { dur = reloadDuration(ud, tac, missing) || 2.2; } catch (e) {}
+    h.rl = { t: 0, dur, tac, o: { gunOff: new THREE.Vector3(), gunRot: new THREE.Euler(), path: null, magState: 'in', events: [], jolt: 0, seat: 0, missing } };
+    trigger = false; hud('reloading'); if (o.send) o.send({ a: 'rl', tac: tac ? 1 : 0, m: missing });
+  }
+  function reloadEvent(name) {
+    const h = held; if (!h) return; const ud = h.ud;
+    if (name === 'drop') {   // the empty one falls out of the well and lies where it lands
+      foley('magOut', 0.5);
+      if (ud.mag && ud.makeMag) { ud.mag.updateMatrixWorld(true); const m = ud.makeMag(); ud.mag.matrixWorld.decompose(m.position, m.quaternion, m.scale); havoc.prop(m, _v.set((Math.random() - 0.5) * 0.4, -0.8, (Math.random() - 0.5) * 0.4), _w.set(Math.random() * 6 - 3, Math.random() * 4, 2)); }
+    }
+    else if (name === 'magOut') foley('magOut', 0.45); else if (name === 'magIn') foley('magIn', 0.7); else if (name === 'tug') foley('tug', 0.35);
+    else if (name === 'shell') { foley('magIn', 0.45, 1.4); h.mag = Math.min(ud.magSize || 6, h.mag + 1); hud('reloading'); }
+    else if (name === 'bolt') foley('bolt', 0.8); else if (name === 'rack') foley('rack', 0.8);
+  }
+  // where the left hand goes on its way through a reload: points on the gun, or (the pouch, the pocket) about you
+  function lhPoint(ud, name, out) {
+    switch (name) {
+      case 'pouch': out.eye = true; return out.v.set(-0.06, -0.45, -0.2);
+      case 'pocket': out.eye = true; return out.v.set(-0.28, -0.5, -0.06);
+      case 'below': return out.v.copy(ud.magwell || ud.support).add(_w.set(0, -0.13, 0.02));
+      case 'well': return out.v.copy(ud.magwell || ud.support).add(_w.set(0, -0.06, 0));
+      case 'catch': return out.v.copy(ud.boltCatch || ud.support);
+      case 'charge': return out.v.copy(ud.charge || ud.support);
+      case 'chargeBack': return out.v.copy(ud.charge || ud.support).add(_w.set(0, 0, 0.08));
+      default: return out.v.copy(ud.support);
+    }
+  }
+  /** The hold this frame for a body: the gun's place in the eye's frame and the hands' points, through a reload if one is under way. */
+  function holdSpec(ud, spec, aimK, rec, R) {
+    if (!spec) spec = { off: new THREE.Vector3(), rot: new THREE.Euler(), grip: ud.grip || new THREE.Vector3(0.012, -0.095, 0.065), sup: ud.support || new THREE.Vector3(-0.03, -0.05, -0.28), lh: null, _a: { v: new THREE.Vector3(), eye: false }, _b: { v: new THREE.Vector3(), eye: false }, _lh: {} };
+    // at the hip: where the suit's arms (shorter than Betamax's view-model arms) can hold it, the stock against the right of the chest
+    const hipP = ud.pistol ? _o.set(0.05, -0.17, -0.34) : _o.set(0.09, -0.21, -0.26);
+    spec.off.lerpVectors(hipP, _v.set(0, -(ud.sightY || 0.05), -(ud.eyeZ || 0.25)), aimK); spec.off.z += rec * 0.05; spec.off.y -= rec * 0.01;
+    spec.rot.set(rec * 0.12, 0.02 * (1 - aimK), 0); spec.lh = null;
+    if (R && R.o.path) {
+      const ro = R.o; spec.off.add(ro.gunOff); spec.off.z += ro.jolt * 0.02; spec.rot.x += ro.gunRot.x + ro.jolt * 0.04; spec.rot.y += ro.gunRot.y; spec.rot.z += ro.gunRot.z;
+      const [a, b, k] = pathPoint(ro.path, R.t); spec._a.eye = spec._b.eye = false; lhPoint(ud, a, spec._a); lhPoint(ud, b, spec._b);
+      const L = spec._lh; L.a = spec._a.v; L.b = spec._b.v; L.aEye = spec._a.eye; L.bEye = spec._b.eye; L.k = k; spec.lh = L;
+    }
+    return spec;
+  }
+  let mySpec = null;
   // ---------------------------------------------------------------- being shot (in a room)
   let hp = HP, downUntil = 0, hurtAt = -9, hurt = 0;
   function onHit(from, m) {
@@ -295,17 +453,16 @@ export function createArms(o) {
   function hud(state) {
     const on = !!(held && held.drawn) || hp < HP;
     hudEl.style.opacity = on ? 1 : 0;
-    hudEl.innerHTML = (held ? `${held.name}<br><b>${state === 'reloading' || held.reloadAt ? '··' : held.mag}</b> / ${held.ud.magSize || 20}<br>` : '') + `<span class="hp"><i style="width:${hp}%"></i></span>`;
+    hudEl.innerHTML = (held ? `${held.name}<br><b>${(state === 'reloading' || held.rl) && !held.ud.tube ? '··' : held.mag}</b> / ${held.ud.magSize || 20}<br>` : '') + `<span class="hp"><i style="width:${hp}%"></i></span>`;
   }
   let markT = 0; function marker(head) { cross.classList.add('hit'); markT = head ? 0.35 : 0.2; }
 
   // ---------------------------------------------------------------- each frame
-  const hip = new THREE.Vector3(), ads = new THREE.Vector3();
   let hintFor = null;
   function update(dt) {
     const now = performance.now() / 1000;
     // guns falling out of the wormhole's air onto the ground
-    for (const L of lying.values()) if (L.fall) { L.vy -= 4.2 * dt; L.mesh.position.y += L.vy * dt; const floor = L.gy + L.mesh.userData.lift; if (L.mesh.position.y <= floor) { L.mesh.position.y = floor; if (L.vy < -2) thud('iHard', L.mesh.position); L.fall = false; } }
+    for (const L of lying.values()) if (L.fall) { L.vy -= 4.2 * dt; L.mesh.position.y += L.vy * dt; const floor = L.gy + L.mesh.userData.lift; if (L.mesh.position.y <= floor) { L.mesh.position.y = floor; if (L.vy < -2) havoc.thud('iHard', L.mesh.position); L.fall = false; } }
     // the one you could pick up
     const nu = !downUntil && o.free() ? nearest() : null;
     if (nu !== hintFor) { hintFor = nu; if (nu === 'crate') o.hint(`Q · take a gun from the crate (${WEAPONS[crateGun()].name}${held ? `, for the ${held.name}` : ''})`, 3000); else if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
@@ -317,44 +474,59 @@ export function createArms(o) {
     recoil *= Math.exp(-dt * 8);
     // the gun in hand
     const drawn = !!(held && held.drawn && !downUntil && o.free(true));
-    cross.style.opacity = drawn && !o.selfView() ? (1 - aiming * 0.7) : 0;
+    cross.style.opacity = drawn && !o.selfView() && !(held && held.rl) ? (1 - aiming * 0.7) : 0;
     if (held) {
-      const h = held;
-      if (h.reloadAt && now >= h.reloadAt) { h.reloadAt = 0; h.mag = h.ud.magSize || 20; hud(); }
-      aiming += ((drawn && aimOn ? 1 : 0) - aiming) * Math.min(1, dt * 10);
-      if (drawn && trigger && now >= h.nextAt) { fire(); if (!h.ud.auto) trigger = false; }
-      const first = drawn && !o.selfView();
-      h.gun.visible = first; h.prop.visible = drawn && !first;
-      if (first) {
-        // in view: at the hip (Betamax's own place for it) or, aiming, its sight on your eye
-        const ud = h.ud; if (ud.hip && ud.hip.isVector3) hip.copy(ud.hip); else hip.set(ud.pistol ? 0.1 : 0.13, -0.17, ud.pistol ? -0.36 : -0.42);
-        ads.set(0, -(ud.sightY || 0.05), -(ud.eyeZ || 0.25));
-        _v.lerpVectors(hip, ads, aiming); _v.z += recoil * 0.05; _v.y -= recoil * 0.01;
-        h.gun.position.copy(_v).applyQuaternion(camera.quaternion).add(camera.position);
-        _q.setFromAxisAngle(_w.set(1, 0, 0), recoil * 0.12); h.gun.quaternion.copy(camera.quaternion).multiply(_q);
-      } else if (drawn && o.body) {
-        const me = o.me(); o.body.palm(_v); _e.set(me.pitch, me.yaw, 0); h.prop.quaternion.setFromEuler(_e);
-        _w.set(0.012, -0.095, 0.065).applyQuaternion(h.prop.quaternion); h.prop.position.copy(_v).sub(_w);
+      const h = held, ud = h.ud;
+      // the reload's timeline
+      if (h.rl) {
+        const R = h.rl, prev = R.t; R.t += dt; evalReload(ud, R.tac, R.t, R.o);
+        for (const [te, name] of R.o.events) if (prev < te && R.t >= te) reloadEvent(name);
+        if (R.t >= R.dur) { h.mag = ud.tube ? ud.magSize : R.tac ? ud.magSize + 1 : ud.magSize; h.rl = null; hud(); }
       }
-    }
-    if (o.body && o.body.setArmed) o.body.setArmed(drawn && o.selfView());   // (in your own eyes the gun is held in view; your arms stay down out of it)
-    stepFx(dt);
+      aiming += ((drawn && aimOn && !h.rl ? 1 : 0) - aiming) * Math.min(1, dt * 10);
+      if (drawn && trigger && now >= h.nextAt) { fire(); if (!ud.auto) trigger = false; }
+      // the magazine: in the well, in the left hand, or both (a tactical reload)
+      const st = h.rl ? h.rl.o.magState : 'in';
+      if (ud.mag) ud.mag.visible = st === 'in' || st === 'swap';
+      if (ud.handMag) {
+        const hand = o.body && o.body.bones && o.body.bones.hand_L;
+        if (hand && ud.handMag.parent !== hand) { hand.add(ud.handMag); ud.handMag.position.set(-0.05, -0.085, 0.03); ud.handMag.rotation.set(0, 0, Math.PI / 2); }
+        ud.handMag.visible = drawn && (st === 'hand' || st === 'swap');
+      }
+      if (ud.chargeHandle) ud.chargeHandle.position.z = ud.chHome + (h.rl && h.rl.o.jolt > 0.05 && (ud.bullpup || ud.tube) ? 0.08 * h.rl.o.jolt : 0);
+      flashT -= dt; if (ud.flash) ud.flash.visible = ud.flash2.visible = flashT > 0;
+      // held: your body is given the hold for its next frame, and the gun goes where the body holds it this one
+      mySpec = holdSpec(ud, mySpec, aiming, recoil, h.rl);
+      if (o.body && o.body.setArmed) o.body.setArmed(drawn, drawn ? mySpec : null);
+      let placed = false;
+      if (drawn && o.body && o.body.gunWorld) placed = o.body.gunWorld(h.gun.matrix);
+      if (drawn && !placed && !o.body) {   // (no body: in the camera's frame, as Betamax does it)
+        _q.setFromEuler(_e.set(mySpec.rot.x, mySpec.rot.y, mySpec.rot.z, 'XYZ')).premultiply(camera.quaternion);
+        h.gun.matrix.compose(_v.copy(mySpec.off).applyQuaternion(camera.quaternion).add(camera.position), _q, _w.set(1, 1, 1)); placed = true;
+      }
+      h.gun.visible = drawn && placed; h.gun.matrixWorldNeedsUpdate = true;
+    } else if (o.body && o.body.setArmed) o.body.setArmed(false, null);
+    stepOthers(dt);
+    stepFx(dt); havoc.step(dt);
   }
-  // what the others are holding (their bodies), drawn in their hands
-  const theirs = new Map();   // id -> { w, prop }
-  function others(list) {   // list: [{ id, body, w, yaw, pitch, down }]
+  // what the others are holding: their guns in their bodies' hands, reloading when they do
+  const theirs = new Map();   // id -> { w, prop, spec, rl }
+  let othersList = [];
+  function others(list) { othersList = list; }
+  function stepOthers(dt) {
     const seen = new Set();
-    for (const p of list) {
+    for (const p of othersList) {
       seen.add(p.id); let t = theirs.get(p.id);
-      if (!p.w || p.down) { if (t) { group.remove(t.prop); theirs.delete(p.id); } if (p.body.setArmed) p.body.setArmed(false); continue; }
-      if (!t || t.w !== p.w) { if (t) group.remove(t.prop); t = { w: p.w, prop: weaponProp(p.w) }; group.add(t.prop); theirs.set(p.id, t); }
-      if (p.body.setArmed) p.body.setArmed(true);
-      p.body.palm(_v); _e.set(p.pitch || 0, p.yaw || 0, 0); t.prop.quaternion.setFromEuler(_e);
-      _w.set(0.012, -0.095, 0.065).applyQuaternion(t.prop.quaternion); t.prop.position.copy(_v).sub(_w); t.prop.visible = p.body.root.visible;
+      if (!p.w || p.down || !UD[p.w]) { if (t) { group.remove(t.prop); theirs.delete(p.id); } if (p.body && p.body.setArmed) p.body.setArmed(false, null); continue; }
+      if (!t || t.w !== p.w) { if (t) group.remove(t.prop); t = { w: p.w, prop: weaponProp(p.w), spec: null, rl: null }; t.prop.matrixAutoUpdate = false; group.add(t.prop); theirs.set(p.id, t); }
+      const ud = UD[p.w];
+      if (t.rl) { const R = t.rl; R.t += dt; try { evalReload(ud, R.tac, R.t, R.o); } catch (e) { t.rl = null; } if (t.rl && R.t >= R.dur) t.rl = null; }
+      t.spec = holdSpec(ud, t.spec, 0, 0, t.rl);
+      if (p.body.setArmed) p.body.setArmed(true, t.spec);
+      const ok = p.body.gunWorld && p.body.gunWorld(t.prop.matrix); t.prop.matrixWorldNeedsUpdate = true; t.prop.visible = !!ok && p.body.root.visible;
     }
     for (const [id, t] of theirs) if (!seen.has(id)) { group.remove(t.prop); theirs.delete(id); }
   }
-
   // ---------------------------------------------------------------- input
   function key(code, down, shift) {
     if (code === 'KeyQ' && down) {
@@ -390,15 +562,26 @@ export function createArms(o) {
     else if (m.a === 'take') { const i = store.lying.findIndex(l => l[0] === m.u); if (i >= 0) { store.lying.splice(i, 1); const L = lying.get(m.u); if (L) { group.remove(L.mesh); lying.delete(m.u); } save(); } }
     else if (m.a === 'shot' && okW(m.w) && Array.isArray(m.f)) {
       const f = new THREE.Vector3().fromArray(m.f); report(m.w, f, 1); flash.position.copy(f); flash.intensity = 4;
-      for (const e of (Array.isArray(m.e) ? m.e : []).slice(0, 3)) { if (!Array.isArray(e)) continue; const b = new THREE.Vector3().fromArray(e); tracer(f, b); puff(b, 'dust', 3); }
+      const ud = UD[m.w] || {}, k = calK(ud.cal, (ud.pellets || 1) > 1);
+      (Array.isArray(m.e) ? m.e : []).slice(0, 4).forEach((e, i) => {
+        if (!Array.isArray(e) || !e.slice(0, 3).every(isFinite)) return; const b = new THREE.Vector3(+e[0], +e[1], +e[2]), kind = KIND[e[3]] || 'ground';
+        if (i < 3) tracer(f, b); const D = b.clone().sub(f).normalize();
+        let n = D.clone().negate();
+        if (kind === 'ground' || kind === 'plant') n = groundN(b.x, b.z);
+        else if (kind === 'tree') { let best = null, bd = 3; for (const T of o.trees()) { const q = Math.hypot(T.x - b.x, T.z - b.z); if (q < bd) { bd = q; best = T; } } if (best) n.set(b.x - best.x, 0, b.z - best.z).normalize(); }
+        impact(kind, b, n, D, k, null, i === 0);
+      });
     }
     else if (m.a === 'hit' && m.to === (o.myId ? o.myId() : '')) onHit(from, m);
     else if (m.a === 'down') { if (o.onDown) o.onDown(from, m.by); }
+    else if (m.a === 'rl') { const t = theirs.get(from); if (t && UD[t.w]) { const ud = UD[t.w], tac = !!m.tac, missing = Math.max(1, Math.min(60, +m.m || 1)); let dur = 2.2; try { dur = reloadDuration(ud, tac, missing); } catch (e) {} t.rl = { t: 0, dur, tac, o: { gunOff: new THREE.Vector3(), gunRot: new THREE.Euler(), path: null, magState: 'in', events: [], jolt: 0, seat: 0, missing } }; } }
+    else if (m.a === 'lamp' && Number.isInteger(m.i) && m.i >= 0 && m.i < 64 && !lampOut.has(m.i)) { lampOut.add(m.i); if (o.breakLamp) o.breakLamp(m.i); const L = o.lamps && o.lamps()[m.i]; if (L) impact('lamp', new THREE.Vector3(L[0], L[1], L[2]), UP.clone(), UP.clone().negate(), 1, null, false); }
+    else if (m.a === 'fell' && [m.x, m.z, m.dx, m.dz].every(isFinite)) { let best = null, bd = 0.3; for (const T of o.trees()) { if (T.id == null) continue; const q = Math.hypot(T.x - m.x, T.z - m.z); if (q < bd) { bd = q; best = T; } } if (best) fellTree(best, new THREE.Vector3(+m.dx, 0, +m.dz), false); }
   }
   return {
     update, others, key, mouse, arrive, onMsg,
     get held() { return held && held.drawn ? held.w : ''; }, get down() { return !!downUntil; }, get hp() { return hp; }, get aiming() { return aiming; },
-    get armed() { return !!(held && held.drawn); }, has: () => !!held,
+    get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; },
     /** How much the view narrows, aiming: 1 at the hip, the gun's own sight field (Betamax's adsFov, of 70°) aimed. */
     get zoom() { return held ? 1 + ((held.ud.adsFov || 55) / 70 - 1) * aiming : 1; },
     net: {
@@ -411,5 +594,6 @@ export function createArms(o) {
     lyingCount: () => lying.size,
     /** The demo crate by the gate (tests): where it is, and what Q would give from it. */
     get crate() { return crate && { x: crate.x, z: crate.z, next: crateGun() }; }, near: () => nearest(),
+    havoc, get gun() { return held && held.gun; }, reload, trace: (O, D) => held && trace(O, D, held.ud, true), lampsOut: () => [...lampOut], felled: () => [...felled],
   };
 }

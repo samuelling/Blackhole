@@ -194,6 +194,65 @@ export function createBody({ model, U, COMMON }) {
   // working at the wall: the left forearm comes up with its console, the right hand points at the stone the suit is lifting
   let workOn = 0, work = 0; const workAim = v3(), wAim = v3(); let hasAim = false;
   let armedOn = 0, armed = 0;   // holding a gun (arms.js): both arms up to it, along where you look
+  // The gun is placed where arms.js wants it in the frame of your eye (the camera: at the hip, aimed, kicked back by a shot, tilted
+  // through a reload), and then held: the right glove round the pistol grip, thumb up it, the left cupping the fore-end with its
+  // fingers round the far side (or, reloading, wherever the reload takes it: the pouch, the mag well, the charging handle). Each arm is
+  // two bones solved to its wrist, the elbow hanging toward a pole (the right out and down, the left down and in); the forearm turns
+  // with the hand; the torso blades a little into the gun and the left shoulder comes forward, as it does on a rifle. A grip the arm
+  // can't reach slides the left hand back along the fore-end rather than letting it float.
+  let gunSpec = null, gunOk = false; const gunM = new THREE.Matrix4(), gunShort = { L: 0, R: 0 };
+  const gP = v3(), gQ = new THREE.Quaternion(), eQ = new THREE.Quaternion(), eP = v3(), rQi = new THREE.Quaternion(), lQ = new THREE.Quaternion(), lP = v3(), gF = v3(), gU = v3(), gR = v3(),
+    xh = v3(), yh = v3(), zh = v3(), palm = v3(), pa = v3(), pb = v3(), qU = new THREE.Quaternion(), qH = new THREE.Quaternion(), qX = new THREE.Quaternion(), eE = new THREE.Euler(0, 0, 0, 'YXZ'), ONE = v3(1, 1, 1), ptmp = v3();
+  function armTo(sd, palmT, pl, w) {   // xh, yh, zh: the hand's axes; palmT: where its palm goes; pl: the elbow's pole
+    const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd], u = armLen.u, l = armLen.l;
+    T.copy(palmT).addScaledVector(yh, 0.09).addScaledVector(zh, -0.02);                    // the wrist, back up the hand from the palm
+    S.copy(up.position).applyQuaternion(B.torso.quaternion).add(B.torso.position).applyQuaternion(qP).add(B.pelvis.position);
+    dir.subVectors(T, S); let D = dir.length(); const Dm = u + l - 0.004; gunShort[sd] = Math.max(0, D - Dm); if (D > Dm) { dir.multiplyScalar(Dm / D); T.addVectors(S, dir); D = Dm; } dir.divideScalar(Math.max(D, 1e-4));
+    kd.copy(pl).addScaledVector(dir, -pl.dot(dir)).normalize();
+    const ca = Math.max(-1, Math.min(1, (u * u + D * D - l * l) / (2 * u * D))), sa = Math.sqrt(Math.max(0, 1 - ca * ca));
+    K.copy(S).addScaledVector(dir, u * ca).addScaledVector(kd, u * sa);
+    by.subVectors(S, K).normalize(); bx.crossVectors(by, kd).normalize(); bz.crossVectors(bx, by); qT.setFromRotationMatrix(M.makeBasis(bx, by, bz));
+    q.copy(qI).multiply(qT); up.quaternion.slerp(q, w);
+    // the forearm: elbow to wrist, hinged the way the upper arm is (its own turn is taken up at the wrist)
+    by.subVectors(K, T).normalize(); bx.addScaledVector(by, -bx.dot(by)).normalize(); bz.crossVectors(bx, by); qS.setFromRotationMatrix(M.makeBasis(bx, by, bz));
+    qU.copy(qTW).multiply(up.quaternion); q.copy(qU).invert().multiply(qS); lo.quaternion.slerp(q, w);
+    qH.setFromRotationMatrix(M.makeBasis(xh, yh, zh)); q.copy(qU).multiply(lo.quaternion).invert().multiply(qH); hd.quaternion.slerp(q, w);
+  }
+  function solveGun(w, s, bobNow) {
+    const G = gunSpec;
+    // the eye in the world (exactly where the camera is put), and the gun from it
+    eQ.setFromEuler(eE.set(s.pitch || 0, s.yaw || 0, 0, 'YXZ')); eP.set(s.x, (s.gy || 0) + EYE.y + bobNow, s.z);
+    gQ.setFromEuler(eE.set(G.rot.x, G.rot.y, G.rot.z, 'XYZ')).premultiply(eQ); gP.copy(G.off).applyQuaternion(eQ).add(eP);
+    gunM.compose(gP, gQ, ONE); gunOk = true;
+    // the same in the body's own frame (as it finally stands this frame)
+    rQi.setFromAxisAngle(UPY, -root.rotation.y); lP.copy(gP).sub(root.position).applyQuaternion(rQi); lQ.copy(rQi).multiply(gQ);
+    gR.set(1, 0, 0).applyQuaternion(lQ); gU.set(0, 1, 0).applyQuaternion(lQ); gF.set(0, 0, -1).applyQuaternion(lQ);
+    const onGun = (v, out) => out.copy(v).applyQuaternion(lQ).add(lP);
+    const onEye = (v, out) => out.copy(v).applyQuaternion(eQ).add(eP).sub(root.position).applyQuaternion(rQi);
+    // bladed: the torso turns a little to the right, the head back the other way; the left shoulder comes forward
+    // a gun held is held steady: the spine comes upright out of whatever the idle was doing (a slouch, a look at the feet)
+    const tor = B.torso, tw = 0.42 * w; qP.copy(B.pelvis.quaternion); qTW.copy(qP).multiply(tor.quaternion);
+    ptmp.set(0, 1, 0).applyQuaternion(qTW); qX.setFromUnitVectors(ptmp, UP); qH.identity().slerp(qX, 0.85 * w); qTW.premultiply(qH); tor.quaternion.copy(qP).invert().multiply(qTW);
+    // bladed into it: the torso turned a little to the right (the head turned back), the left shoulder forward
+    tor.quaternion.multiply(qX.setFromAxisAngle(UP, -tw)); B.head.quaternion.premultiply(qX.setFromAxisAngle(UP, tw));
+    B.armU_L.position.copy(rest.armU_L); B.armU_L.position.z += 0.07 * w; B.armU_L.position.y += 0.01 * w; B.armU_R.position.copy(rest.armU_R); B.armU_R.position.z += 0.015 * w;
+    qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+    // right: the palm against the grip's right side, thumb up it, fingers round its front
+    xh.copy(gR).negate(); zh.copy(gU).addScaledVector(gF, 0.35); zh.addScaledVector(xh, -zh.dot(xh)).normalize(); yh.crossVectors(zh, xh);
+    onGun(G.grip, palm).addScaledVector(xh, -0.03);
+    armTo('R', palm, pole.copy(gR).multiplyScalar(0.8).addScaledVector(gU, -1).addScaledVector(gF, -0.2), w);
+    // left: palm up under the fore-end (or along the reload's path), fingers round to the right, thumb along the barrel
+    xh.copy(gU).negate(); zh.copy(gF); yh.crossVectors(zh, xh);
+    const lh = G.lh; let pt;
+    if (lh) { (lh.aEye ? onEye : onGun)(lh.a, pa); (lh.bEye ? onEye : onGun)(lh.b, pb); pt = pa.lerp(pb, lh.k); }
+    else pt = onGun(G.sup, pa);
+    palm.copy(pt).addScaledVector(gU, -0.012);
+    if (!lh) {   // out of reach: slide back along the fore-end, toward the mag well, until it isn't
+      S.copy(B.armU_L.position).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(qP).add(B.pelvis.position);
+      for (let k = 0, slid = 0; k < 6; k++) { const d = ptmp.copy(palm).addScaledVector(yh, 0.09).sub(S).length() - (armLen.u + armLen.l - 0.02); if (d <= 0 || slid > 0.16) break; const st = Math.min(d * 1.3, 0.16 - slid); palm.addScaledVector(gF, -st); slid += st; }
+    }
+    armTo('L', palm, pole.set(0, 0, 0).addScaledVector(gU, -1).addScaledVector(gR, -0.35).addScaledVector(gF, -0.1), w);
+  }
   const qTW = new THREE.Quaternion(), S = v3(), T = v3(), E = v3(), nd = v3(), md = v3(), fw = v3(), upv = v3();
   const PHI = 0.733, CP = Math.cos(PHI), SP = Math.sin(PHI);                       // the wrist display faces 42 degrees round the forearm from its front
   // the console: a pane of light the wrist display throws up over the forearm, lettered along the arm
@@ -442,23 +501,11 @@ export function createBody({ model, U, COMMON }) {
         lo.rotation.x = lerp(lo.rotation.x, -0.28, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.55, w * (hasAim ? 1 : 0.4));
       }
     }
-    // holding a gun: the right hand out along the view, at the shoulder's height; the left reaching under the fore-end
+    // holding a gun: the arms are solved to it at the very end, once the body has settled where it stands (solveGun, below)
     armed += (armedOn - armed) * Math.min(1, dt * 8);
-    if (armed > 0.002 && work < 0.98) {
-      const w = armed * armed * (3 - 2 * armed) * (1 - work), pe = Math.max(-1.0, Math.min(0.6, s.pitch));
-      qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
-      E.set(0, EYE.y + bob, back); fw.set(0, Math.sin(pe), Math.cos(pe));
-      for (const sd of ['R', 'L']) {
-        const up = B['armU_' + sd], lo = B['armL_' + sd], hd = B['hand_' + sd];
-        S.copy(up.position).applyQuaternion(tor.quaternion).add(tor.position).applyQuaternion(qP).add(pel.position);
-        aim.copy(E).addScaledVector(fw, sd === 'R' ? 0.55 : 0.8); aim.y -= 0.32; aim.x += sd === 'R' ? -0.1 : -0.06;
-        tmp.subVectors(aim, S).normalize(); q.setFromUnitVectors(DOWN, tmp); q.premultiply(qI); up.quaternion.slerp(q, w);
-        lo.rotation.x = lerp(lo.rotation.x, sd === 'R' ? -0.35 : -0.15, w); lo.rotation.z = lerp(lo.rotation.z, 0, w); hd.rotation.x = lerp(hd.rotation.x, -0.1, w);
-      }
-    }
     // the hands, last: gestures, springs and their own inertia on top of the arms' pose
     turnKick *= Math.exp(-dt * 5);
-    hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point }, root);
+    hands.update(dt, s.t || nowT, { move, run, phase: psi, reach: g, reachAge: reachT < 0 ? 9 : s.t - reachT, work, gesture: Object.assign({}, gesture, { turn: turnKick }), point, armed: gunSpec ? armed * (1 - work) : 0 }, root);
     // head: on its neck, nodding with your gaze. You never see it (uGhost), but your shadow has it.
     if (capOn) { B.head.quaternion.identity().slerp(headQ, neck); B.head.quaternion.multiply(qA.setFromEuler(eul.set(-s.pitch * 0.55 * neck, 0, 0))); }
     else B.head.rotation.set((-s.pitch * 0.55 - tor.rotation.x * 0.5) * neck, 0, 0);
@@ -474,6 +521,7 @@ export function createBody({ model, U, COMMON }) {
     hp.x -= rest.pelvis.x + rest.torso.x + rest.head.x; hp.z -= rest.pelvis.z + rest.torso.z + rest.head.z; hp.y = 0;
     const hl = hp.length(), HL = 0.24; if (hl > HL) hp.multiplyScalar(HL / hl);
     hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
+    if (gunSpec && armed > 0.002 && work < 0.98) solveGun(armed * armed * (3 - 2 * armed) * (1 - work), s, bob); else gunOk = false;
     return bob;
   }
 
@@ -506,8 +554,14 @@ export function createBody({ model, U, COMMON }) {
     setEnabled(v) { enabled = !!v; root.visible = enabled; },
     /** on: working at the wall (console up, right hand out). aim: the world point the right hand points at, or null for where you look. */
     setWork(on, aim) { workOn = on ? 1 : 0; hasAim = !!aim; if (aim) wAim.copy(aim); },
-    /** Holding a gun (arms.js): arms up to it along the view. */
-    setArmed(on) { armedOn = on ? 1 : 0; },
+    /** Holding a gun (arms.js). spec, each frame it's held: { off (m, in the eye's frame: x right, y up, z back), rot (Euler, the gun's
+     *  own tilt), grip, sup (points on the gun, its own frame: -z forward), lh: null, or the left hand's way through a reload { a, b, k,
+     *  aEye, bEye } (a to b by k; each point on the gun, or in the eye's frame if aEye / bEye) }. Off: null. */
+    setArmed(on, spec) { armedOn = on ? 1 : 0; if (spec) gunSpec = spec; else if (!on && armed < 0.01) gunSpec = null; },
+    /** Where the held gun is this frame (world): false if it isn't held. */
+    gunWorld(out) { if (!gunOk) return false; out.copy(gunM); return true; },
+    /** How far each arm fell short of its hold this frame (m), for tests. */
+    get gunShort() { return gunShort; }, get armedW() { return armed; },
     /** What the hands are doing at the wall: { held, effort, hover, press, placing, ghost }; turn(sign) when the stone in hand is turned; point(0..1) aims a finger. */
     setGesture(g) { gesture = g || {}; }, turn(sign) { turnKick = Math.max(-0.5, Math.min(0.5, turnKick + 0.22 * sign)); }, point(v) { point += (v - point) * 0.2; },
     get hands() { return hands; },

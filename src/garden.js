@@ -1106,13 +1106,13 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
     }
   }
   // scanned props: lamp posts, the iron gate, a bench, and a stone cat on the pool rim
-  const lampHeads = [];
+  const lampHeads = [], lampObjs = [];   // (lampObjs: each post's model, for a lamp shot out)
   {
     const adopt = (model, tweak) => model.traverse(o => { if (!o.isMesh) return; const s = o.material, p = { map: s.map, normalMap: s.normalMap, roughnessMap: s.roughnessMap, metalnessMap: s.metalnessMap, roughness: s.roughness, metalness: s.metalness, color: s.color, side: s.side };
       const extra = tweak ? tweak(s, p) : null; o.material = P.std(Object.assign(p, extra || {}), { key: 'gltf' + s.name }); o.castShadow = !o.material.transparent; o.receiveShadow = true; });
     const lamp = assets.models.street_lamp_01, LAMP_H = 3.3, lk = LAMP_H / 3.87;
     adopt(lamp, s => /glass/.test(s.name) ? { transparent: true, opacity: 0.22, roughness: 0.08, metalness: 0, depthWrite: false } : /bulb/.test(s.name) ? { emissive: new THREE.Color(1, 0.72, 0.4), emissiveIntensity: 6, map: null } : null);
-    for (const [x, z] of layout.lamps) { const m = lamp.clone(); m.scale.setScalar(lk); m.position.set(x, 0, z); m.rotation.y = Math.atan2(x, z); scene.add(m); block(x, z, 0.3); aoBlob(x, z, 0.7, 0.55); lampHeads.push([x, 3.27 * lk, z]); }
+    for (const [x, z] of layout.lamps) { const m = lamp.clone(); m.scale.setScalar(lk); m.position.set(x, 0, z); m.rotation.y = Math.atan2(x, z); scene.add(m); block(x, z, 0.3); aoBlob(x, z, 0.7, 0.55); lampHeads.push([x, 3.27 * lk, z]); lampObjs.push(m); }
     if (ironParts.gate_left) { for (const n of ['gate_left', 'gate_right', 'overthrow']) { const m = new THREE.Mesh(ironParts[n], metalMat); m.position.set(layout.gate.x, 0, layout.gate.z); m.castShadow = m.receiveShadow = true; scene.add(m); } }
     else if (assets.models.large_iron_gate) { const gate = assets.models.large_iron_gate; adopt(gate); const k = (layout.gate.hw * 2 + 0.04) / 2.96; gate.scale.setScalar(k); gate.position.set(layout.gate.x, 0, layout.gate.z); scene.add(gate); }
     for (let x = -layout.gate.hw; x <= layout.gate.hw; x += 0.25) block(x, layout.gate.z, 0.3);
@@ -1661,7 +1661,10 @@ vColor = mix(vColor, vec3(0.3, 0.26, 0.1) * (0.7 + 0.5 * r1), (gmead0 * 0.55 + m
   }
   /** Where the plants of one species stand ([x, z, pid]), nearest a point first: for tests and screenshots. */
   const plantsOf = (k, x = 0, z = 0) => PT.k.map((kk, i) => [kk, PT.x[i], PT.z[i], i]).filter(r => r[0] === k && !PT.gone[r[3]]).map(r => r.slice(1)).sort((a, b) => (a[0] - x) ** 2 + (a[1] - z) ** 2 - (b[0] - x) ** 2 - (b[1] - z) ** 2);
-  return { plantsOf, plantModels, update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook,
+  // a lamp shot out (arms.js): the glass gone, the bulb dark
+  const darkBulb = new THREE.MeshStandardMaterial({ color: 0x3a3632, roughness: 0.6, metalness: 0.2 });
+  function breakLamp(i) { const m = lampObjs[i]; if (!m) return false; m.traverse(o => { if (!o.isMesh) return; const M = o.material; if (M.transparent && M.opacity < 0.5) o.visible = false; else if (M.emissive && M.emissiveIntensity > 1 && M.emissive.r + M.emissive.g > 0.5) o.material = darkBulb; }); return true; }   // (the glass is the see-through part, the bulb the glowing one)
+  return { breakLamp, plantsOf, plantModels, update, preRender, blocked, setExtraBlocked: f => { extraBlocked = f; }, P, block: blockWall, blockRound: blockFar, clearWall, patchFrag: P.fragOnly, planting, plantCount, WATER_Y, seasons, setLawnSeason, lampHeads, grass, setReflScale: k => { reflScale = k; }, setAutumn, autumn: () => autumn, trees: TREES, leafFall, brook,
     get arbor() { return arbor; },
     /** The trunk nearest a point within reach of its bark, for climbing: { x, z, gy, top (m above its ground), r(y) (radius at a height) }. */
     trunkNear(x, z, reach = 0.7) {

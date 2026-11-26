@@ -142,5 +142,7 @@ export function createPlanter({ scene, camera, garden, heightAt, hint, lock, unl
     get armed() { return armed; }, get open() { return open; }, get count() { return P.count; },
     clear() { P.clear(); if (net) net.send({ p: 'clear' }); arm(null); save(); draw(); },
     /** Put back every one of the garden's own plants you dug up. */
-    undig() { const n = P.undigAll(); if (net) net.send({ p: 'undig' }); save(); return n; } };
+    undig() { const n = P.undigAll(); if (net) net.send({ p: 'undig' }); save(); return n; },
+    /** A plant (or a planted tree) destroyed by something else (a gun, arms.js): gone as if dug up, told to the room, kept. rec: as near() / nearAny() give. */
+    lose(rec) { if (!rec || !P.digUp(rec.id)) return false; if (net) net.send(rec.garden ? { p: 'gdig', d: [rec.id, rec.k, Math.round(rec.x * 100) / 100, Math.round(rec.z * 100) / 100] } : { p: 'dig', x: rec.x, z: rec.z }); dirty = true; saveAt = performance.now() + 1500; draw(); return true; } };
 }

@@ -158,7 +158,9 @@ const LM = LITE ? 1024 : 2048;
 const lmCanvas = document.createElement('canvas'); lmCanvas.width = lmCanvas.height = LM;
 const lm = lmCanvas.getContext('2d'); lm.fillStyle = '#000'; lm.fillRect(0, 0, LM, LM);
 lm.globalCompositeOperation = 'lighter';
-function splat(x, z, r, c, a) {
+const SPLATS = []; let splatTag = null;   // every pool drawn, so one can be taken out again (a lamp shot out): [x, z, r, c, a, tag]
+function splat(x, z, r, c, a, replay) {
+  if (!replay) SPLATS.push([x, z, r, c, a, splatTag]);
   const px = (x - MAP.x0) / MAP.s * LM, pz = (z - MAP.z0) / MAP.s * LM, pr = Math.max(1.5, r / MAP.s * LM);
   const m = Math.max(c[0], c[1], c[2], 1e-3);
   const col = `${(c[0] / m * 255) | 0},${(c[1] / m * 255) | 0},${(c[2] / m * 255) | 0}`;
@@ -182,7 +184,7 @@ const layout = makeLayout();
 const { loopCurve, distToPath, loopLen } = layout;
 const METAL = [];   // [a, b, radius] — drawn as dark metal tubes by the garden
 const metal = (a, b, r) => METAL.push([a, b, r]);
-const LANTERNS = [];   // [x, z, colour] — the garden stands a lantern at each
+const LANTERNS = [], LAMP_LIGHT = [];   // [x, z, colour] — the garden stands a lantern at each; (LAMP_LIGHT: each lamp post's light, its index among the lights)
 const BULBS = [];   // [x, y, z, colour] — small glass bulbs under the brightest point lights
 const bulb = (x, y, z, c, size = 0.26, b = 1.5) => { light(x, y, z, c, size, b); BULBS.push([x, y, z, c]); };
 
@@ -217,7 +219,7 @@ const bulb = (x, y, z, c, size = 0.26, b = 1.5) => { light(x, y, z, c, size, b);
     lantern(s.x - s.ox * 1.72, s.z - s.oz * 1.72, i % 5 === 0 ? P.gold : P.warm);   // on the lawn side of the walk
   }
   for (const s of [-1, 1]) for (let z = layout.canal.z0 + 0.2; z <= layout.canal.z1; z += 3.2) lantern(s * 3.3, z, P.ice);
-  for (const [x, z] of layout.lamps) { light(x, 2.79, z, P.warm, 0.75, 2.0); splat(x, z, 6.5, P.warm, 0.5); splat(x, z, 2.2, P.gold, 0.35); }   // heads of the cast-iron lamp posts
+  layout.lamps.forEach(([x, z], i) => { splatTag = 'lamp' + i; LAMP_LIGHT.push(LS.length); light(x, 2.79, z, P.warm, 0.75, 2.0); splat(x, z, 6.5, P.warm, 0.5); splat(x, z, 2.2, P.gold, 0.35); splatTag = null; });   // heads of the cast-iron lamp posts
 }
 
 // ------------------------------------------------------------------ fields of light stalks
@@ -457,13 +459,14 @@ const globeMat = new THREE.ShaderMaterial({
 });
 
 // ------------------------------------------------------------------ build meshes
+let lightPts = null;
 {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(LP, 3));
   g.setAttribute('aColor', new THREE.Float32BufferAttribute(LC, 3));
   g.setAttribute('aSize', new THREE.Float32BufferAttribute(LS, 1));
   g.setAttribute('aSeed', new THREE.Float32BufferAttribute(LSeed, 1));
-  const pts = new THREE.Points(g, pointsMat); pts.frustumCulled = false; pts.renderOrder = 2; scene.add(pts);
+  const pts = new THREE.Points(g, pointsMat); pts.frustumCulled = false; pts.renderOrder = 2; scene.add(pts); lightPts = pts;
 }
 {
   const im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 28, 18), globeMat, globes.length);
@@ -1695,7 +1698,12 @@ drawer = createDrawer({
 { let trunkList = null;
   arms = createArms({ scene, camera, heightAt, blocked: (x, z) => garden.blocked(x, z), walling, body,
     trees: () => { if (!trunkList) trunkList = garden.trees.map(T => ({ x: T.x, z: T.z, r: T.r, gy: T.gy, top: T.cy + T.B }));
-      const mine = garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, r: t.S.r, gy: t.gy, top: t.H })) : []; return mine.length ? trunkList.concat(mine) : trunkList; },
+      const mine = garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, r: t.S.r, gy: t.gy, top: t.H, id: t.id })) : []; return mine.length ? trunkList.concat(mine) : trunkList; },
+    arborTree: id => { const t = garden.arbor && garden.arbor.trees.find(t => t.id === id); return t && { wood: t.wood, leaves: t.leaves, x: t.x, z: t.z, gy: t.gy, H: t.H }; },
+    plants: { near: (x, z, d) => garden.planting.nearAny(x, z, d), destroy: rec => planter.lose(rec) },
+    waterAt: (x, z) => layout.pools.some(p => Math.hypot(x - p.x, z - p.z) < p.r) || (Math.abs(x) < layout.canal.hw && z > layout.canal.z0 && z < layout.canal.z1) ? garden.WATER_Y : null,
+    notHedge: (x, z) => layout.pools.some(p => Math.hypot(x - p.x, z - p.z) < p.r + 1.2) || (Math.abs(x) < layout.canal.hw + 1.2 && z > layout.canal.z0 - 1.2 && z < layout.canal.z1 + 1.2),
+    lamps: () => garden.lampHeads, breakLamp: i => breakLamp(i),
     audio: () => A, hint: (t, ms) => setHint(t, ms), players: () => window.__fakePlayers || (multi && multi.inRoom ? multi.players() : []),   // (__fakePlayers, __sent: tests)
     send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '',
     heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }), crateSpot: QS.has('nocrate') ? null : () => ({ x: layout.gate.x + 1.9, z: layout.start.z - 2.3, yaw: 0.35 }),   // (the demo crate, just inside the gate)
@@ -1706,6 +1714,15 @@ drawer = createDrawer({
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
   addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
   addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
+}
+// a lamp shot out: its glass gone, its bulb dark, its light out and the pool of it off the ground (until the page is loaded again)
+function breakLamp(i) {
+  if (garden.breakLamp) garden.breakLamp(i);
+  const k = LAMP_LIGHT[i]; if (lightPts && k != null) { const c = lightPts.geometry.attributes.aColor; c.setXYZ(k, 0, 0, 0); c.needsUpdate = true; }
+  const tag = 'lamp' + i; for (const sp of SPLATS) if (sp[5] === tag) sp[5] = 'out';
+  lm.globalCompositeOperation = 'source-over'; lm.fillStyle = '#000'; lm.fillRect(0, 0, LM, LM); lm.globalCompositeOperation = 'lighter';
+  for (const sp of SPLATS) if (sp[5] !== 'out') splat(sp[0], sp[1], sp[2], sp[3], sp[4], true);
+  lightTex.needsUpdate = true; return true;
 }
 if (!QS.has('noworlds')) { worlds = createWorlds({ world: gardenWorld, multi, hint: (t, ms) => setHint(t, ms), started: () => started }); worlds.init(); }
 if (hands) { const box = document.createElement('div'); box.className = 'hands'; box.append(hands.panel());
@@ -2022,7 +2039,7 @@ const _mpAim = new THREE.Vector3();
 function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint('this is not your garden: only its owner can clear things wholesale', 4500); return true; } return false; }
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
-  if (arms) { arms.update(dt); if (multi && multi.inRoom) arms.others(multi.players()); }
+  if (arms) { arms.others(multi && multi.inRoom ? multi.players() : []); arms.update(dt); }
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
     if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
   walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
@@ -2092,7 +2109,7 @@ function wallSummary() {
 window.__umbra = { // debug handle
   walling, beginStint, orbit, space(on, at) { setSpaceView(on); if (at != null) spaceT = at; },
   startAudio() { initAudio(); return { ctx: !!A.ctx, meadow: !!A.meadow, tone: !!A.tone }; },
-  uniforms: U, BROOK, junk, planter,
+  uniforms: U, BROOK, junk, planter, camera,
   multi,
   selfie(on, ang = 2.5, dist = 3.4) { selfView = !!on; selfAng = ang; selfDist = dist; },
   /** For tests: run n frames at a fixed step, capturing the canvas every k-th (data URLs). */

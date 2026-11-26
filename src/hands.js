@@ -134,6 +134,11 @@ export function createHands({ B, mat, ink, hullOf }) {
         T.spread = lerp(T.spread, spread, w); T.opp = lerp(T.opp, opp, w); for (let k = 0; k < 3; k++) T.wr[k] = lerp(T.wr[k], wr[k], w);
       }
     }
+    if (st.armed > 0.01) {   // a gun: the right hand round the grip, index finger laid along the trigger guard; the left cupped under the fore-end
+      const a = st.armed, c = sd === 'R' ? [0.62, 0.2, 0.86, 0.9, 0.94] : [0.32, 0.5, 0.54, 0.57, 0.6];
+      for (let k = 0; k < 5; k++) T.curl[k] = lerp(T.curl[k], c[k], a);
+      T.spread = lerp(T.spread, sd === 'R' ? 0.08 : 0.18, a); T.opp = lerp(T.opp, sd === 'R' ? 0.55 : 0.25, a); for (let k = 0; k < 3; k++) T.wr[k] = lerp(T.wr[k], 0, a);
+    }
     if (sd === 'R' && st.point > 0) {   // the trowel's aim: index out, the rest folded
       const p = st.point; const pc = [0.55, 0.02, 0.85, 0.9, 0.92]; for (let k = 0; k < 5; k++) T.curl[k] = lerp(T.curl[k], pc[k], p); T.spread = lerp(T.spread, 0.1, p); T.opp = lerp(T.opp, 0.7, p);
     }
