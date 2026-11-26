@@ -39,11 +39,12 @@ const SECTIONS = [
     K('B', 'at a place someone else is building: join them') ] },
 ];
 const TOUCH = [
-  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('buttons', 'the bar: space view, plant, together, settings, sound')] },
-  { id: 'voids', title: 'Voids', rows: [K('double-tap', 'open a void ahead of you'), K('tap', 'on a void: evaporate it')] },
-  { id: 'plant', title: 'Planting', rows: [K('plant', 'the button: choose a plant'), K('tap', 'the ground: plant it there')] },
+  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('jump', 'the big button, or a quick flick up on the walking side'),
+    K('rail', 'down the right edge: walk, plant, build, space, me (see yourself), gesture · tap the lit one to come back to walking')] },
+  { id: 'voids', title: 'Voids', rows: [K('double-tap', 'or “open a void”: a new one ahead of you'), K('tap', 'on a void: evaporate it')] },
+  { id: 'plant', title: 'Planting', rows: [K('plant', 'on the rail, then the plant list'), K('tap', 'the ground: plant it there'), K('dig up', 'the plant you look at'), K('done', 'trowel down')] },
   { id: 'space', title: 'The space view', rows: [K('one finger', 'turn the view round the bubble'), K('pinch', 'nearer / farther')] },
-  { id: 'wall', title: 'Building', note: 'Building the wall and free builds need a mouse and keys for now.', rows: [] },
+  { id: 'wall', title: 'Building', note: 'Look at a stone so the cross is on it, then the pad: lift / set, turn (hold), fine, tip, roll, length in, on edge, press and pass through (hold), hearting, more stone, glue, undo, finish (twice), put away.', rows: [K('build', 'on the rail: at a pegged-out stint, that stint; anywhere else, a free build where you stand')] },
 ];
 
 const CSS = `

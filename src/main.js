@@ -11,6 +11,7 @@ import { createBody } from './body.js';
 import { createHelp } from './help.js';
 import { loadMotion, EMOTES } from './motion.js';
 import { createGamepad } from './gamepad.js';
+import { createTouchUI } from './touchui.js';
 import { load as loadGfx, save as saveGfx, PRESETS, pending as gfxPending } from './gfx.js';
 import { SPECIES as LEAF_SPECIES } from './senescence.js';
 import { heightAt, CENTRE, RIM, SPACE_GLSL, createBubble, createSpaceView, createLand, BROOK, nearBrook } from './field.js';
@@ -1098,21 +1099,23 @@ addEventListener('wheel', e => { if (started && spaceOn && !(drawer && drawer.is
   if (started && walling.holding && !(drawer && drawer.isOpen)) { walling.onWheel(e.deltaY, e.shiftKey); e.preventDefault(); } }, { passive: false });
 function beginStint() {
   if (walling.busy) { setHint(walling.active && walling.active.free ? 'you are building here already · P puts it away' : 'you have a stint open already · P puts it away, Enter twice finishes it', 5000); return; }
-  if (isTouch) { setHint('building needs a mouse and keys for now', 6000); return; }
   walling.begin(player.x, player.z, yaw);   // at a pegged-out stint: that stint; anywhere else: a free build where you stand
 }
 function tryLock() { if (isTouch) return; try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 /** What a click does where you are looking (the mouse's button, or the controller's trigger). */
-function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(button)) return; if (!walling.busy && button === 0 && walling.idleHover && !isTouch) { walling.pluckIdle(player.x, player.z, yaw); return; } if (button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); }
+function act(button) { if (spaceOn) return; if (planter.open) { planter.setOpen(false); return; } if (walling.busy && walling.onDown(button)) return; if (!walling.busy && button === 0 && walling.idleHover) { walling.pluckIdle(player.x, player.z, yaw); return; } if (button === 0 && planter.click()) return; const v = pickVoid(0, 0); if (v) collapseVoid(v); }
 canvas.addEventListener('mousedown', e => { if (drawer && drawer.isOpen) { drawer.close(); return; } mouseDown = true; if (started && document.pointerLockElement !== canvas) tryLock(); else if (started) act(e.button); });
 // a controller (gamepad.js): its buttons arrive as the keys and the click they stand for
 let padAim = false, lastPace = 0;
-const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000),
-  context: () => spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk',
-  key: (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true })),
-  click: () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); },
+const modeNow = () => spaceOn ? 'space' : walling.busy ? 'build' : (planter.open || planter.armed) ? 'plant' : 'walk';
+const sendKey = (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true }));
+const padClick = () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); };
+const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000), context: modeNow, key: sendKey, click: padClick,
   help: () => { if (help) help.toggle(); } });
+// on an iPad or a phone: a rail of modes down the right edge and a pad of what you can do in the one you are in (touchui.js)
+const tui = isTouch ? createTouchUI({ context: modeNow, key: sendKey, click: padClick, selfView: () => selfView, started: () => started }) : null;
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas || padAim));
+if (tui) setInterval(() => $('aim').classList.toggle('on', started && !spaceOn && walling.busy), 250);   // on touch the crosshair shows what you will lift while building
 addEventListener('mouseup', () => { mouseDown = false; });
 addEventListener('mousemove', e => {
   if (!started || isTouch) return;
@@ -1125,7 +1128,7 @@ const touches = new Map(); let lastTap = 0;
 const moveTouch = { x: 0, y: 0 };
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  for (const t of e.changedTouches) touches.set(t.identifier, { type: t.clientX < innerWidth / 2 ? 'move' : 'look', x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t0: performance.now() });
+  for (const t of e.changedTouches) { const o = { type: t.clientX < innerWidth / 2 ? 'move' : 'look', x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t0: performance.now() }; touches.set(t.identifier, o); if (tui && o.type === 'move' && !spaceOn) tui.stick(o); }
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
@@ -1136,7 +1139,7 @@ canvas.addEventListener('touchmove', e => {
         if (d0 > 8 && d1 > 8) orbit.dist = Math.max(150, Math.min(620, orbit.dist * d0 / d1)); orbit.idle = 0; continue; }
       orbitBy((t.clientX - o.x) * 2.2, (t.clientY - o.y) * 2.2); o.x = t.clientX; o.y = t.clientY; continue; }
     if (o.type === 'look') { yaw -= (t.clientX - o.x) * 0.0055; pitch -= (t.clientY - o.y) * 0.0055; pitch = Math.max(-1.45, Math.min(1.35, pitch)); }
-    o.x = t.clientX; o.y = t.clientY;
+    o.x = t.clientX; o.y = t.clientY; if (tui && o.type === 'move') tui.stick(o);
   }
 }, { passive: false });
 const endTouch = e => {
@@ -1150,6 +1153,7 @@ const endTouch = e => {
       else if (quick && !spaceOn && planter.tap(o.x0 / innerWidth * 2 - 1, -(o.y0 / innerHeight * 2 - 1))) lastTap = 0;
       else if (quick && !spaceOn) { if (now - lastTap < 380) { openVoid(); lastTap = 0; } else lastTap = now; }
     }
+    if (tui && o && o.type === 'move') tui.stick(null);
     touches.delete(t.identifier);
   }
 };
@@ -1959,7 +1963,7 @@ function stepWalling(dt, t) {
     if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
     const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
-    if (id !== wallPrompt) { wallPrompt = id; if (st && !isTouch) setHint(st.state === 'paused' ? `B · take up stint ${id + 1} again` : `B · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } }
+    if (id !== wallPrompt) { wallPrompt = id; if (st) { const k = isTouch ? 'build ▦' : 'B'; setHint(st.state === 'paused' ? `${k} · take up stint ${id + 1} again` : `${k} · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } } }
   wallKeysEl.style.opacity = walling.busy && !(drawer && drawer.isOpen) ? 0.85 : 0;
   if (body && (wallDirty || (walling.busy && t - consoleAt > 0.2))) { wallDirty = false; consoleAt = t; drawConsole(); drawer && drawer.sync && drawer.sync('wallInfo'); }
 }
@@ -2004,6 +2008,7 @@ function drawConsole() {
 const wallKeysEl = document.createElement('div');
 wallKeysEl.style.cssText = 'position:fixed;left:50%;top:40px;transform:translateX(-50%);font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;color:#bff6ff;text-shadow:0 1px 3px #000;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center;white-space:nowrap;z-index:5';
 wallKeysEl.innerHTML = 'click lift / set down · wheel, Q E turn · R tip · V roll · T length into the wall · C on edge · Shift finer<br>Space press · G pass through · H hearting · N more stone · Backspace undo · P put away · Enter twice finish<br>free builds: J glue what it touches · Shift+J unglue · ? every control';
+if (isTouch) wallKeysEl.innerHTML = 'put the cross on a stone · lift / set picks it up and sets it down · hold turn to turn it · the pad has the rest';
 document.body.append(wallKeysEl);
 function wallSummary() {
   const st = walling.status(), left = walling.stints.filter(q => q.state === 'paused').length;
