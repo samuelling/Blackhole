@@ -1705,14 +1705,14 @@ drawer = createDrawer({
     notHedge: (x, z) => layout.pools.some(p => Math.hypot(x - p.x, z - p.z) < p.r + 1.2) || (Math.abs(x) < layout.canal.hw + 1.2 && z > layout.canal.z0 - 1.2 && z < layout.canal.z1 + 1.2),
     lamps: () => garden.lampHeads, breakLamp: i => breakLamp(i),
     audio: () => A, hint: (t, ms) => setHint(t, ms), players: () => window.__fakePlayers || (multi && multi.inRoom ? multi.players() : []),   // (__fakePlayers, __sent: tests)
-    send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '',
+    send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '', nameOf: id => multi ? multi.nameOf(id) : '',
     heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }), crateSpot: QS.has('nocrate') ? null : () => ({ x: layout.gate.x + 1.9, z: layout.start.z - 2.3, yaw: 0.35 }),   // (the demo crate, just inside the gate)
     respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
     kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
     me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
     free: () => started && !spaceOn && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
-  addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
+  addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; if (arms.down && ['KeyE', 'KeyG', 'Enter'].includes(e.code)) { arms.key(e.code, true, e.shiftKey); e.preventDefault(); e.stopPropagation(); return; } if (['KeyQ', 'KeyR', 'KeyK', 'KeyL'].includes(e.code) && !walling.busy && !planter.armed && !planter.open && !spaceOn && arms.key(e.code, true, e.shiftKey)) e.preventDefault(); });
   addEventListener('keyup', e => { if (['KeyK', 'KeyL'].includes(e.code)) arms.key(e.code, false, e.shiftKey); });
 }
 // a lamp shot out: its glass gone, its bulb dark, its light out and the pool of it off the ground (until the page is loaded again)
@@ -1833,7 +1833,14 @@ function update(dt, t) {
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = (70 + 7 * near) * (arms ? arms.zoom : 1);
   stepSpaceView(dt, groundY + 1.65 + bob);
-  if (selfView && !spaceOn) {   // see yourself: the camera steps out and looks back at you, turning with you
+  // shot down: the view steps out of you and slowly circles where you lie, until you get up
+  if (arms && arms.down && !spaceOn) { if (!deathCam) { deathCam = { on: selfView, ang: selfAng, dist: selfDist }; selfView = true; selfAng = 2.2; selfDist = 3.8; } selfAng += dt * 0.22; }
+  else if (deathCam) { selfView = deathCam.on; selfAng = deathCam.ang; selfDist = deathCam.dist; deathCam = null; }
+  if (selfView && !spaceOn && deathCam) {   // down: from above, over where you lie (and never inside a wall or a hedge)
+    const f = arms.fallDir, a = yaw + selfAng; _selfT.set(player.x + f[0] * 0.8, groundY + 0.3, player.z + f[1] * 0.8);
+    let d = 2.1; while (d > 0.8 && garden.blocked(_selfT.x - Math.sin(a) * d, _selfT.z - Math.cos(a) * d)) d -= 0.2;
+    camera.position.set(_selfT.x - Math.sin(a) * d, groundY + 1.9, _selfT.z - Math.cos(a) * d); camera.lookAt(_selfT);
+  } else if (selfView && !spaceOn) {   // see yourself: the camera steps out and looks back at you, turning with you
     const a = yaw + selfAng, d = selfDist; _selfT.set(player.x, groundY + 1.05, player.z);
     camera.position.set(player.x - Math.sin(a) * d, groundY + 1.35, player.z - Math.cos(a) * d); camera.lookAt(_selfT);
   }
@@ -1912,7 +1919,7 @@ function update(dt, t) {
 addEventListener('keydown', e => { if (e.code === 'KeyV' && e.shiftKey && !e.metaKey && !e.ctrlKey && started && !walling.busy) { selfView = !selfView; setHint(selfView ? 'seeing yourself · Shift+V to go back behind your eyes' : 'back behind your eyes', 3000); return; }
   if (e.code === 'KeyF' && e.shiftKey && !e.metaKey && !e.ctrlKey) { toggleFull(); return; } if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) { showFps = !showFps; if (!showFps) $('title').textContent = 'GARDEN OF DELIGHT'; drawer && drawer.sync('gfxFps'); } });
 let lastDraw = 0, FIXED_DT = null, holdLoop = false;
-let selfView = false, selfAng = 2.5, selfDist = 3.4; const _selfT = new THREE.Vector3();
+let selfView = false, selfAng = 2.5, selfDist = 3.4, deathCam = null; const _selfT = new THREE.Vector3();
 function frame(once) {
   if (holdLoop && once !== true) { requestAnimationFrame(frame); return; }
   if (G.fpsCap && once !== true) { const now = performance.now(); if (now - lastDraw < 1000 / G.fpsCap - 3) { requestAnimationFrame(frame); return; } lastDraw = now; }

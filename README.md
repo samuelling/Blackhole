@@ -79,7 +79,11 @@ For now (a demo, before anything has come through) there's also a **crate of the
   - **A tree you planted** can be cut down. Each round takes out wood; the trunk takes as many as its cross-section (a young maple, 20 cm through, about 40 rifle rounds; a giant, not with any magazine). Cut through, it falls away from you like a pole, slowly and then fast, lands with a crash and a burst of leaves, lies there, and sinks away. The garden's own trees only splinter.
   - **Lamps** shot out shatter: the glass goes, the bulb and its pool of light on the ground go dark, for everyone in the room, until the page is loaded again.
   - The marks and the litter are this visit's only; what's destroyed (plants, trees) is kept.
-- **In a room you can shoot each other.** The shooter decides the hit (what you saw is what you hit) and tells whoever it was. A body shot takes the gun's damage off 100, a head shot its head damage (an M7 round: 46, or 200 to the head). At nothing left you go down, and four seconds later you're on your feet at the gate. You heal after four seconds without being hit. *Settings → Garden → Others can shoot me* turns it off for you (their rounds pass through; your gun still works).
+- **In a room you can shoot each other.** The shooter decides the hit (what you saw is what you hit) and tells the room. A body shot takes the gun's damage off 100, a head shot its head damage (an M7 round: 46, or 200 to the head). You heal after four seconds without being hit. *Settings → Garden → Others can shoot me* turns it off for you (their rounds pass through; your gun still works). Everyone sees what a hit does:
+  - the body **flinches** away from the round (the gun in its hands goes with it), and your own view jolts;
+  - the **suit is holed** where the round went in, a scorched ring with the lining's glow, and **leaks air** in a hissing jet for a few seconds;
+  - a **head shot cracks the visor**: a star on the helmet for the others, and cracks across your own view until you're up again;
+  - at nothing left you **go down**: you topple the way the round pushed you and lie there, and your view steps out to circle above where you lie. **You get up when you choose**: *get up here* (**E**) or *back to the gate* (**G**), or tap the buttons; the holes and cracks go when you do.
 - The guns lying about are part of the garden: saved with it, handed over in a room, kept online.
 
 ## Keeping your garden

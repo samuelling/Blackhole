@@ -28,7 +28,7 @@ const SECTIONS = [
     K('Q', 'pick up the gun you look at (swapping for yours) · draw or put away your own'), K('Shift+Q', 'put it down'),
     K('click', 'fire (hold, for the automatics)'), K('right button', 'aim'), K('R', 'reload'),
     K('rounds', 'leave craters and holes and throw real debris; shoot through a plant and it\'s gone (Settings → Garden puts the garden\'s own back); cut through a tree you planted and it falls; lamps can be shot out'),
-    K('in a room', 'others can be shot, and so can you: down at nothing left, back at the gate in four seconds (Settings → Garden turns that off for you)') ] },
+    K('in a room', 'others can be shot, and so can you: hits flinch you, hole your suit (it leaks) and crack your visor; down at nothing left, you choose when to get up: E here, G at the gate (Settings → Garden turns being shot off for you)') ] },
   { id: 'free', title: 'Free builds (Ultrahand)', note: 'Anywhere off the wall line: build with stone from the heaps and with the Shred Hole\'s junk, as with Ultrahand in Tears of the Kingdom.', rows: [
     K('B', 'away from the wall: start a free build where you stand, or take up the one that is there'),
     K('click', 'lift from the stone heaps, the junk heap, or the build · it hangs where you look · click lets it go'),

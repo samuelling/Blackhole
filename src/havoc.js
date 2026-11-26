@@ -37,6 +37,15 @@ function markTex(kind) {
   } else if (kind === 'stone') {   // a pale crushed chip, a grey crater in it
     blob(C, C, C * 0.7, '#d8d3c8', 0.55, 0.5); blob(C, C, C * 0.48, '#eeeae2', 0.85, 0.45); blob(C, C, C * 0.25, '#7a756d', 0.95, 0.4); blob(C, C, C * 0.1, '#3a3733', 1, 0.3);
     for (let i = 0; i < 8; i++) { const a = r() * 6.28; g.strokeStyle = '#5c5852'; g.globalAlpha = 0.6; g.lineWidth = 1; g.beginPath(); g.moveTo(C + Math.cos(a) * C * 0.25, C + Math.sin(a) * C * 0.25); g.lineTo(C + Math.cos(a) * C * (0.55 + 0.35 * r()), C + Math.sin(a) * C * (0.55 + 0.35 * r())); g.stroke(); }
+  } else if (kind === 'suit') {   // a hole through the suit's layers: scorched fabric, the white torn back, the dark of the hole, the glow of its lining at the edge
+    blob(C, C, C * 0.92, '#1e1a17', 0.55, 0.55); blob(C, C, C * 0.7, '#2b241e', 0.9, 0.5); blob(C, C, C * 0.52, '#e9e4da', 0.95, 0.6); blob(C, C, C * 0.4, '#7fdcff', 1, 0.35); blob(C, C, C * 0.3, '#0c0a09', 1, 0.3);
+    for (let i = 0; i < 12; i++) { const a = r() * 6.28; g.strokeStyle = '#3a342e'; g.globalAlpha = 0.7; g.lineWidth = 1.5; g.beginPath(); g.moveTo(C + Math.cos(a) * C * 0.3, C + Math.sin(a) * C * 0.3); g.lineTo(C + Math.cos(a) * C * (0.55 + 0.35 * r()), C + Math.sin(a) * C * (0.55 + 0.35 * r())); g.stroke(); }
+  } else if (kind === 'crack') {   // a visor starred by a round: a white pit, cracks running out and rings across them
+    const P = new Path2D();
+    for (let k = 0; k < 10; k++) { let a = k / 10 * 6.28 + r() * 0.4, x = C, y = C; P.moveTo(C, C); for (let j = 0; j < 4; j++) { a += (r() - 0.5) * 0.6; const L = C * (0.12 + 0.14 * r()); x += Math.cos(a) * L; y += Math.sin(a) * L; P.lineTo(x, y); } }
+    for (const rr of [0.18, 0.4]) { for (let k = 0; k <= 16; k++) { const a = k / 16 * 6.28, q = C * rr * (0.8 + 0.4 * r()); k ? P.lineTo(C + Math.cos(a) * q, C + Math.sin(a) * q) : P.moveTo(C + Math.cos(a) * q, C + Math.sin(a) * q); } }
+    g.lineJoin = 'round'; g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 7; g.stroke(P); g.strokeStyle = '#ffffff'; g.lineWidth = 3; g.stroke(P);
+    blob(C, C, C * 0.12, '#ffffff', 1, 0.4);
   } else {   // metal: a bright dent, the paint knocked off round it
     blob(C, C, C * 0.6, '#8a8f94', 0.6, 0.3); blob(C, C, C * 0.38, '#e2e6ea', 0.95, 0.2); blob(C, C, C * 0.16, '#55595e', 1, 0.15);
   }
@@ -49,9 +58,11 @@ export function createHavoc({ scene, heightAt, waterAt = () => null, audio }) { 
   // ---------------------------------------------------------------- holes
   const quad = new THREE.PlaneGeometry(1, 1);
   const markMat = {}, marks = {};
-  const CAP = { soil: 320, wood: 220, stone: 220, metal: 60 };
+  const CAP = { soil: 320, wood: 220, stone: 220, metal: 60, suit: 1, crack: 1 };   // (suit and crack marks only ever ride on a body)
   for (const k of Object.keys(CAP)) {
-    markMat[k] = new THREE.MeshStandardMaterial({ map: markTex(k), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, roughness: k === 'metal' ? 0.35 : 1, metalness: k === 'metal' ? 0.6 : 0 });
+    markMat[k] = new THREE.MeshStandardMaterial({ map: markTex(k), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4, roughness: k === 'metal' || k === 'crack' ? 0.3 : 1, metalness: k === 'metal' ? 0.6 : 0 });
+    if (k === 'crack') { markMat[k].emissive = new THREE.Color(0xffffff); markMat[k].emissiveMap = markMat[k].map; markMat[k].emissiveIntensity = 0.6; }
+    if (k === 'suit') { markMat[k].emissive = new THREE.Color(0x3fb8e8); markMat[k].emissiveMap = markMat[k].map; markMat[k].emissiveIntensity = 0.35; }
     const im = new THREE.InstancedMesh(quad, markMat[k], CAP[k]); im.count = 0; im.frustumCulled = false; im.renderOrder = 1; im.receiveShadow = true; group.add(im);
     marks[k] = { im, n: 0 };
   }
@@ -60,10 +71,10 @@ export function createHavoc({ scene, heightAt, waterAt = () => null, audio }) { 
     _q.setFromUnitVectors(Z, n); _q2.setFromAxisAngle(Z, Math.random() * 6.28); _q.multiply(_q2);
     _v.copy(at).addScaledVector(n, 0.003);
     if (parent) {   // on something that moves: its child, in its own frame
-      parent.updateMatrixWorld(); const m = new THREE.Mesh(quad, markMat[kind]); m.renderOrder = 1;
+      parent.updateMatrixWorld(); const m = new THREE.Mesh(quad, markMat[kind]); m.renderOrder = kind === 'crack' ? 10 : 3;   // (a crack is drawn over the visor's tinted glass)
       _m.compose(_v, _q, _s.setScalar(size)).premultiply(_inv.copy(parent.matrixWorld).invert()); m.matrixAutoUpdate = false; m.matrix.copy(_m); parent.add(m);
       riding.push(m); if (riding.length > 160) { const o = riding.shift(); o.parent && o.parent.remove(o); }
-      return;
+      return m;
     }
     const M = marks[kind]; _m.compose(_v, _q, _s.setScalar(size)); M.im.setMatrixAt(M.n % CAP[kind], _m); M.n++; M.im.count = Math.min(M.n, CAP[kind]); M.im.instanceMatrix.needsUpdate = true;
   }
@@ -172,6 +183,11 @@ export function createHavoc({ scene, heightAt, waterAt = () => null, audio }) { 
     for (let k = 0; k < 14; k++) { const i0 = Math.floor(r() * 1.3 * sr); for (let i = i0; i < Math.min(n, i0 + 0.004 * sr); i++) d[i] += (r() * 2 - 1) * 0.6 * (1 - (i - i0) / (0.004 * sr)); }
     return d;
   });
+  const hissBuf = () => buf('hiss', sr => {   // air out of a holed suit: bright noise, falling away as the pressure does
+    const n = Math.floor(sr * 2.6), d = new Float32Array(n), r = mulberry32(5); let a = 0, b = 0;
+    for (let i = 0; i < n; i++) { const t = i / sr, x = r() * 2 - 1; a += (x - a) * 0.6; b += (a - b) * 0.05; d[i] = (a - b) * 0.5 * Math.min(1, t * 40) * Math.exp(-t / 0.9); }
+    return d;
+  });
   const thudBuf = kind => buf('imp' + kind, sr => synthImpact(mulberry32(90 + kind.length * 13), sr, kind));
   function creak(at, H) { play(creakBuf(), at, 0.5, 1.2 - Math.min(0.5, H / 40), 6); }
   let clinkBudget = 0;
@@ -237,7 +253,7 @@ export function createHavoc({ scene, heightAt, waterAt = () => null, audio }) { 
   }
 
   return {
-    hole, spray, brass, splash, prop, fell, step, play, thud: (kind, at, gain = 0.18, rate = 1) => play(thudBuf(kind), at, gain, rate), glass: at => play(glassBuf(), at, 0.5, 0.9 + 0.2 * Math.random(), 4),
+    hole, spray, brass, splash, prop, fell, step, play, thud: (kind, at, gain = 0.18, rate = 1) => play(thudBuf(kind), at, gain, rate), glass: at => play(glassBuf(), at, 0.5, 0.9 + 0.2 * Math.random(), 4), hiss: (at, k = 1) => play(hissBuf(), at, 0.25 * k, 0.9 + 0.25 * Math.random(), 2),
     get count() { return Object.values(kinds).reduce((a, K) => a + K.list.length, 0); }, marks: () => Object.fromEntries(Object.entries(marks).map(([k, M]) => [k, M.im.count])), group,
   };
 }

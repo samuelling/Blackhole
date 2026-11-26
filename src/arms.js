@@ -15,7 +15,9 @@
 // holes in wood and stone, debris that bounces and settles. Plants shot through are destroyed (dug up, as a trowel would: "put back"
 // in Settings brings the garden's own back). A planted tree cut through falls, away from you. Lamps shot out go dark until you reload.
 // In a room: the shooter decides the hit (what you saw is what you hit) and tells whoever it was; a body shot takes the gun's damage
-// off 100, a head shot its head damage. At nothing left you go down, and four seconds later you're back on your feet at the gate.
+// off 100, a head shot its head damage. Everyone sees it: the body flinches away from the round, the suit is holed where it went in
+// and leaks air for a few seconds, a head shot cracks the visor (and your own view through it). At nothing left you topple the way the
+// round pushed you and lie there, the view stepped out to see yourself, until you choose to get up: where you fell, or at the gate.
 // Anyone can turn off being shot (Settings → Garden); their own guns still work.
 //
 // Keys: Q picks up the gun you're looking at (swapping for the one you hold), or draws / puts away your own; Shift+Q puts it down.
@@ -191,10 +193,11 @@ export function createArms(o) {
     const g = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]), line = new THREE.Line(g, tracerMat.clone());
     group.add(line); fx.push({ obj: line, t: 0, life: 0.07, kind: 'line' });
   }
-  const puffMat = new THREE.SpriteMaterial({ color: 0xcfc4b0, transparent: true, opacity: 0.7, depthWrite: false });
-  const sparkMat = new THREE.SpriteMaterial({ color: 0xffd080, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
-  const leafMat = new THREE.SpriteMaterial({ color: 0x5f7a3a, transparent: true, opacity: 0.85, depthWrite: false });
-  const bloodMat = new THREE.SpriteMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });   // the suit's glow, not blood
+  const softTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();   // a soft round puff, not a square
+  const puffMat = new THREE.SpriteMaterial({ map: softTex, color: 0xcfc4b0, transparent: true, opacity: 0.7, depthWrite: false });
+  const sparkMat = new THREE.SpriteMaterial({ map: softTex, color: 0xffd080, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const leafMat = new THREE.SpriteMaterial({ map: softTex, color: 0x5f7a3a, transparent: true, opacity: 0.85, depthWrite: false });
+  const bloodMat = new THREE.SpriteMaterial({ map: softTex, color: 0x9fe8ff, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });   // the suit's glow, not blood
   function puff(at, kind, n = 6) {
     const mat = kind === 'spark' ? sparkMat : kind === 'leaf' ? leafMat : kind === 'suit' ? bloodMat : puffMat;
     for (let i = 0; i < n; i++) {
@@ -292,7 +295,7 @@ export function createArms(o) {
     else if (kind === 'piece' || kind === 'junk') { holeAt(kind === 'junk' ? 'metal' : 'stone', 0.03 + 0.025 * k); havoc.spray('stone', at, n, D, null, k); if (kind === 'junk') havoc.spray('metal', at, n, D, null, k); puff(at, 'spark', 6); puff(at, 'dust', 3); if (first) havoc.thud('iHard', at); }
     else if (kind === 'post') { holeAt('metal', 0.025 + 0.015 * k); havoc.spray('metal', at, n, D, 5); puff(at, 'spark', 10); if (first) havoc.thud('iHard', at, 0.25, 1.4); }
     else if (kind === 'lamp') { havoc.spray('glass', at, n, D, 30); havoc.glass(at); puff(at, 'spark', 12); }
-    else if (kind === 'body') puff(at, 'suit', 5);
+    else if (kind === 'body') puff(at, 'suit', 3);
   }
   function fire() {
     const h = held, ud = h.ud, now = performance.now() / 1000;
@@ -356,11 +359,44 @@ export function createArms(o) {
     if (!n) n = D.clone().negate();
     impact(kind, at, n, D, k, hit.mesh || null, first);
     if (who) {
-      const dm = who.head ? (ud.head || ud.dmg * 3) : ud.dmg;
-      if (o.send) o.send({ a: 'hit', to: who.p.id, d: Math.round(dm), h: who.head ? 1 : 0, w: held.w });
+      const dm = who.head ? (ud.head || ud.dmg * 3) : ud.dmg, p = who.p, y = at.y - p.gy, an = Math.atan2(at.z - p.z, at.x - p.x), dl = Math.hypot(D.x, D.z) || 1;
+      const m = { a: 'hit', to: p.id, d: Math.round(dm), h: who.head ? 1 : 0, w: held.w, y: r3(y), an: r3(an), dx: r3(D.x / dl), dz: r3(D.z / dl), k: r3(k) };
+      if (o.send) o.send(m);
+      if (p.body) bodyHit(p.body, p, m);
       marker(who.head);
     }
     return { at, kind };
+  }
+  // ---------------------------------------------------------------- a body shot: it flinches, the suit is holed and leaks, a visor cracks
+  let lastRay = null; const marksOf = new Map(), vents = [], _rc = new THREE.Raycaster(), vaporMat = new THREE.SpriteMaterial({ map: softTex, color: 0xeef6ff, transparent: true, opacity: 0.55, depthWrite: false });
+  function bodyHit(body, p, m) {
+    const head = !!m.h, y = +m.y, an = +m.an, dx = +m.dx, dz = +m.dz; if (![y, an, dx, dz].every(isFinite)) return;
+    body.react && body.react(dx, dz, (+m.k || 1) * (head ? 1.3 : 1));
+    // where on the suit: from outside the body toward its axis (or the helmet's centre), onto the suit itself
+    const c = head ? new THREE.Vector3(p.x, p.gy + 1.64, p.z) : new THREE.Vector3(p.x, p.gy + y, p.z);
+    const out = head ? new THREE.Vector3(Math.cos(an), (y - 1.64) / 0.16, Math.sin(an)).normalize() : new THREE.Vector3(Math.cos(an), 0, Math.sin(an));
+    body.root.updateMatrixWorld(true); _rc.set(c.clone().addScaledVector(out, 0.8), out.clone().negate()); _rc.far = 1.2;
+    const hits = _rc.intersectObject(body.root, true).filter(h => h.object.isMesh && h.object.visible && !h.object.isSprite);
+    lastRay = hits.slice(0, 6).map(h => [h.distance.toFixed(3), h.point.z.toFixed(3), h.object.parent && (h.object.parent.name || h.object.parent.type), h.object.material.side, h.object.material.type, h.object.geometry.attributes.position.count, h.object.renderOrder]);
+    let at = c.clone().addScaledVector(out, head ? 0.16 : 0.22), n = out.clone(), parent = null;
+    if (hits.length) { const h = hits[0]; at.copy(h.point); if (h.face) n.copy(h.face.normal).transformDirection(h.object.matrixWorld); if (n.dot(out) < 0) n.negate(); parent = h.object.isSkinnedMesh ? null : h.object; }
+    if (!parent && hits.length) { const B = body.bones || {}; parent = head ? B.head : y > 0.95 ? B.torso : B.pelvis || body.root; }
+    const mk = parent ? havoc.hole(head ? 'crack' : 'suit', at, n, head ? 0.26 : 0.12, parent) : null;   // (no mark where the round only grazed the suit's outline)
+    if (mk) { if (!marksOf.has(body)) marksOf.set(body, []); marksOf.get(body).push(mk); vents.push({ mk, until: performance.now() / 1000 + (head ? 4 : 3), next: 0 }); }
+    havoc.thud('iBody', at, 0.3); havoc.hiss(at, head ? 1.3 : 1);
+    puff(at, 'suit', 4);
+  }
+  function clearMarks(body) { const L = body && marksOf.get(body); if (!L) return; for (const mk of L) if (mk.parent) mk.parent.remove(mk); marksOf.delete(body); }
+  function stepVapor(dt) {   // air out of the holes: a thin jet, thinning as the suit's pressure goes
+    const now = performance.now() / 1000;
+    for (let i = vents.length - 1; i >= 0; i--) {
+      const V = vents[i]; if (now > V.until || !V.mk.parent) { vents.splice(i, 1); continue; }
+      if (now < V.next) continue; V.next = now + 0.05;
+      V.mk.updateMatrixWorld(); const P = _v.setFromMatrixPosition(V.mk.matrixWorld), N = _w.set(0, 0, 1).transformDirection(V.mk.matrixWorld), left = (V.until - now) / 3;
+      const sp = new THREE.Sprite(vaporMat.clone()); sp.position.copy(P); sp.scale.setScalar(0.03 + 0.03 * Math.random());
+      sp.userData.v = N.clone().multiplyScalar(0.8 + 1.4 * left).add(_o.set(Math.random() - 0.5, Math.random() * 0.3, Math.random() - 0.5).multiplyScalar(0.25));
+      group.add(sp); fx.push({ obj: sp, t: 0, life: 0.6 + 0.4 * Math.random(), kind: 'sprite', grow: 1.6 });
+    }
   }
   function fellTree(T, D, mine) {
     if (felled.has(T.id)) return; felled.add(T.id);
@@ -424,15 +460,26 @@ export function createArms(o) {
   }
   let mySpec = null;
   // ---------------------------------------------------------------- being shot (in a room)
-  let hp = HP, downUntil = 0, hurtAt = -9, hurt = 0;
+  let hp = HP, downUntil = 0, downAt = 0, hurtAt = -9, hurt = 0, myDir = [0, 1], byName = '';
+  // Down: you lie where you fell, the view stepped out to see yourself, until you choose to get up: there, or back at the gate.
   function onHit(from, m) {
     if (!o.canBeShot() || downUntil) return;
     hp -= Math.max(0, Math.min(400, +m.d || 0)); hurtAt = performance.now() / 1000; hurt = Math.min(1, hurt + 0.5 + (m.h ? 0.4 : 0));
+    if (isFinite(m.dx) && isFinite(m.dz)) myDir = [+m.dx, +m.dz];
+    if (o.kick) o.kick(0.03 + (m.h ? 0.05 : 0), (Math.random() - 0.5) * 0.06);   // knocked: the view jolts
+    if (m.h) crack(true);
     if (hp <= 0) {
-      hp = 0; downUntil = hurtAt + 4; trigger = false; aimOn = false;
-      if (o.send) o.send({ a: 'down', by: from }); o.hint(m.h ? 'head shot: you are down · back on your feet at the gate in a moment' : 'you are down · back on your feet at the gate in a moment', 4000);
+      hp = 0; downUntil = 1; downAt = hurtAt; trigger = false; aimOn = false; if (held) held.rl = null;
+      byName = o.nameOf ? o.nameOf(from) : '';
+      if (o.send) o.send({ a: 'down', by: from, dx: r3(myDir[0]), dz: r3(myDir[1]) });
+      downEl.querySelector('.by').textContent = (m.h ? 'head shot' : 'shot down') + (byName ? ` by ${byName}` : '');
     }
     hud();
+  }
+  function getUp(atGate) {
+    if (!downUntil || performance.now() / 1000 - downAt < 1.2) return false;
+    downUntil = 0; hp = HP; if (atGate) o.respawn(); downEl.style.opacity = 0; downEl.style.pointerEvents = 'none'; crack(false);
+    clearMarks(o.body); if (o.send) o.send({ a: 'up' }); hud(); return true;
   }
   // ---------------------------------------------------------------- the HUD: health, rounds, the hit marker, the red at the edges
   const css = document.createElement('style');
@@ -445,11 +492,27 @@ export function createArms(o) {
     #armsCross:before { left:10px; top:0; width:2px; height:22px; } #armsCross:after { top:10px; left:0; height:2px; width:22px; }
     #armsCross.hit:before, #armsCross.hit:after { background:#ff5a4a; } #armsCross { clip-path: polygon(0 0,100% 0,100% 100%,0 100%,0 0, 35% 35%, 35% 65%, 65% 65%, 65% 35%, 35% 35%); }
     #armsHurt { position:fixed; inset:0; z-index:5; pointer-events:none; box-shadow: inset 0 0 160px 40px rgba(200,20,20,.9); opacity:0; }
-    #armsDown { position:fixed; inset:0; z-index:5; pointer-events:none; background:rgba(20,0,0,.6); opacity:0; transition:opacity .4s; display:flex; align-items:center; justify-content:center; font:500 30px 'Cormorant Garamond',Georgia,serif; color:#e9e4da; }`;
+    #armsDown { position:fixed; inset:0; z-index:7; pointer-events:none; background:radial-gradient(ellipse at center, rgba(20,0,0,0) 40%, rgba(40,0,0,.55)); opacity:0; transition:opacity .4s; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:calc(12vh + env(safe-area-inset-bottom)); font:500 30px 'Cormorant Garamond',Georgia,serif; color:#e9e4da; text-shadow:0 1px 6px rgba(0,0,0,.8); }
+    #armsDown .by { font:13px/1.4 "IBM Plex Mono",ui-monospace,monospace; opacity:.8; margin:4px 0 16px; }
+    #armsDown .row { display:flex; gap:12px; } #armsDown button { font:14px "IBM Plex Mono",ui-monospace,monospace; color:#e9e4da; background:rgba(20,18,16,.72); border:1px solid rgba(233,228,218,.45); border-radius:22px; padding:11px 18px; cursor:pointer; }
+    #armsDown button:hover { background:rgba(60,54,48,.85); } #armsDown button:disabled { opacity:.35; cursor:default; } #armsDown kbd { opacity:.6; font-size:11px; margin-left:6px; }
+    #armsCrack { position:fixed; inset:0; z-index:5; pointer-events:none; opacity:0; transition:opacity .15s; }`;
   document.head.append(css);
   const hudEl = document.createElement('div'); hudEl.id = 'armsHud'; const cross = document.createElement('div'); cross.id = 'armsCross';
-  const hurtEl = document.createElement('div'); hurtEl.id = 'armsHurt'; const downEl = document.createElement('div'); downEl.id = 'armsDown'; downEl.textContent = 'down';
-  document.body.append(hudEl, cross, hurtEl, downEl);
+  const hurtEl = document.createElement('div'); hurtEl.id = 'armsHurt'; const downEl = document.createElement('div'); downEl.id = 'armsDown';
+  downEl.innerHTML = '<div>down</div><div class="by"></div><div class="row"><button data-up="here">get up here<kbd>E</kbd></button><button data-up="gate">back to the gate<kbd>G</kbd></button></div>';
+  for (const b of downEl.querySelectorAll('button')) { const go = e => { e.preventDefault(); e.stopPropagation(); getUp(b.dataset.up === 'gate'); }; b.addEventListener('click', go); b.addEventListener('touchend', go); b.addEventListener('mousedown', e => e.stopPropagation()); b.addEventListener('pointerdown', e => e.stopPropagation()); }
+  // a head shot cracks your visor: the cracks stay until you're up again
+  const crackEl = document.createElement('div'); crackEl.id = 'armsCrack';
+  function crack(on) {
+    if (!on) { crackEl.style.opacity = 0; crackEl.innerHTML = ''; return; }
+    const W = innerWidth, H = innerHeight, cx = W * (0.3 + 0.4 * Math.random()), cy = H * (0.25 + 0.4 * Math.random()); let d = '';
+    for (let k = 0; k < 11; k++) { let a = k / 11 * 6.28 + Math.random() * 0.4, x = cx, y = cy; d += `M${cx},${cy}`; for (let j = 0; j < 5; j++) { a += (Math.random() - 0.5) * 0.6; const L = 30 + Math.random() * 90; x += Math.cos(a) * L; y += Math.sin(a) * L; d += `L${x.toFixed(0)},${y.toFixed(0)}`; } }
+    for (let r of [18, 45, 80]) { d += `M${cx + r},${cy}`; for (let k = 1; k <= 14; k++) { const a = k / 14 * 6.28, rr = r * (0.8 + 0.4 * Math.random()); d += `L${(cx + Math.cos(a) * rr).toFixed(0)},${(cy + Math.sin(a) * rr).toFixed(0)}`; } }
+    crackEl.innerHTML += `<svg width="${W}" height="${H}" style="position:absolute;inset:0"><path d="${d}" fill="none" stroke="rgba(235,245,255,.75)" stroke-width="1.2"/><path d="${d}" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="2.6" transform="translate(1,1)"/></svg>`;
+    crackEl.style.opacity = 1;
+  }
+  document.body.append(hudEl, cross, hurtEl, downEl, crackEl);
   function hud(state) {
     const on = !!(held && held.drawn) || hp < HP;
     hudEl.style.opacity = on ? 1 : 0;
@@ -467,7 +530,7 @@ export function createArms(o) {
     const nu = !downUntil && o.free() ? nearest() : null;
     if (nu !== hintFor) { hintFor = nu; if (nu === 'crate') o.hint(`Q · take a gun from the crate (${WEAPONS[crateGun()].name}${held ? `, for the ${held.name}` : ''})`, 3000); else if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
     // down, and up again
-    if (downUntil) { downEl.style.opacity = 1; if (now > downUntil) { downUntil = 0; hp = HP; o.respawn(); downEl.style.opacity = 0; if (o.send) o.send({ a: 'up' }); hud(); } }
+    if (downUntil) { downEl.style.opacity = 1; downEl.style.pointerEvents = 'auto'; const ready = now - downAt > 1.2; for (const b of downEl.querySelectorAll('button')) b.disabled = !ready; }
     else if (hp < HP && now - hurtAt > 4) { hp = Math.min(HP, hp + 12 * dt); if (hp >= HP) hud(); else if (Math.random() < 0.1) hud(); }
     hurt *= Math.exp(-dt * 2.2); hurtEl.style.opacity = hurt.toFixed(3);
     if (markT > 0) { markT -= dt; if (markT <= 0) cross.classList.remove('hit'); }
@@ -506,17 +569,19 @@ export function createArms(o) {
       }
       h.gun.visible = drawn && placed; h.gun.matrixWorldNeedsUpdate = true;
     } else if (o.body && o.body.setArmed) o.body.setArmed(false, null);
-    stepOthers(dt);
+    if (o.body && o.body.setDown) o.body.setDown(!!downUntil, myDir[0], myDir[1]);
+    stepOthers(dt); stepVapor(dt);
     stepFx(dt); havoc.step(dt);
   }
   // what the others are holding: their guns in their bodies' hands, reloading when they do
-  const theirs = new Map();   // id -> { w, prop, spec, rl }
+  const theirs = new Map(), theirDir = new Map();   // id -> { w, prop, spec, rl }; id -> the way the last round that hit them went
   let othersList = [];
   function others(list) { othersList = list; }
   function stepOthers(dt) {
     const seen = new Set();
     for (const p of othersList) {
       seen.add(p.id); let t = theirs.get(p.id);
+      if (p.body && p.body.setDown) { const d = theirDir.get(p.id) || [0, 1]; p.body.setDown(!!p.down, d[0], d[1]); }
       if (!p.w || p.down || !UD[p.w]) { if (t) { group.remove(t.prop); theirs.delete(p.id); } if (p.body && p.body.setArmed) p.body.setArmed(false, null); continue; }
       if (!t || t.w !== p.w) { if (t) group.remove(t.prop); t = { w: p.w, prop: weaponProp(p.w), spec: null, rl: null }; t.prop.matrixAutoUpdate = false; group.add(t.prop); theirs.set(p.id, t); }
       const ud = UD[p.w];
@@ -529,8 +594,8 @@ export function createArms(o) {
   }
   // ---------------------------------------------------------------- input
   function key(code, down, shift) {
+    if (downUntil) { if (down && (code === 'KeyE' || code === 'KeyG' || code === 'Enter')) getUp(code === 'KeyG'); return code === 'KeyQ' || code === 'KeyE' || code === 'KeyG' || code === 'Enter'; }
     if (code === 'KeyQ' && down) {
-      if (downUntil) return true;
       if (shift && held) { dropHeld(); return true; }
       const nu = nearest(); if (nu) return pickUp(nu);
       if (held) { stow(); return true; }
@@ -572,8 +637,12 @@ export function createArms(o) {
         impact(kind, b, n, D, k, null, i === 0);
       });
     }
-    else if (m.a === 'hit' && m.to === (o.myId ? o.myId() : '')) onHit(from, m);
-    else if (m.a === 'down') { if (o.onDown) o.onDown(from, m.by); }
+    else if (m.a === 'hit') {
+      if (m.to === (o.myId ? o.myId() : '')) { if (o.canBeShot() && !downUntil) { onHit(from, m); if (o.body) { const me = o.me(); bodyHit(o.body, { x: me.x, gy: me.gy, z: me.z }, m); } } }
+      else { const p = othersList.find(q => q.id === m.to); if (p && p.body) { bodyHit(p.body, p, m); if (isFinite(m.dx)) theirDir.set(p.id, [+m.dx, +m.dz]); } }
+    }
+    else if (m.a === 'down') { if (isFinite(m.dx) && isFinite(m.dz)) theirDir.set(from, [+m.dx, +m.dz]); if (o.onDown) o.onDown(from, m.by); }
+    else if (m.a === 'up') { const p = othersList.find(q => q.id === from); if (p && p.body) clearMarks(p.body); }
     else if (m.a === 'rl') { const t = theirs.get(from); if (t && UD[t.w]) { const ud = UD[t.w], tac = !!m.tac, missing = Math.max(1, Math.min(60, +m.m || 1)); let dur = 2.2; try { dur = reloadDuration(ud, tac, missing); } catch (e) {} t.rl = { t: 0, dur, tac, o: { gunOff: new THREE.Vector3(), gunRot: new THREE.Euler(), path: null, magState: 'in', events: [], jolt: 0, seat: 0, missing } }; } }
     else if (m.a === 'lamp' && Number.isInteger(m.i) && m.i >= 0 && m.i < 64 && !lampOut.has(m.i)) { lampOut.add(m.i); if (o.breakLamp) o.breakLamp(m.i); const L = o.lamps && o.lamps()[m.i]; if (L) impact('lamp', new THREE.Vector3(L[0], L[1], L[2]), UP.clone(), UP.clone().negate(), 1, null, false); }
     else if (m.a === 'fell' && [m.x, m.z, m.dx, m.dz].every(isFinite)) { let best = null, bd = 0.3; for (const T of o.trees()) { if (T.id == null) continue; const q = Math.hypot(T.x - m.x, T.z - m.z); if (q < bd) { bd = q; best = T; } } if (best) fellTree(best, new THREE.Vector3(+m.dx, 0, +m.dz), false); }
@@ -594,6 +663,8 @@ export function createArms(o) {
     lyingCount: () => lying.size,
     /** The demo crate by the gate (tests): where it is, and what Q would give from it. */
     get crate() { return crate && { x: crate.x, z: crate.z, next: crateGun() }; }, near: () => nearest(),
+    get fallDir() { const l = Math.hypot(myDir[0], myDir[1]) || 1; return [myDir[0] / l, myDir[1] / l]; }, get cracked() { return crackEl.style.opacity === '1'; },
+    get lastRay() { return lastRay; }, getUp, bodyHit: (body, p, m) => bodyHit(body, p, m), get marks() { let n = 0; for (const L of marksOf.values()) n += L.length; return n; },
     havoc, get gun() { return held && held.gun; }, reload, trace: (O, D) => held && trace(O, D, held.ud, true), lampsOut: () => [...lampOut], felled: () => [...felled],
   };
 }

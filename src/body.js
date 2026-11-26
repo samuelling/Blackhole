@@ -200,6 +200,25 @@ export function createBody({ model, U, COMMON }) {
   // two bones solved to its wrist, the elbow hanging toward a pole (the right out and down, the left down and in); the forearm turns
   // with the hand; the torso blades a little into the gun and the left shoulder comes forward, as it does on a rifle. A grip the arm
   // can't reach slides the left hand back along the fore-end rather than letting it float.
+  // Shot (arms.js): the whole body flinches away from the round, a quick tip about its feet that springs back; shot down, it topples
+  // the way the round pushed it, as a body does when the legs go: slowly, then all at once, and it lies there, slumped. The gun in its
+  // hands goes with it.
+  const tip = { a: 0, v: 0, ax: v3(1, 0, 0), down: false, th: 0, om: 0, fax: v3(1, 0, 0) }, tipQ = new THREE.Quaternion(), tipM = new THREE.Matrix4(), tipT = new THREE.Matrix4();
+  function tipOver(dt) {
+    dt = Math.min(dt, 1 / 20);
+    tip.v += (-260 * tip.a - 2 * Math.sqrt(260) * 0.5 * tip.v) * dt; tip.a += tip.v * dt;                     // the flinch: a stiff, underdamped spring
+    if (tip.down) { if (tip.th < 1.5) { tip.om += (2.2 * Math.sin(tip.th + 0.25) + 0.6) * dt; tip.th = Math.min(1.5, tip.th + tip.om * dt); if (tip.th >= 1.5) tip.om = 0; } }
+    else { tip.th = 0; tip.om = 0; }
+    if (Math.abs(tip.a) < 1e-4 && tip.th < 1e-4) return;
+    if (tip.th > 0) {   // slumped: the knees and the waist give as it goes
+      B.torso.quaternion.multiply(tipQ.setFromAxisAngle(XA, 0.35 * Math.min(1, tip.th))); B.head.quaternion.multiply(tipQ.setFromAxisAngle(XA, 0.4 * Math.min(1, tip.th)));
+    }
+    tipQ.setFromAxisAngle(tip.ax, tip.a); if (tip.th > 0) tipQ.premultiply(qX.setFromAxisAngle(tip.fax, tip.th));
+    root.quaternion.premultiply(tipQ);
+    if (tip.th > 0) root.position.y += 0.17 * Math.sin(tip.th);   // lying, it rests on its back (or front), not through the ground
+    if (gunOk) { tipT.makeTranslation(-root.position.x, -root.position.y, -root.position.z).premultiply(tipM.makeRotationFromQuaternion(tipQ)).premultiply(tipM.makeTranslation(root.position.x, root.position.y, root.position.z)); gunM.premultiply(tipT); }
+  }
+  const axisFor = (dx, dz, out) => { const l = Math.hypot(dx, dz) || 1; return out.set(dz / l, 0, -dx / l); };   // tipping about this carries the top along (dx, dz)
   let gunSpec = null, gunOk = false; const gunM = new THREE.Matrix4(), gunShort = { L: 0, R: 0 };
   const gP = v3(), gQ = new THREE.Quaternion(), eQ = new THREE.Quaternion(), eP = v3(), rQi = new THREE.Quaternion(), lQ = new THREE.Quaternion(), lP = v3(), gF = v3(), gU = v3(), gR = v3(),
     xh = v3(), yh = v3(), zh = v3(), palm = v3(), pa = v3(), pb = v3(), qU = new THREE.Quaternion(), qH = new THREE.Quaternion(), qX = new THREE.Quaternion(), eE = new THREE.Euler(0, 0, 0, 'YXZ'), ONE = v3(1, 1, 1), ptmp = v3();
@@ -415,7 +434,7 @@ export function createBody({ model, U, COMMON }) {
     if (!enabled) return bob;
 
     const down = sstep(0.05, 1.25, -s.pitch), back = EYE.z + tune.crane * down;   // looking down, the head cranes forward over the chest
-    root.position.set(s.x - fx * back, s.gy || 0, s.z - fz * back); root.rotation.y = s.yaw + Math.PI;
+    root.position.set(s.x - fx * back, s.gy || 0, s.z - fz * back); root.rotation.set(0, s.yaw + Math.PI, 0);   // (upright: a flinch or a fall tips it at the end)
     own.uBodyFwd.value.set(fx, 0, fz);
     own.uLampDir.value.set(0.5, 0.62, 0.6).normalize().applyAxisAngle(UP, s.yaw + Math.PI);
 
@@ -522,6 +541,7 @@ export function createBody({ model, U, COMMON }) {
     const hl = hp.length(), HL = 0.24; if (hl > HL) hp.multiplyScalar(HL / hl);
     hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
     if (gunSpec && armed > 0.002 && work < 0.98) solveGun(armed * armed * (3 - 2 * armed) * (1 - work), s, bob); else gunOk = false;
+    tipOver(dt);
     return bob;
   }
 
@@ -558,6 +578,11 @@ export function createBody({ model, U, COMMON }) {
      *  own tilt), grip, sup (points on the gun, its own frame: -z forward), lh: null, or the left hand's way through a reload { a, b, k,
      *  aEye, bEye } (a to b by k; each point on the gun, or in the eye's frame if aEye / bEye) }. Off: null. */
     setArmed(on, spec) { armedOn = on ? 1 : 0; if (spec) gunSpec = spec; else if (!on && armed < 0.01) gunSpec = null; },
+    /** Hit: flinch away along the round's way (dx, dz in the world), harder for a heavier round (k ~ 1). */
+    react(dx, dz, k = 1) { axisFor(dx, dz, tip.ax); tip.v += 2.4 * Math.max(0.2, Math.min(2, k)); },
+    /** Down (shot down) or up again; falling the round's way (dx, dz). */
+    setDown(on, dx = 0, dz = 1) { if (on && !tip.down) { axisFor(dx, dz, tip.fax); tip.th = 0.02; tip.om = 0.4; } tip.down = !!on; },
+    get isDown() { return tip.down; },
     /** Where the held gun is this frame (world): false if it isn't held. */
     gunWorld(out) { if (!gunOk) return false; out.copy(gunM); return true; },
     /** How far each arm fell short of its hold this frame (m), for tests. */
