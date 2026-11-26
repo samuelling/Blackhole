@@ -41,11 +41,16 @@ float fbm3(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a
 // Shots: game: true is drawn by the game itself (this file only poses its camera). Lines: [seconds into the shot, clip, its length
 // as recorded, the words as they appear: [fraction of the clip at which each caption starts, caption]].
 // "…and gone in": the year after the one it is being watched in. (Brodie has said the next few; after that the words stand alone.)
-const YEAR = new Date().getFullYear() + 1, GONE = { 2027: 1.75, 2028: 1.91, 2029: 1.70, 2030: 1.52, 2031: 1.52, 2032: 1.67 };
+const YEAR = +new URLSearchParams(location.search).get('filmyear') || new Date().getFullYear() + 1,   // (?filmyear=2029 to see another year's telling)
+   GONE = { 2027: 1.75, 2028: 1.91, 2029: 1.70, 2030: 1.52, 2031: 1.52, 2032: 1.67 };
+// The snapshot is of everyone alive in that same year. For 2027 he says the sentence whole (06); for later years in two parts.
+const ALIVE_D = { 2028: 2.82, 2029: 3.0, 2030: 2.59, 2031: 2.69, 2032: 3.0 }, D06A = 1.91;
+const ALIVE = YEAR === 2027 ? [[4.8, '06', 4.86, [[0, 'Our land carries Earth’s blueprint,'], [0.42, 'and a snapshot of everyone alive in 2027.']]]]
+  : [[4.8, '06a', D06A, [[0, 'Our land carries Earth’s blueprint,']]], [4.8 + D06A / RATE + 0.2, `alive-${YEAR}`, ALIVE_D[YEAR] || 3.0, [[0, `and a snapshot of everyone alive in ${YEAR}.`]]]];
 const SHOTS = [
   { id: 'earth', len: 15.5, vo: [[2.6, '01', 1.75, [[0, 'Earth. 2027.']]], [7.3, '02', 1.25, [[0, 'Then came The Event.']]], [11.6, '03', 1.67, [[0, 'Earth became uninhabitable.']]]] },
   { id: 'fleet', len: 9.5, vo: [[1.3, '04', 4.44, [[0, 'A fleet of probes went out,'], [0.36, 'each one looking for a place where life could carry on.']]]] },
-  { id: 'ship', len: 15, game: true, vo: [[1.3, '05', 0.91, [[0, 'We are one of them.']]], [4.8, '06', 4.86, [[0, 'Our land carries Earth’s blueprint,'], [0.42, 'and a snapshot of everyone alive in 2027.']]], [10.6, `gone-${YEAR}`, GONE[YEAR] || 1.7, [[0, `…and gone in ${YEAR}.`]]]] },
+  { id: 'ship', len: 15, game: true, vo: [[1.3, '05', 0.91, [[0, 'We are one of them.']]], ...ALIVE, [10.6, `gone-${YEAR}`, GONE[YEAR] || 1.7, [[0, `…and gone in ${YEAR}.`]]]] },
   { id: 'worm', len: 9.5, game: true, vo: [[1.3, '08', 3.34, [[0, 'The wormhole links the ships of the fleet.'], [0.66, 'Things come through it.']]]] },
   { id: 'voids', len: 12, game: true, vo: [[1.2, '07', 4.36, [[0, 'A few centuries out, a glitch in the wormhole'], [0.55, 'opened black holes inside our ship.']]], [6.9, '14', 3.11, [[0, 'They threw us off course.'], [0.42, 'They come and go as they wish.']]]] },
   { id: 'shred', len: 10.5, vo: [[1.4, '09', 5.15, [[0, 'One ship carries the Shred Hole: a fabricator'], [0.5, 'that lost its Earth blueprint in an accident.']]]] },

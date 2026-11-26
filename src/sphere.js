@@ -96,7 +96,7 @@ const ANSWERS = [
   [/\b(navigat\w*|sextant|star ?fix|stars?|lost|where are we|position|celestial)\b/i, 'We can find out where we are, brody: three stars and a sextant. [[tutorial:stars]]'],
   [/\b(gun|shoot|reload|aim|fire)\b/i, 'Guns, brody. Careful with the flowers. [[tutorial:guns]]'],
   [/\b(walk|move|look|control|keys?|how do i)\b/i, 'Start with getting about, brody. [[tutorial:walk]]'],
-  [/\b(story|ship|probe|world ?builder|shred ?hole|wormhole|earth)\b/i, () => pick(['We’re one of a fleet of probes, brody, looking for somewhere life can carry on. Our nav went centuries ago; the wormhole links us to the other ships.', 'The land under you carries Earth’s blueprint, brody, and a snapshot of everyone in 2027. Worth looking after.'])],
+  [/\b(story|ship|probe|world ?builder|shred ?hole|wormhole|earth)\b/i, () => pick(['We’re one of a fleet of probes, brody, looking for somewhere life can carry on. Our nav went centuries ago; the wormhole links us to the other ships.', `The land under you carries Earth’s blueprint, brody, and a snapshot of everyone alive in ${new Date().getFullYear() + 1}. Worth looking after.`])],
   [/\b(who|what) are you\b/i, `I’m ${PIP}, brody! The garden, only small: I keep a copy of it in my glass. I’m here to keep you company and show you how stuff works.`],
   [/\b(hi|hello|hey)\b/i, () => pick(['Yo brody! Good to see you.', 'Hey brody! What are we doing?'])],
   [/\b(thank|thanks)\b/i, () => pick(['Any time, brody.', 'You got it, brody.'])],

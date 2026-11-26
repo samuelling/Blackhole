@@ -11,7 +11,7 @@ The background narrative for the game, as Sam set it out (26 Nov 2026). Everythi
 ## What the land carries
 
 - **Earth's blueprint** is embedded in the land.
-- So is a **static snapshot of the entire human population in 2027**, taken before The Event. Alive in 2027, and gone the year after whenever you are hearing this.
+- So is a **static snapshot of the entire human population**, taken before The Event. In the telling it is always next year: everyone alive in the year after the one you are hearing this in, and gone in that same year. (Played in 2026, that is 2027.)
 
 ## What went wrong
 
