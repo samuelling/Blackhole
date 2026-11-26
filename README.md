@@ -67,6 +67,8 @@ Not in this version: the hammer and the fit light from Dry Stack, and any collis
 
 The Shred Hole has an **Arsenal** at the end of its shelf: Betamax's guns (SIG M7, IWI Tavor X95, SIG M250, IWI Negev NG7, HK416 A5, HK MP7A2, Benelli M1014, HK M110A1 CSASS, SIG M18, Glock 17). Gun steel doesn't shred, so they go through the portal whole, and in the garden each comes out of the wormhole as the real gun (Betamax's own models, `src/betamax/`), falling to the grass by the junk heap.
 
+For now (a demo, before anything has come through) there's also a **crate of the whole arsenal** on the path just inside the gate, ahead and to the right where you start. **Q** at it takes a gun; Q again swaps it for the next one. It never runs out, and it's the same crate in every browser, so it isn't saved or sent (`?nocrate` leaves it out).
+
 - **Q** picks up the gun you look at (putting down the one you hold), or draws and puts away your own; **Shift+Q** puts it down. **Click** fires (held, for the automatics), the **right button** aims down the sight, **R** reloads. On an iPad the pad has *gun: pick up / draw*, then fire (hold), aim (hold), reload and put away; on a controller L3 picks up, R2 fires, L2 aims, □ reloads.
 - Each gun keeps Betamax's numbers: rate of fire, magazine, spread (more moving, much less aimed), recoil, the shotgun's nine pellets, damage. Its report is synthesized the way Betamax does it (fitted to recordings of real rifles).
 - Firing is hitscan from your eye. A round stops at the first thing on its line: another player, a stone or piece of junk in an open free build (it takes the round's real momentum, about 4 to 9 N·s, and moves), a tree trunk (bark and leaves fly), a hedge or the ground (a puff of dust).

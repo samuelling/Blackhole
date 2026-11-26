@@ -9,7 +9,8 @@
 // you're back on your feet at the gate. Anyone can turn off being shot (Settings → Garden); their own guns still work.
 //
 // Keys: Q picks up the gun you're looking at (swapping for the one you hold), or draws / puts away your own; Shift+Q puts it down.
-// Click fires (held, for the automatics), right button aims, R reloads. Touch and the controller have their own buttons.
+// Click fires (held, for the automatics), right button aims, R reloads. For now there's also a crate of the whole arsenal just
+// inside the gate: Q at it takes a gun (the next one each time, the one you held going back in). Touch and the controller have their own buttons.
 import * as THREE from 'three';
 import { WEAPONS, weaponProp } from './betamax/arsenal.js';
 import { reloadDuration } from './betamax/weapons.js';
@@ -42,6 +43,33 @@ export function createArms(o) {
     mesh.position.set(x, gy + (fall ? 6 : 0) + mesh.userData.lift, z); group.add(mesh);
     lying.set(uid, { w, mesh, gy, vy: 0, fall: !!fall });
   }
+  // the demo crate by the gate: a box of the whole arsenal that never runs out (for now, before anything has come through the
+  // Shred Hole). It's everyone's own (each browser has the same crate in the same place), so it's neither saved nor sent.
+  const CRATE_ORDER = ['m1014', 'm7', 'x95', 'hk416', 'mp7', 'csass', 'm250', 'ng7', 'm18', 'g17'].filter(okW);
+  let crate = null, crateNext = 0;
+  if (o.crateSpot) {
+    const c = o.crateSpot(), g = new THREE.Group(), gy = o.heightAt(c.x, c.z);
+    const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.85 }), dark = new THREE.MeshStandardMaterial({ color: 0x4a3420, roughness: 0.9 });
+    const W = 1.25, D = 0.62, H = 0.42, t = 0.025;
+    const plank = (w, h, d, x, y, z, m = wood) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); b.castShadow = b.receiveShadow = true; g.add(b); };
+    plank(W, t, D, 0, t / 2 + 0.04, 0, dark);                                                                    // floor
+    for (const s of [-1, 1]) { plank(W, H, t, 0, H / 2 + 0.04, s * (D / 2 - t / 2)); plank(t, H, D - 2 * t, s * (W / 2 - t / 2), H / 2 + 0.04, 0); }
+    for (const s of [-1, 1]) for (const k of [-1, 1]) plank(0.06, H + 0.02, 0.06, s * (W / 2 - 0.03), H / 2 + 0.05, k * (D / 2 - 0.03), dark);   // corner posts
+    for (const s of [-1, 1]) plank(0.07, 0.04, D + 0.02, s * 0.32, 0.02, 0, dark);                                // skids
+    plank(W + 0.02, 0.06, 0.035, 0, H * 0.55, -(D / 2 + 0.005), dark); plank(W + 0.02, 0.06, 0.035, 0, H * 0.55, D / 2 + 0.005, dark);   // bands
+    // a few of the guns showing over the rim
+    [['m1014', -0.12, 0.12, 0.1], ['m7', 0.06, -0.1, -0.2], ['x95', 0.2, 0.1, 0.15], ['mp7', -0.3, -0.12, -0.2]].filter(([w]) => okW(w)).forEach(([w, x, z, r], i) => {
+      const m = weaponProp(w); m.rotation.set(0.35 * (i % 2 ? 1 : -1), Math.PI / 2 + r, Math.PI / 2); m.position.set(x, H - 0.06 + i * 0.015, z); g.add(m); });
+    g.position.set(c.x, gy, c.z); g.rotation.y = c.yaw || 0; group.add(g);
+    crate = { x: c.x, z: c.z, y: gy + H * 0.6, g };
+  }
+  function crateGun() { let w = CRATE_ORDER[crateNext % CRATE_ORDER.length]; if (held && held.w === w) w = CRATE_ORDER[++crateNext % CRATE_ORDER.length]; return w; }
+  function fromCrate() {
+    const w = crateGun(); crateNext = (CRATE_ORDER.indexOf(w) + 1) % CRATE_ORDER.length;
+    take(w);   // (the one you held goes back in the crate)
+    o.hint(`${WEAPONS[w].name} · ${WEAPONS[w].cal} · click fires, right button aims, R reloads · Q at the crate again for the next gun`, 5000);
+    return true;
+  }
   function clearLying() { for (const L of lying.values()) group.remove(L.mesh); lying.clear(); }
   function redraw() { clearLying(); for (const l of store.lying) layDown(l, false); }
   redraw();
@@ -71,9 +99,14 @@ export function createArms(o) {
       _v.copy(p).sub(camera.position).normalize(); if (_v.dot(_d) < 0.55 && d > 1.0) continue;   // in front of you (or at your feet)
       bd = d; best = uid;
     }
+    if (crate) {   // the crate, if no gun on the ground is nearer
+      const d = Math.hypot(crate.x - me.x, crate.z - me.z) - 0.4;
+      if (d < bd) { _v.set(crate.x, crate.y, crate.z).sub(camera.position).normalize(); if (_v.dot(_d) > 0.45 || d < 0.9) best = 'crate'; }
+    }
     return best;
   }
   function pickUp(uid) {
+    if (uid === 'crate') return fromCrate();
     const L = lying.get(uid); if (!L) return false;
     const i = store.lying.findIndex(l => l[0] === uid); if (i < 0) return false;
     const w = L.w; store.lying.splice(i, 1); group.remove(L.mesh); lying.delete(uid);
@@ -275,7 +308,7 @@ export function createArms(o) {
     for (const L of lying.values()) if (L.fall) { L.vy -= 4.2 * dt; L.mesh.position.y += L.vy * dt; const floor = L.gy + L.mesh.userData.lift; if (L.mesh.position.y <= floor) { L.mesh.position.y = floor; if (L.vy < -2) thud('iHard', L.mesh.position); L.fall = false; } }
     // the one you could pick up
     const nu = !downUntil && o.free() ? nearest() : null;
-    if (nu !== hintFor) { hintFor = nu; if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
+    if (nu !== hintFor) { hintFor = nu; if (nu === 'crate') o.hint(`Q · take a gun from the crate (${WEAPONS[crateGun()].name}${held ? `, for the ${held.name}` : ''})`, 3000); else if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
     // down, and up again
     if (downUntil) { downEl.style.opacity = 1; if (now > downUntil) { downUntil = 0; hp = HP; o.respawn(); downEl.style.opacity = 0; if (o.send) o.send({ a: 'up' }); hud(); } }
     else if (hp < HP && now - hurtAt > 4) { hp = Math.min(HP, hp + 12 * dt); if (hp >= HP) hud(); else if (Math.random() < 0.1) hud(); }
@@ -376,5 +409,7 @@ export function createArms(o) {
     /** For tests: a gun in hand at once. */
     give(w) { if (okW(w)) take(w); },
     lyingCount: () => lying.size,
+    /** The demo crate by the gate (tests): where it is, and what Q would give from it. */
+    get crate() { return crate && { x: crate.x, z: crate.z, next: crateGun() }; }, near: () => nearest(),
   };
 }

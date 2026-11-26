@@ -1698,7 +1698,7 @@ drawer = createDrawer({
       const mine = garden.arbor ? garden.arbor.trees.map(t => ({ x: t.x, z: t.z, r: t.S.r, gy: t.gy, top: t.H })) : []; return mine.length ? trunkList.concat(mine) : trunkList; },
     audio: () => A, hint: (t, ms) => setHint(t, ms), players: () => window.__fakePlayers || (multi && multi.inRoom ? multi.players() : []),   // (__fakePlayers, __sent: tests)
     send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '',
-    heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }),
+    heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }), crateSpot: QS.has('nocrate') ? null : () => ({ x: layout.gate.x + 1.9, z: layout.start.z - 2.3, yaw: 0.35 }),   // (the demo crate, just inside the gate)
     respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
     kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
     me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
