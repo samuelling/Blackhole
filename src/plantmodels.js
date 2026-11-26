@@ -56,7 +56,7 @@ export function createPlantModels(o) {
     const mk = (g, part, cap) => {
       if (!g || !cap) return null; const gg = g.clone(); gg.setAttribute('aPlant', new THREE.InstancedBufferAttribute(new Float32Array(cap), 1).setUsage(THREE.DynamicDrawUsage));
       const im = new THREE.InstancedMesh(gg, mat[part], cap); im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.count = 0; im.frustumCulled = false;
-      im.customDepthMaterial = dep[part]; im.castShadow = true; im.receiveShadow = true; root.add(im); meshes.push(im); return im;
+      im.customDepthMaterial = dep[part]; im.castShadow = true; im.receiveShadow = true; im.visible = false; root.add(im); meshes.push(im); return im;
     };
     const light = (T) => { for (const pp of T.parts) for (const im of [pp.leaf, pp.stem]) if (im) im.castShadow = false; if (T.head) T.head.castShadow = false; return T; };
     const tiers = [0, 1].map(t => ({
@@ -90,7 +90,7 @@ export function createPlantModels(o) {
       if (tier === 0) counts.near++; else counts.far++;
     }
     for (const k of keys) { const S = SP[k]; let used = 0;
-      for (const im of S.meshes) { im.instanceMatrix.needsUpdate = true; im.geometry.attributes.aPlant.needsUpdate = true; used += im.count; }
+      for (const im of S.meshes) { im.visible = im.count > 0; if (im.count) { im.instanceMatrix.needsUpdate = true; im.geometry.attributes.aPlant.needsUpdate = true; } used += im.count; }   // (an empty one still costs a draw's worth of state changes in every pass: hide it)
       // a species nobody is near gives its textures back to the GPU after a while (three uploads them again when they are next drawn)
       if (used) { S.idle = 0; S.resident = true; } else if (S.resident && ++S.idle > 40) { for (const t of S.tex) t.dispose(); S.resident = false; } }
     if (changed) texA.needsUpdate = true;
