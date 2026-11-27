@@ -26,6 +26,8 @@ import { doyLabel, doyToMonthDay } from './seasons.js';
 import { createMulti } from './multi.js';
 import { createWorlds } from './worlds.js';
 import { createArms } from './arms.js';
+import { createHaptics, TRIG } from './haptics.js';
+import { GLOWS } from './outfits.js';
 import { createNav } from './nav.js';
 import { createFilm } from './film.js';
 import { createSphere } from './sphere.js';
@@ -56,7 +58,7 @@ const D2R = Math.PI / 180;
 const WATERTOWN = { lat: 42.3703, lon: -71.1828 };   // Watertown, Massachusetts: the default place under the sky
 const S = { lat: WATERTOWN.lat, lon: WATERTOWN.lon, place: 'Watertown, MA', limit: 5.5, moonSize: 1, seasonRate: 0, properTime: true, wind: 0.35, gusts: 1, voidSize: 1, drain: 1, wakeRange: 1, lensing: true, disk: true, streams: true, evapTime: 1, reform: true,
   exhibit: 1, moon: 1, exposure: 1, bloom: 1, fog: 1, clouds: 0.35, ao: true, scale: 1, body: true, weather: 'live', rain: 0, snow: 0, snowGround: 0, autumnTemp: 0, autumnSun: 0.55, autumnRain: 1, autumnFrost: false, chimes: true, meadow: true, restless: true };
-const SAVED = ['brodie', 'brodieChat', 'brodieVoice', 'brodieRobot', 'lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost', 'chimes', 'meadow', 'restless'];
+const SAVED = ['rumble', 'rumbleK', 'triggerFx', 'brodie', 'brodieChat', 'brodieVoice', 'brodieRobot', 'lat', 'lon', 'place', 'limit', 'moonSize', 'properTime', 'wind', 'gusts', 'voidSize', 'drain', 'wakeRange', 'lensing', 'disk', 'streams', 'evapTime', 'reform', 'exhibit', 'moon', 'exposure', 'bloom', 'fog', 'clouds', 'ao', 'scale', 'body', 'weather', 'rain', 'snow', 'snowGround', 'autumnTemp', 'autumnSun', 'autumnRain', 'autumnFrost', 'chimes', 'meadow', 'restless'];
 try { const o = JSON.parse(localStorage.getItem('gd.settings') || '{}'); for (const k of SAVED) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; } catch (e) {}
 let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const o = {}; for (const k of SAVED) o[k] = S[k]; localStorage.setItem('gd.settings', JSON.stringify(o)); } catch (e) {} }, 400); };
 const OUT = { light: 1, near: 0 };   // readings published to Invisible Hands
@@ -1185,7 +1187,55 @@ const modeNow = () => spaceOn ? 'space' : walling.busy ? (walling.active && wall
 const sendKey = (code, down, shift, repeat) => dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|^Digit/, '').toLowerCase(), shiftKey: !!shift, repeat: !!repeat, bubbles: true, cancelable: true }));
 const padClick = () => { if (help && help.isOpen) { help.close(); return; } if (drawer && drawer.isOpen) { drawer.close(); return; } act(0); };
 const pad = createGamepad({ started: () => started, start: () => enterGarden(), hint: t => setHint(t, 6000), context: modeNow, key: sendKey, click: padClick,
-  help: () => { if (help) help.toggle(); } });
+  help: () => { if (help) help.toggle(); }, triggerAt: () => feel.trigAt });
+// what the controller in your hands feels (haptics.js): rumble through the browser, and on a DualSense opened over WebHID the triggers'
+// resistance and the light bar too. The game says what happened (a shot, a landing, a hit, the strain of a stone); stepFeel turns the rest
+// of the state (the gun in hand, what's in its magazine, your suit's glow) into the triggers and the light every frame.
+const haptics = createHaptics({ gamepad: () => pad.pad, on: () => S.rumble !== false, gain: () => (S.rumbleK == null ? 1 : S.rumbleK), triggersOn: () => S.triggerFx !== false,
+  hint: (t, ms) => setHint(t, ms || 5000) });
+const feel = { airY: 0, airV: 0, held: false, muzzle: 0, hurt: 0, trigAt: 0.5 };
+function feelArms(k, d) {
+  if (k === 'shot') {   // the kick: heavier for the bigger calibres and the shotgun, softened when you're braced
+    const base = Math.max(0.2, Math.min(1, d.kick * 16 + d.cal * 0.08 + (d.pellets > 1 ? 0.25 : 0))) * (0.55 + 0.45 * d.steady);
+    haptics.play(base, Math.min(1, base * 0.8 + 0.2), d.auto ? 0.07 : 0.12 + 0.03 * d.cal); feel.muzzle = 1;
+  } else if (k === 'dry') haptics.play(0, 0.25, 0.04, 'flat');
+  else if (k === 'hit') { haptics.play(d.head ? 1 : 0.85, 0.7, d.down ? 1.1 : d.head ? 0.55 : 0.35); feel.hurt = 1; }
+  else if (k === 'reload') {
+    if (d === 'magIn' || d === 'shell') haptics.play(0.05, 0.35, 0.05, 'flat');
+    else if (d === 'bolt' || d === 'rack') haptics.play(0.45, 0.3, 0.08);
+    else if (d === 'magOut' || d === 'drop' || d === 'tug') haptics.play(0, 0.15, 0.04, 'flat');
+  }
+}
+function stepFeel(dt) {
+  // landing: as hard as you came down (a hop is a soft thump; dropping out of a tree, a jolt)
+  if (feel.airY > 0 && jumpY === 0 && !climb) { const v = Math.min(1, Math.abs(feel.airV) / 7); if (v > 0.15) haptics.play(0.2 + 0.7 * v, 0.35 * v, 0.1 + 0.12 * v); }
+  feel.airY = jumpY; if (jumpY > 0) feel.airV = jumpV;
+  // a stone in your hands: a low steady strain, heavier for heavier stones and when you bear down, with a tremble in it; a thud set down
+  const g = walling.busy ? walling.gesture : null;
+  if (g && g.held) { const k = Math.min(1, (g.kg || 25) / 160), e = 0.5 + 0.5 * Math.min(1, g.effort || 0); haptics.hold((0.06 + 0.32 * k) * e + (g.press ? 0.15 : 0), (0.04 + 0.12 * k) * Math.random()); }
+  else haptics.hold(0, 0);
+  if (feel.held && !(g && g.held)) haptics.play(0.3, 0.15, 0.12);
+  feel.held = !!(g && g.held);
+  // the triggers: each gun its own pull. A semi-automatic resists and breaks (the CSASS stiff and crisp, the Benelli long and heavy, the
+  // pistols light); an automatic leans back on your finger and, firing, buzzes at its own rate. Empty or reloading, it goes slack.
+  let r = null, l = null, at = 0.5; const sp = arms && arms.spec;
+  if (sp && !arms.down) {
+    if (arms.reloading || arms.rounds <= 0) r = TRIG.off();
+    else if (sp.auto) { const heavy = sp.cal >= 2, light = sp.w === 'mp7'; r = arms.firing ? TRIG.vibration(3, heavy ? 8 : light ? 5 : 6, sp.rpm / 60) : TRIG.feedback(3, heavy ? 6 : light ? 3 : 4); at = 0.4; }
+    else { const [a, b, f] = sp.w === 'csass' ? [4, 6, 8] : sp.pellets > 1 ? [3, 6, 8] : [3, 5, 5]; r = TRIG.weapon(a, b, f); at = b / 10 + 0.02; }
+    l = TRIG.feedback(2, 2);   // L2 aims: a little weight, like bringing a stock up
+  } else if (nav && nav.out) { r = TRIG.weapon(3, 5, 3); l = TRIG.feedback(2, 1); at = 0.52; }
+  haptics.triggers(r, l); feel.trigAt = at;
+  // the light bar: your suit's glow; a warm flash with each shot; red when you're hit, and a slow red pulse while you're down
+  const glow = (multi && multi.outfit && multi.outfit.glow) || GLOWS[0];
+  feel.muzzle = Math.max(0, feel.muzzle - dt * 16); feel.hurt = Math.max(0, feel.hurt - dt * 1.4);
+  let c = [glow[0] * 0.6, glow[1] * 0.6, glow[2] * 0.6];
+  if (arms && arms.down) { const p = 0.35 + 0.35 * Math.sin(performance.now() / 400); c = [p, 0, 0]; }
+  const mz = feel.muzzle, hu = feel.hurt;
+  c = c.map((v, i) => v + ([1, 0.7, 0.3][i] - v) * mz); c = c.map((v, i) => v + ([1, 0, 0][i] - v) * hu);
+  haptics.light(c[0], c[1], c[2]);
+  haptics.update(dt);
+}
 // on an iPad or a phone: a rail of modes down the right edge and a pad of what you can do in the one you are in (touchui.js)
 const tui = isTouch ? createTouchUI({ context: modeNow, key: sendKey, click: padClick, selfView: () => selfView, started: () => started }) : null;
 document.addEventListener('pointerlockchange', () => $('aim').classList.toggle('on', document.pointerLockElement === canvas || padAim));
@@ -1261,6 +1311,10 @@ function collapseVoid(v, self = false) {
   if (body && !self) body.reach(clock.elapsedTime);
   const t = clock.elapsedTime, slot = voidSlots.indexOf(v);
   v.evap = { t0: t, T: (v.giant ? 5.5 : 1.6 + 1.3 * v.k) * S.evapTime, R0: Math.max(v.R, 0.12 * v.k), wake0: v.wake, drain0: Math.max(v.drain, v.wake), slot, self };
+  if (started && !spaceOn) {   // felt: the heat rising as a hum in the light motor, then the pop, as strong as you are near
+    const d = camera.position.distanceTo(v.pos), k = Math.pow(Math.max(0, 1 - d / 45), 1.5) * (v.giant ? 1.4 : 1);
+    if (k > 0.02) { haptics.play(0, Math.min(0.4, 0.35 * k), v.evap.T, 'rise'); haptics.play(Math.min(1, 0.9 * k), Math.min(1, 0.6 * k), 0.45, 'decay', v.evap.T); }
+  }
   if (self) { if (!firstSelf && started) { firstSelf = true; setHint('a void gave out on its own · it lies dormant a while, then gathers again somewhere near', 8000); } }
   else if (!firstCollapse) { firstCollapse = true; setHint('evaporating · Hawking radiation, about 10^57 years of it sped into seconds', 8000); }
   if (A.ctx && A.on) { const ac = A.ctx, t0 = ac.currentTime, T = v.evap.T;   // a rising whistle as it heats, then the pop
@@ -1619,6 +1673,11 @@ const SETTINGS = [
   { id: 'brodieKey', tab: 'garden', group: 'Brodie', label: 'Use my own Anthropic API key', kind: 'action', set: () => { const k = prompt('Your Anthropic API key, so Brodie can really talk (Claude Haiku). It stays in this browser and goes only to Anthropic. Leave it empty to forget it.', ''); if (k === null) return; try { if (k.trim()) localStorage.setItem('gd.brodie.key', k.trim()); else localStorage.removeItem('gd.brodie.key'); } catch (e) {} setHint(k.trim() ? 'Brodie will talk with your key' : 'your key is forgotten', 3000); } },
   { id: 'brodieInfo', tab: 'garden', group: 'Brodie', label: '', kind: 'info', get: () => { let k = ''; try { k = localStorage.getItem('gd.brodie.key') || ''; } catch (e) {} return k ? 'Brodie talks with your own key (Claude Haiku, straight from this browser)' : 'Brodie talks with the garden’s key when the sphere Worker is up, and from his written lines otherwise'; } },
   { id: 'hideName', tab: 'garden', group: 'Guns', label: 'Hide my name from the others (H)', kind: 'toggle', get: () => !!(multi && multi.hideName), set: v => { if (multi) multi.hideName = !!v; }, note: 'in a room: your name tag isn’t shown over you. Lying down, it never is' },
+  { id: 'rumble', tab: 'garden', group: 'Controller', label: 'Rumble', kind: 'toggle', get: () => S.rumble !== false, set: v => { S.rumble = !!v; save(); }, note: 'a controller’s motors: each shot’s kick, landings, being hit, the strain of a stone in your hands, a void going pop nearby' },
+  { id: 'rumbleK', tab: 'garden', label: 'Rumble strength', kind: 'range', min: 0, max: 1.5, fmt: fmtPct, get: () => (S.rumbleK == null ? 1 : S.rumbleK), set: v => { S.rumbleK = v; save(); } },
+  { id: 'dualsense', tab: 'garden', label: 'Connect a DualSense', kind: 'action', set: () => haptics.connect(),
+    note: 'for its adaptive triggers (each gun its own pull) and its light bar (your suit’s glow) · Chrome or Edge on a computer: pick the controller once, it reconnects by itself after' },
+  { id: 'triggerFx', tab: 'garden', label: 'Trigger effects', kind: 'toggle', get: () => S.triggerFx !== false, set: v => { S.triggerFx = !!v; save(); }, note: 'a DualSense’s L2 and R2 pushing back' },
   { id: 'canBeShot', tab: 'garden', group: 'Guns', label: 'Others can shoot me', kind: 'toggle', get: () => S.canBeShot !== false, set: v => { S.canBeShot = !!v; }, note: 'in a room: off, their rounds pass through you (your own gun still works)' },
   { id: 'saveInfo', tab: 'garden', group: 'Keeping your garden', label: '', kind: 'info', get: () => `Kept in this browser, and online: ${worlds ? worlds.status : 'not yet'}. Open your garden's link on another device to build there. A room keeps its own garden online, by its code.` },
   { id: 'saveLink', tab: 'garden', label: 'Copy the link to your garden', kind: 'action', set: () => worlds && worlds.copyLink(), note: 'open it on another device (an iPad, say) and your garden is there; keep it to yourself' },
@@ -1764,6 +1823,7 @@ drawer = createDrawer({
     me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch, st: stance }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
     steady: () => climb ? 0.55 : [1, 0.65, 0.35][stance],   // how much the sights wander: braced up a tree, crouched, lying down
     free: () => started && !spaceOn && !(nav && nav.out) && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+    feel: feelArms,
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
   addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
     if (nav && !arms.down && !walling.busy && !planter.open && ['KeyN', 'KeyK', 'KeyL', 'KeyR', 'KeyQ', 'Enter', 'Escape'].includes(e.code) && nav.key(e.code, true)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
@@ -2138,6 +2198,7 @@ function guestHere() { if (multi && multi.inRoom && walling.net.guest) { setHint
 function stepWalling(dt, t) {
   planter.update(); planter.tick(performance.now()); junk.update(dt, t); if (worlds) worlds.tick();
   if (arms) { arms.others(multi && multi.inRoom ? multi.players() : []); arms.update(dt); }
+  stepFeel(dt);
   if (nav) { nav.others(multi && multi.inRoom ? multi.players() : []); nav.update(dt); }
   if (sphere) sphere.update(dt);
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole

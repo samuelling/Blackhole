@@ -43,7 +43,7 @@ const KIND = Object.fromEntries(Object.entries(KC).map(([k, v]) => [v, k]));
  * o: { scene, camera, heightAt, blocked(x,z), trees(): [{x,z,r,gy,top,id?}], walling, audio(): {ctx, master}, hint(t,ms),
  *      players(): [{id, x, gy, z, down}], send(m) (to the room, or null), heapSpot(): {x,z}, respawn(), kick(pitch, yaw), canBeShot(): bool,
  *      me(): {x,gy,z,yaw,pitch}, selfView(): bool, body, waterAt(x, z) (the water's surface there, or null), lamps(): [[x, y, z]], breakLamp(i), arborTree(id): {wood, leaves, x, z, gy, H},
- *      plants: { near(x, z, d), destroy(rec) }, crateSpot() }
+ *      plants: { near(x, z, d), destroy(rec) }, crateSpot(), feel(what, data) (for the controller's rumble: 'shot', 'dry', 'hit', 'reload') }
  */
 export function createArms(o) {
   const { scene, camera } = o;
@@ -320,7 +320,7 @@ export function createArms(o) {
   function fire() {
     const h = held, ud = h.ud, now = performance.now() / 1000;
     if (h.rl) return;
-    if (h.mag <= 0) { foley('click', 0.5); trigger = false; reload(); return; }
+    if (h.mag <= 0) { foley('click', 0.5); if (o.feel) o.feel('dry'); trigger = false; reload(); return; }
     h.mag--; h.nextAt = now + 60 / (ud.rpm || 600); lastShot = now; fired++; hud();
     const O = camera.getWorldPosition(new THREE.Vector3()); camera.getWorldDirection(_d);
     const moving = o.moving ? o.moving() : 0;
@@ -344,6 +344,7 @@ export function createArms(o) {
       _o.set(0.03, 0.025, fw).applyMatrix4(g); _v.set(2.2 + Math.random(), 1.4 + Math.random(), 0.6 + Math.random() * 0.6).transformDirection(g).multiplyScalar(2.2 + Math.random());
       havoc.brass(_o, _v, (ud.cal || 0) >= 1, !!ud.tube); }
     recoil = Math.min(1, recoil + (ud.kick || 0.025) * 6);
+    if (o.feel) o.feel('shot', { w: h.w, kick: ud.kick || 0.025, cal: ud.cal || 0, pellets: ud.pellets || 1, auto: !!ud.auto, steady, aiming });
     if (o.kick) o.kick((ud.kick || 0.025) * (1 - 0.5 * aiming) * (0.5 + 0.5 * steady) * (0.7 + Math.random() * 0.6), (Math.random() - 0.5) * (ud.kick || 0.025) * 0.5 * (0.5 + 0.5 * steady));
   }
   // one round: the nearest of a body, a stone or piece of junk, a trunk, a lamp, the crate, the water, the ground or a hedge
@@ -446,6 +447,7 @@ export function createArms(o) {
   }
   function reloadEvent(name) {
     const h = held; if (!h) return; const ud = h.ud;
+    if (o.feel) o.feel('reload', name);
     if (name === 'drop') {   // the empty one falls out of the well and lies where it lands
       foley('magOut', 0.5);
       if (ud.mag && ud.makeMag) { ud.mag.updateMatrixWorld(true); const m = ud.makeMag(); ud.mag.matrixWorld.decompose(m.position, m.quaternion, m.scale); havoc.prop(m, _v.set((Math.random() - 0.5) * 0.4, -0.8, (Math.random() - 0.5) * 0.4), _w.set(Math.random() * 6 - 3, Math.random() * 4, 2)); }
@@ -490,6 +492,7 @@ export function createArms(o) {
     hp -= Math.max(0, Math.min(400, +m.d || 0)); hurtAt = performance.now() / 1000; hurt = Math.min(1, hurt + 0.5 + (m.h ? 0.4 : 0));
     if (isFinite(m.dx) && isFinite(m.dz)) myDir = [+m.dx, +m.dz];
     if (o.kick) o.kick(0.03 + (m.h ? 0.05 : 0), (Math.random() - 0.5) * 0.06);   // knocked: the view jolts
+    if (o.feel) o.feel('hit', { head: !!m.h, down: hp <= 0 });
     if (m.h) crack(true);
     if (hp <= 0) {
       hp = 0; downUntil = 1; downAt = hurtAt; trigger = false; aimOn = false; if (held) held.rl = null;
@@ -691,7 +694,9 @@ export function createArms(o) {
   return {
     update, others, key, mouse, arrive, onMsg,
     get held() { return held && held.drawn ? held.w : ''; }, get down() { return !!downUntil; }, get hp() { return hp; }, get aiming() { return aiming; },
-    get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; }, get fired() { return fired; },
+    get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; }, get firing() { return !!(trigger && held && held.drawn && !held.rl); },
+    /** what the gun in hand is, for the controller's triggers: id, automatic or not, cyclic rate, kick, calibre */
+    get spec() { const h = held; return h && h.drawn ? { w: h.w, auto: !!h.ud.auto, rpm: h.ud.rpm || 600, kick: h.ud.kick || 0.025, cal: h.ud.cal || 0, pellets: h.ud.pellets || 1, pistol: !!(h.ud.pistolHip || h.ud.pistol) } : null; }, get fired() { return fired; },
     /** How much the view narrows, aiming: 1 at the hip, the gun's own sight field (Betamax's adsFov, of 70°) aimed. */
     get zoom() { return held ? 1 + (((SCOPE[held.w] || held.ud.adsFov || 55)) / 70 - 1) * aiming : 1; },
     net: {

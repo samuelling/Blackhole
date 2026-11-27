@@ -222,6 +222,15 @@ The central fountain and the two on the cross walk are turned and carved in Blen
 
 A PS5 DualSense, an Xbox pad, or anything the browser gives the standard layout (`src/gamepad.js`; pair it or plug it in, press a button, and it is found). The left stick walks, at the pace it is pushed to; the right stick looks. Every button is sent on as the key or the click it stands for, so nothing has two ways of happening, and what a button is depends on what you are doing: walking (R2 the click, ✕ jump or stand up, ○ crouch (hold: lie down), L2 a void, □ build, △ plants, R3 vaporize, the d-pad and bumpers gestures), building (R2 lift and set, L1 R1 turn, L2 finer, the d-pad tip roll length edge, ✕ press, ○ pass through, □ hearting, △ more stone, R3 glue, Create undo, the touchpad put away), planting, and the space view (right stick round, triggers nearer and farther). Options opens the controls sheet, which lists the controller's buttons once one is connected. The room panel still wants a mouse.
 
+**What it feels** (`src/haptics.js`). *Rumble* works through the browser's own gamepad haptics (Chrome, Edge, and Safari on a Mac; not Firefox or iPhone/iPad Safari): each shot's kick, heavier for the bigger calibres and the shotgun and softer when you're crouched, lying down or braced in a tree; a thump on landing, as hard as you came down; a hit (longer for a head shot, longer still going down); the reload's clicks and the rack of the bolt; a low strain while you hold a stone, heavier for heavier stones and when you press down, with a thud as you set it; and a void going pop, a rising hum in the light motor while it heats and then the bang, as strong as you are near. *Settings → Garden → Controller* turns it off or sets its strength.
+
+A **DualSense** can do more, and the page talks to it directly for that (WebHID: Chrome or Edge on a computer). *Settings → Garden → Controller → Connect a DualSense*, pick it once, and it reconnects by itself after, over USB or Bluetooth. Then:
+- **R2 is each gun's trigger.** A semi-automatic resists and then breaks with a snap, and the shot goes at the break: the CSASS stiff and crisp, the Benelli long and heavy, the pistols light. An automatic leans back on your finger and, while it fires, buzzes at its own cyclic rate (the M250 and Negev hardest). Empty or reloading, the trigger goes slack. The sextant's is a soft click. **L2** (aim) has a little weight, like bringing a stock up.
+- **The light bar** wears your suit's glow colour; it flashes warm with each shot, red when you're hit, and pulses red while you're down.
+- The rumble goes through the same connection. The trigger effects can be turned off on their own.
+
+Without the DualSense connection, R2 still counts as pulled at the break point (about half to two-thirds of the way), so the guns feel the same to fire; there's just nothing pushing back.
+
 ### The controls sheet
 
 **?** (or the *controls* button) opens every control on one sheet, with the part for what you are doing now (walking, a stint of wall, a free build, planting, the space view, a room) first and marked. `src/help.js` holds the list.

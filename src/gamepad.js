@@ -26,7 +26,7 @@ export const MAP = {
   space: [[8, 'KeyZ', 'back inside'], [1, 'KeyZ', 'back inside']],
 };
 
-/** o: { context(): 'walk'|'build'|'plant'|'space', key(code, down, shift, repeat), click(), help(), start(), started(): bool, hint(text) } */
+/** o: { context(): 'walk'|'build'|'plant'|'space', key(code, down, shift, repeat), click(), help(), start(), started(): bool, hint(text), triggerAt(): how far R2 is pulled to count (0..1) } */
 export function createGamepad(o) {
   const was = [], rep = {}, sent = {}; let index = -1, kind = 'ps', seen = false, used = false;
   const st = { mx: 0, mz: 0, mag: 0, lx: 0, ly: 0, zoom: 0, on: false };
@@ -40,7 +40,9 @@ export function createGamepad(o) {
     const pads = navigator.getGamepads ? navigator.getGamepads() : []; let gp = index >= 0 ? pads[index] : null;
     if (!gp) { for (const p of pads) if (p && p.connected && p.buttons.length >= 10) { gp = p; index = p.index; break; } }
     if (!gp) return st;
-    const b = i => gp.buttons[i] ? (gp.buttons[i].pressed || gp.buttons[i].value > 0.5) : false, ax = gp.axes;
+    // the triggers count as pulled where a real one breaks (R2 at the gun's break, set by the trigger effect: haptics.js), and let go a little short of it
+    const at = o.triggerAt ? o.triggerAt() : 0.5;
+    const b = i => { const q = gp.buttons[i]; if (!q) return false; if ((i === 6 || i === 7) && q.value > 0) { const th = i === 7 ? at : 0.5; return q.value > (was[i] ? th - 0.08 : th); } return q.pressed || q.value > 0.5; }, ax = gp.axes;
     const [x, y, m] = dead(ax[0] || 0, ax[1] || 0, 0.16), [rx, ry] = dead(ax[2] || 0, ax[3] || 0, 0.14);
     if (m > 0) { st.mx = x / m; st.mz = -y / m; st.mag = m; used = true; }
     const curve = v => v * (0.35 + 0.65 * Math.abs(v)); st.lx = curve(rx); st.ly = curve(ry); if (rx || ry) used = true;
@@ -61,5 +63,5 @@ export function createGamepad(o) {
     }
     return st;
   }
-  return { poll, get connected() { return index >= 0; }, get used() { return used; }, get kind() { return kind; }, names: () => NAMES[kind], MAP };
+  return { poll, get connected() { return index >= 0; }, get pad() { const p = index >= 0 && navigator.getGamepads ? navigator.getGamepads()[index] : null; return p || null; }, get used() { return used; }, get kind() { return kind; }, names: () => NAMES[kind], MAP };
 }
