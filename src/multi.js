@@ -39,7 +39,8 @@ export function createMulti(o) {
   const shared = new Set(); model.traverse(m => { if (m.isMesh) shared.add(m.geometry); });
   let room = null, code = '', name = '', outfit = loadOutfit(), hearAll = false, followSky = true, sendT = 0, skyT = 0, status = '';
   let gardenOf = null, synced = false, openedAt = 0, asked = null, askedAt = 0, joinedAt = 0, bigSeq = 0; const pendingW = [], bigIn = new Map(); let W = null;
-  try { name = clean(localStorage.getItem('gd.name')) || ''; hearAll = localStorage.getItem('gd.hearAll') === '1'; } catch (e) {}
+  let hideName = false;   // your name tag: shown over you to the others, or not (H, or the room panel)
+  try { name = clean(localStorage.getItem('gd.name')) || ''; hearAll = localStorage.getItem('gd.hearAll') === '1'; hideName = localStorage.getItem('gd.hideName') === '1'; } catch (e) {}
   const others = new Map();     // jammer id -> { id, n, name, outfit, body, tag, snaps, off, voice, level, muted }
   if (selfBody) selfBody.setOutfit(outfit);
 
@@ -104,6 +105,7 @@ export function createMulti(o) {
         <li><i style="background:${css(outfit.suit)}"></i><span>${esc(name || 'you')} <small>(you)</small></span></li>
         ${[...others.values()].map(p => `<li><i style="background:${css(p.outfit ? p.outfit.suit : [0.5, 0.5, 0.5])}"></i><span>${esc(p.name || '…')} <small>${p.peer ? (p.peer.path === 'direct' ? 'direct' : p.peer.path === 'relay' ? 'via relay, no voice' : 'connecting…') : ''}</small></span><button data-mute="${p.id}" title="mute or unmute their voice">${p.muted ? '🔇' : '🔊'}</button></li>`).join('')}
       </ul>
+      <label><input type="checkbox" id="mpHide" ${hideName ? 'checked' : ''}> hide my name from the others (H)</label>
       <label><input type="checkbox" id="mpAll" ${hearAll ? 'checked' : ''}> hear everyone as if they were close</label>
       <label><input type="checkbox" id="mpSky" ${followSky ? 'checked' : ''}> share the sky (the room's clock and calendar)</label>
       <label><input type="checkbox" id="mpOpen" ${micOpen ? 'checked' : ''}> open mic (otherwise hold \` or the mic button to talk)</label>
@@ -129,6 +131,7 @@ export function createMulti(o) {
   el.addEventListener('change', e => {
     if (e.target.id === 'mpAll') { hearAll = e.target.checked; try { localStorage.setItem('gd.hearAll', hearAll ? '1' : '0'); } catch (_) {} for (const p of others.values()) routeVoice(p); }
     if (e.target.id === 'mpSky') followSky = e.target.checked;
+    if (e.target.id === 'mpHide') setHide(e.target.checked);
     if (e.target.id === 'mpOpen') setOpen(e.target.checked);
   });
   el.addEventListener('click', e => {
@@ -212,6 +215,7 @@ export function createMulti(o) {
     if (p.voice) { try { p.voice.src.disconnect(); p.voice.gain.disconnect(); p.voice.el.srcObject = null; } catch (_) {} }
     others.delete(p.id);
   }
+  function setHide(v) { hideName = !!v; try { localStorage.setItem('gd.hideName', hideName ? '1' : '0'); } catch (_) {} const c = el.querySelector && el.querySelector('#mpHide'); if (c) c.checked = hideName; }
   function sendWho(id) { if (room) room.send({ k: 'who', name: name || 'astronaut', outfit }, id); }
   // ---------------------------------------------------------------- the one garden
   // a message of any size: whole if small, else in pieces put together again at the far end
@@ -260,7 +264,7 @@ export function createMulti(o) {
     } else if (m.k === 's') {
       const now = performance.now() / 1000;
       const lag = now - (+m.t || 0); p.off = p.off == null ? lag : Math.min(p.off + 0.002, lag);   // their clock against ours, from the quickest packet lately
-      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0, ar: typeof m.ar === 'string' ? m.ar.slice(0, 8) : '', dn: m.dn | 0, cl: Array.isArray(m.cl) && m.cl.length === 3 && m.cl.every(isFinite) ? m.cl.map(Number) : null });
+      p.snaps.push({ t: +m.t || 0, x: +m.x, z: +m.z, y: +m.y, yaw: +m.yw, pitch: +m.pt, w: m.w | 0, a: Array.isArray(m.a) ? m.a : null, g: m.g || null, pn: +m.pn || 0, ar: typeof m.ar === 'string' ? m.ar.slice(0, 8) : '', dn: m.dn | 0, st: m.st === 1 || m.st === 2 ? m.st : 0, hn: m.hn ? 1 : 0, cl: Array.isArray(m.cl) && m.cl.length === 3 && m.cl.every(isFinite) ? m.cl.map(Number) : null });
       if (p.snaps.length > 30) p.snaps.splice(0, p.snaps.length - 30);
       ensureBody(p);
       if (Array.isArray(m.e) && m.e[1] !== p.emoteN) { p.emoteN = m.e[1]; if (typeof m.e[0] === 'string' && /^[a-z0-9]{2,12}$/.test(m.e[0])) p.body.emote(m.e[0]); }   // a gesture of theirs
@@ -309,7 +313,7 @@ export function createMulti(o) {
     if (a === b || b.t <= a.t) return b;
     const k = Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t)));
     return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k, y: a.y + (b.y - a.y) * k, yaw: a.yaw + wrapA(b.yaw - a.yaw) * k, pitch: a.pitch + (b.pitch - a.pitch) * k,
-      w: b.w, a: b.a, g: b.g, pn: b.pn, ar: b.ar, dn: b.dn, cl: b.cl };
+      w: b.w, a: b.a, g: b.g, pn: b.pn, ar: b.ar, dn: b.dn, cl: b.cl, st: b.st, hn: b.hn };
   }
 
   // ---------------------------------------------------------------- voices
@@ -385,6 +389,7 @@ export function createMulti(o) {
       if (self.hold) m.h = self.hold;
       if (self.emote) m.e = self.emote;
       if (self.arm) m.ar = self.arm; if (self.down) m.dn = 1; if (self.climb) m.cl = self.climb.map(r3);   // climbing: the trunk's x, z and radius
+      if (self.st) m.st = self.st; if (hideName) m.hn = 1;   // crouched (1) or lying down (2); a name not to be shown
       const s = JSON.stringify(m);
       for (const pr of room.peers.values()) {
         if (pr.fast && pr.fast.readyState === 'open') { try { pr.fast.send(s); } catch (_) {} }
@@ -421,12 +426,13 @@ export function createMulti(o) {
       p.body.root.visible = true;
       p.body.setWork(!!s.w, s.a ? _a.fromArray(s.a) : null); p.body.setGesture(s.w ? s.g : null); p.body.point(s.pn || 0);
       if (p.body.setClimb) p.body.setClimb(s.cl ? { x: s.cl[0], z: s.cl[1], r: s.cl[2] } : null);
+      if (p.body.setStance) p.body.setStance(s.st || 0);
       p.body.update(dt, { x: s.x, z: s.z, gy: s.y, yaw: s.yaw, pitch: s.pitch, t });
       p.body.setInk(o.ink ? o.ink() : 0.004);
       _hp.set(s.x, s.y + 1.62, s.z);
       const d = camera.position.distanceTo(_hp);
-      _pr.set(s.x, s.y + 2.05, s.z).project(camera);
-      if (_pr.z < 1 && d > 0.6 && d < 120 && Math.abs(_pr.x) < 1.2 && Math.abs(_pr.y) < 1.2) {
+      _pr.set(s.x, s.y + (s.st === 1 ? 1.5 : 2.05), s.z).project(camera);
+      if (!s.hn && s.st !== 2 && _pr.z < 1 && d > 0.6 && d < 120 && Math.abs(_pr.x) < 1.2 && Math.abs(_pr.y) < 1.2) {
         p.tag.style.transform = `translate(${((_pr.x + 1) / 2 * innerWidth).toFixed(1)}px, ${((1 - _pr.y) / 2 * innerHeight).toFixed(1)}px) translate(-50%, -100%)`;
         p.tag.style.opacity = Math.min(1, (120 - d) / 30).toFixed(2);
       } else p.tag.style.opacity = 0;
@@ -443,13 +449,13 @@ export function createMulti(o) {
   return {
     open, close, toggle: () => (isOpen ? close() : open()), update, key, join,
     get isOpen() { return isOpen; }, get inRoom() { return !!room; }, get code() { return code; }, get count() { return room ? others.size + 1 : 0; },
-    get outfit() { return outfit; }, get synced() { return synced; },
+    get outfit() { return outfit; }, get synced() { return synced; }, get hideName() { return hideName; }, set hideName(v) { setHide(v); },
     /** Guns (arms.js): an event to everyone in the room; the others as they are drawn now: [{ id, x, gy, z, yaw, pitch, w (their gun), down, body }]. */
     event(m) { if (room && room.peers.size) room.send({ k: 'ev', m }); },
     players() {
       if (!room) return []; const now = performance.now() / 1000, out = [];
       for (const p of others.values()) { if (!p.body || !p.body.root.visible) continue; const s = sample(p, now); if (!s) continue;
-        out.push({ id: p.id, x: s.x, gy: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, w: s.ar || '', down: !!s.dn, body: p.body, name: p.name }); }
+        out.push({ id: p.id, x: s.x, gy: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, w: s.ar || '', down: !!s.dn, st: s.st || 0, body: p.body, name: p.name }); }
       return out;
     },
     get myId() { return room ? room.id || '' : ''; },

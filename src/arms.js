@@ -21,8 +21,8 @@
 // Anyone can turn off being shot (Settings → Garden); their own guns still work.
 //
 // Keys: Q picks up the gun you're looking at (swapping for the one you hold), or draws / puts away your own; Shift+Q puts it down.
-// Click fires (held, for the automatics), right button aims, R reloads. For now there's also a crate of the whole arsenal just
-// inside the gate: Q at it takes a gun (the next one each time, the one you held going back in). Touch and the controller have their own buttons.
+// Click fires (held, for the automatics), right button aims, R reloads. For now there are also crates of guns about the garden (the whole arsenal just
+// inside the gate, a kind each elsewhere): Q at one takes a gun (the next one each time, the one you held going back in). Touch and the controller have their own buttons.
 import * as THREE from 'three';
 import { WEAPONS, weaponProp } from './betamax/arsenal.js';
 import { reloadDuration, evalReload, pathPoint } from './betamax/weapons.js';
@@ -35,6 +35,7 @@ const okW = w => GUN_IDS.includes(w);
 const r3 = v => Math.round(v * 1000) / 1000;
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ'), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
+const SCOPE = { csass: 12 };   // the CSASS's optic, wound up for sniping (about 6×; Betamax's own is 24°)
 const KC = { ground: 'g', water: 'w', hedge: 'h', tree: 't', piece: 's', junk: 'j', lamp: 'l', post: 'm', crate: 'c', plant: 'p', body: 'b' };
 const KIND = Object.fromEntries(Object.entries(KC).map(([k, v]) => [v, k]));
 
@@ -62,13 +63,14 @@ export function createArms(o) {
     mesh.position.set(x, gy + (fall ? 6 : 0) + mesh.userData.lift, z); group.add(mesh);
     lying.set(uid, { w, mesh, gy, vy: 0, fall: !!fall });
   }
-  // the demo crate by the gate: a box of the whole arsenal that never runs out (for now, before anything has come through the
-  // Shred Hole). It's everyone's own (each browser has the same crate in the same place), so it's neither saved nor sent.
-  const CRATE_ORDER = ['m1014', 'm7', 'x95', 'hk416', 'mp7', 'csass', 'm250', 'ng7', 'm18', 'g17'].filter(okW);
-  let crate = null, crateNext = 0;
-  if (o.crateSpot) {
-    const c = o.crateSpot(), g = new THREE.Group(), gy = o.heightAt(c.x, c.z);
-    const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a36, roughness: 0.85 }), dark = new THREE.MeshStandardMaterial({ color: 0x4a3420, roughness: 0.9 });
+  // Crates of guns, strewn about (for now, beside what comes through the Shred Hole): the one just inside the gate holds the whole arsenal,
+  // the others a kind each. None runs out. They're everyone's own (each browser has the same crates in the same places), so they're
+  // neither saved nor sent.
+  const crates = [];
+  for (const c of (o.crateSpots ? o.crateSpots() : o.crateSpot ? [o.crateSpot()] : [])) {
+    const order = (c.guns || ['m1014', 'm7', 'x95', 'hk416', 'mp7', 'csass', 'm250', 'ng7', 'm18', 'g17']).filter(okW); if (!order.length) continue;
+    const g = new THREE.Group(), gy = o.heightAt(c.x, c.z);
+    const wood = new THREE.MeshStandardMaterial({ color: c.color || 0x7a5a36, roughness: 0.85 }), dark = new THREE.MeshStandardMaterial({ color: 0x4a3420, roughness: 0.9 });
     const W = 1.25, D = 0.62, H = 0.42, t = 0.025;
     const plank = (w, h, d, x, y, z, m = wood) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); b.castShadow = b.receiveShadow = true; g.add(b); };
     plank(W, t, D, 0, t / 2 + 0.04, 0, dark);                                                                    // floor
@@ -76,17 +78,18 @@ export function createArms(o) {
     for (const s of [-1, 1]) for (const k of [-1, 1]) plank(0.06, H + 0.02, 0.06, s * (W / 2 - 0.03), H / 2 + 0.05, k * (D / 2 - 0.03), dark);   // corner posts
     for (const s of [-1, 1]) plank(0.07, 0.04, D + 0.02, s * 0.32, 0.02, 0, dark);                                // skids
     plank(W + 0.02, 0.06, 0.035, 0, H * 0.55, -(D / 2 + 0.005), dark); plank(W + 0.02, 0.06, 0.035, 0, H * 0.55, D / 2 + 0.005, dark);   // bands
-    // a few of the guns showing over the rim
-    [['m1014', -0.12, 0.12, 0.1], ['m7', 0.06, -0.1, -0.2], ['x95', 0.2, 0.1, 0.15], ['mp7', -0.3, -0.12, -0.2]].filter(([w]) => okW(w)).forEach(([w, x, z, r], i) => {
-      const m = weaponProp(w); m.rotation.set(0.35 * (i % 2 ? 1 : -1), Math.PI / 2 + r, Math.PI / 2); m.position.set(x, H - 0.06 + i * 0.015, z); g.add(m); });
+    // a few of its guns showing over the rim
+    [[-0.12, 0.12, 0.1], [0.06, -0.1, -0.2], [0.2, 0.1, 0.15], [-0.3, -0.12, -0.2]].slice(0, Math.min(4, order.length)).forEach(([x, z, r], i) => {
+      const m = weaponProp(order[i]); m.rotation.set(0.35 * (i % 2 ? 1 : -1), Math.PI / 2 + r, Math.PI / 2); m.position.set(x, H - 0.06 + i * 0.015, z); g.add(m); });
     g.position.set(c.x, gy, c.z); g.rotation.y = c.yaw || 0; group.add(g);
-    crate = { x: c.x, z: c.z, y: gy + H * 0.6, g };
+    crates.push({ x: c.x, z: c.z, y: gy + H * 0.6, g, order, next: 0, name: c.name || 'crate' });
   }
-  function crateGun() { let w = CRATE_ORDER[crateNext % CRATE_ORDER.length]; if (held && held.w === w) w = CRATE_ORDER[++crateNext % CRATE_ORDER.length]; return w; }
-  function fromCrate() {
-    const w = crateGun(); crateNext = (CRATE_ORDER.indexOf(w) + 1) % CRATE_ORDER.length;
+  const crateOf = uid => typeof uid === 'string' && uid.startsWith('crate:') ? crates[+uid.slice(6)] : null;
+  function crateGun(c) { let w = c.order[c.next % c.order.length]; if (held && held.w === w && c.order.length > 1) w = c.order[++c.next % c.order.length]; return w; }
+  function fromCrate(c) {
+    const w = crateGun(c); c.next = (c.order.indexOf(w) + 1) % c.order.length;
     take(w);   // (the one you held goes back in the crate)
-    o.hint(`${WEAPONS[w].name} · ${WEAPONS[w].cal} · click fires, right button aims, R reloads · Q at the crate again for the next gun`, 5000);
+    o.hint(`${WEAPONS[w].name} · ${WEAPONS[w].cal} · click fires, right button aims, R reloads${c.order.length > 1 ? ' · Q at the crate again for the next gun' : ''}`, 5000);
     return true;
   }
   function clearLying() { for (const L of lying.values()) group.remove(L.mesh); lying.clear(); }
@@ -95,6 +98,7 @@ export function createArms(o) {
 
   // ---------------------------------------------------------------- the gun in hand
   let held = null;   // { w, ud, gun (Betamax's model, in the world where your hands hold it), mag, rl (a reload under way), nextAt, drawn }
+  let swayT = 0, swayX = 0, swayY = 0;
   let trigger = false, aiming = 0, aimOn = false, recoil = 0, lastShot = 0, flashT = 0, fired = 0;
   const flashTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     gr.addColorStop(0, 'rgba(255,250,230,1)'); gr.addColorStop(0.25, 'rgba(255,200,110,.9)'); gr.addColorStop(1, 'rgba(255,120,40,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
@@ -130,14 +134,14 @@ export function createArms(o) {
       _v.copy(p).sub(camera.position).normalize(); if (_v.dot(_d) < 0.55 && d > 1.0) continue;   // in front of you (or at your feet)
       bd = d; best = uid;
     }
-    if (crate) {   // the crate, if no gun on the ground is nearer
-      const d = Math.hypot(crate.x - me.x, crate.z - me.z) - 0.4;
-      if (d < bd) { _v.set(crate.x, crate.y, crate.z).sub(camera.position).normalize(); if (_v.dot(_d) > 0.45 || d < 0.9) best = 'crate'; }
-    }
+    crates.forEach((c, i) => {   // a crate, if no gun on the ground is nearer
+      const d = Math.hypot(c.x - me.x, c.z - me.z) - 0.4;
+      if (d < bd) { _v.set(c.x, c.y, c.z).sub(camera.position).normalize(); if (_v.dot(_d) > 0.45 || d < 0.9) { best = 'crate:' + i; bd = d; } }
+    });
     return best;
   }
   function pickUp(uid) {
-    if (uid === 'crate') return fromCrate();
+    const cr = crateOf(uid); if (cr) return fromCrate(cr);
     const L = lying.get(uid); if (!L) return false;
     const i = store.lying.findIndex(l => l[0] === uid); if (i < 0) return false;
     const w = L.w; store.lying.splice(i, 1); group.remove(L.mesh); lying.delete(uid);
@@ -219,17 +223,32 @@ export function createArms(o) {
   // ---------------------------------------------------------------- the shot itself
   const players = () => (o.players ? o.players() : []);
   // a ray against a standing body: the trunk a capsule, the head a ball. -> { d, head } or null
+  // where a body is, by how it stands (0 standing, 1 crouched, 2 lying down): its head, and its trunk (an upright cylinder, or lying, a capsule along the ground)
+  function shapeOf(p) {
+    const st = p.st || 0, fx = -Math.sin(p.yaw || 0), fz = -Math.cos(p.yaw || 0);
+    if (st === 2) return { st, fx, fz, hy: 0.32, hr: 0.17, a: [p.x - fx * 0.32, p.gy + 0.2, p.z - fz * 0.32], b: [p.x - fx * 1.75, p.gy + 0.16, p.z - fz * 1.75], r: 0.24 };
+    if (st === 1) return { st, fx, fz, hy: 1.08, hr: 0.16, y0: 0.2, y1: 0.92, r: 0.32 };
+    return { st, fx, fz, hy: 1.64, hr: 0.16, y0: 0.25, y1: 1.45, r: 0.3 };
+  }
+  const _sa = new THREE.Vector3(), _sb = new THREE.Vector3(), _sc = new THREE.Vector3();
   function hitBody(O, D, p, maxD) {
-    let best = null;
+    let best = null; const S = shapeOf(p);
     // head
-    _v.set(p.x, p.gy + 1.64, p.z).sub(O); const tc = _v.dot(D);
-    if (tc > 0) { const d2 = _v.lengthSq() - tc * tc, r = 0.16; if (d2 < r * r) { const t = tc - Math.sqrt(r * r - d2); if (t < maxD) best = { d: t, head: true }; } }
-    // trunk: the vertical segment from 0.25 to 1.45 m, radius 0.3 (closest approach of two lines)
+    _v.set(p.x, p.gy + S.hy, p.z).sub(O); const tc = _v.dot(D);
+    if (tc > 0) { const d2 = _v.lengthSq() - tc * tc, r = S.hr; if (d2 < r * r) { const t = tc - Math.sqrt(r * r - d2); if (t < maxD) best = { d: t, head: true }; } }
+    if (S.st === 2) {   // lying: the nearest approach of the round's line to the body's, along the ground
+      _sa.fromArray(S.a); _sb.fromArray(S.b).sub(_sa); const w0 = _sc.copy(O).sub(_sa), a = 1, b = D.dot(_sb), c = _sb.dot(_sb), d = D.dot(w0), e = _sb.dot(w0), den = a * c - b * b;
+      let tr = den > 1e-9 ? (b * e - c * d) / den : 0, u = den > 1e-9 ? (a * e - b * d) / den : 0; u = Math.max(0, Math.min(1, u)); tr = Math.max(0, _sb.dot(D) * u - d);
+      const px = O.x + D.x * tr - (_sa.x + _sb.x * u), py = O.y + D.y * tr - (_sa.y + _sb.y * u), pz = O.z + D.z * tr - (_sa.z + _sb.z * u), h2 = px * px + py * py + pz * pz;
+      if (h2 < S.r * S.r) { const t0 = tr - Math.sqrt(S.r * S.r - h2); if (t0 > 0 && t0 < maxD && (!best || t0 < best.d)) best = { d: t0, head: false }; }
+      return best;
+    }
+    // trunk: the vertical segment, closest approach of two lines
     const ax = p.x - O.x, az = p.z - O.z, dd = D.x * D.x + D.z * D.z;
     if (dd > 1e-6) {
-      const t = (ax * D.x + az * D.z) / dd, cx = O.x + D.x * t - p.x, cz = O.z + D.z * t - p.z, h2 = cx * cx + cz * cz, r = 0.3;
+      const t = (ax * D.x + az * D.z) / dd, cx = O.x + D.x * t - p.x, cz = O.z + D.z * t - p.z, h2 = cx * cx + cz * cz, r = S.r;
       if (h2 < r * r && t > 0) { const back = Math.sqrt((r * r - h2) / dd), t0 = t - back, y = O.y + D.y * t0 - p.gy;
-        if (y > 0.25 && y < 1.45 && t0 < maxD && (!best || t0 < best.d)) best = { d: t0, head: false }; }
+        if (y > S.y0 && y < S.y1 && t0 < maxD && (!best || t0 < best.d)) best = { d: t0, head: false }; }
     }
     return best;
   }
@@ -269,8 +288,9 @@ export function createArms(o) {
     });
     return best;
   }
-  function hitCrate(O, D, maxD) {   // the demo crate: a box, in its own frame
-    if (!crate) return null; const g = crate.g, c = Math.cos(-g.rotation.y), s = Math.sin(-g.rotation.y);
+  function hitCrate(O, D, maxD) { let best = null; for (const c of crates) { const h = hitOneCrate(c, O, D, best ? best.d : maxD); if (h) best = h; } return best; }
+  function hitOneCrate(crate, O, D, maxD) {   // a crate: a box, in its own frame
+    const g = crate.g, c = Math.cos(-g.rotation.y), s = Math.sin(-g.rotation.y);
     const ox = O.x - g.position.x, oz = O.z - g.position.z, lo = [ox * c - oz * s, O.y - g.position.y, ox * s + oz * c], ld = [D.x * c - D.z * s, D.y, D.x * s + D.z * c];
     const mn = [-0.63, 0, -0.32], mx = [0.63, 0.47, 0.32]; let t0 = 0, t1 = maxD, ax = -1;
     for (let k = 0; k < 3; k++) { if (Math.abs(ld[k]) < 1e-8) { if (lo[k] < mn[k] || lo[k] > mx[k]) return null; continue; }
@@ -304,7 +324,8 @@ export function createArms(o) {
     h.mag--; h.nextAt = now + 60 / (ud.rpm || 600); lastShot = now; fired++; hud();
     const O = camera.getWorldPosition(new THREE.Vector3()); camera.getWorldDirection(_d);
     const moving = o.moving ? o.moving() : 0;
-    const spread = (0.022 * (1 - aiming) + 0.0025 * aiming + moving * 0.012 + recoil * 0.2) * (ud.spread || 1) + ((ud.pellets || 1) > 1 ? 0.045 : 0);
+    const steady = o.steady ? o.steady() : 1, sk = 0.4 + 0.6 * steady;   // crouched, lying down or braced up a tree, the round goes nearer where you aim
+    const spread = (0.022 * (1 - aiming) + 0.0025 * aiming + moving * 0.012 + recoil * 0.2) * (ud.spread || 1) * sk + ((ud.pellets || 1) > 1 ? 0.045 : 0);
     const muzzle = muzzleWorld(new THREE.Vector3());
     const shots = [];
     for (let k = 0; k < (ud.pellets || 1); k++) {
@@ -323,7 +344,7 @@ export function createArms(o) {
       _o.set(0.03, 0.025, fw).applyMatrix4(g); _v.set(2.2 + Math.random(), 1.4 + Math.random(), 0.6 + Math.random() * 0.6).transformDirection(g).multiplyScalar(2.2 + Math.random());
       havoc.brass(_o, _v, (ud.cal || 0) >= 1, !!ud.tube); }
     recoil = Math.min(1, recoil + (ud.kick || 0.025) * 6);
-    if (o.kick) o.kick((ud.kick || 0.025) * (1 - 0.5 * aiming) * (0.7 + Math.random() * 0.6), (Math.random() - 0.5) * (ud.kick || 0.025) * 0.5);
+    if (o.kick) o.kick((ud.kick || 0.025) * (1 - 0.5 * aiming) * (0.5 + 0.5 * steady) * (0.7 + Math.random() * 0.6), (Math.random() - 0.5) * (ud.kick || 0.025) * 0.5 * (0.5 + 0.5 * steady));
   }
   // one round: the nearest of a body, a stone or piece of junk, a trunk, a lamp, the crate, the water, the ground or a hedge
   function trace(O, D, ud, first) {
@@ -361,6 +382,7 @@ export function createArms(o) {
     if (who) {
       const dm = who.head ? (ud.head || ud.dmg * 3) : ud.dmg, p = who.p, y = at.y - p.gy, an = Math.atan2(at.z - p.z, at.x - p.x), dl = Math.hypot(D.x, D.z) || 1;
       const m = { a: 'hit', to: p.id, d: Math.round(dm), h: who.head ? 1 : 0, w: held.w, y: r3(y), an: r3(an), dx: r3(D.x / dl), dz: r3(D.z / dl), k: r3(k) };
+      if ((p.st || 0) === 2) m.al = r3(Math.max(0, (at.x - p.x) * Math.sin(p.yaw || 0) + (at.z - p.z) * Math.cos(p.yaw || 0)));   // lying: how far back along the body from the head
       if (o.send) o.send(m);
       if (p.body) bodyHit(p.body, p, m);
       marker(who.head);
@@ -373,14 +395,15 @@ export function createArms(o) {
     const head = !!m.h, y = +m.y, an = +m.an, dx = +m.dx, dz = +m.dz; if (![y, an, dx, dz].every(isFinite)) return;
     body.react && body.react(dx, dz, (+m.k || 1) * (head ? 1.3 : 1));
     // where on the suit: from outside the body toward its axis (or the helmet's centre), onto the suit itself
-    const c = head ? new THREE.Vector3(p.x, p.gy + 1.64, p.z) : new THREE.Vector3(p.x, p.gy + y, p.z);
-    const out = head ? new THREE.Vector3(Math.cos(an), (y - 1.64) / 0.16, Math.sin(an)).normalize() : new THREE.Vector3(Math.cos(an), 0, Math.sin(an));
+    const S = shapeOf(p), al = +m.al || 0;
+    const c = head ? new THREE.Vector3(p.x, p.gy + S.hy, p.z) : S.st === 2 ? new THREE.Vector3(p.x - S.fx * al, p.gy + 0.18, p.z - S.fz * al) : new THREE.Vector3(p.x, p.gy + y, p.z);
+    const out = head ? new THREE.Vector3(Math.cos(an), (y - S.hy) / 0.16, Math.sin(an)).normalize() : S.st === 2 ? new THREE.Vector3(-dx, 1.2, -dz).normalize() : new THREE.Vector3(Math.cos(an), 0, Math.sin(an));
     body.root.updateMatrixWorld(true); _rc.set(c.clone().addScaledVector(out, 0.8), out.clone().negate()); _rc.far = 1.2;
     const hits = _rc.intersectObject(body.root, true).filter(h => h.object.isMesh && h.object.visible && !h.object.isSprite);
     lastRay = hits.slice(0, 6).map(h => [h.distance.toFixed(3), h.point.z.toFixed(3), h.object.parent && (h.object.parent.name || h.object.parent.type), h.object.material.side, h.object.material.type, h.object.geometry.attributes.position.count, h.object.renderOrder]);
     let at = c.clone().addScaledVector(out, head ? 0.16 : 0.22), n = out.clone(), parent = null;
     if (hits.length) { const h = hits[0]; at.copy(h.point); if (h.face) n.copy(h.face.normal).transformDirection(h.object.matrixWorld); if (n.dot(out) < 0) n.negate(); parent = h.object.isSkinnedMesh ? null : h.object; }
-    if (!parent && hits.length) { const B = body.bones || {}; parent = head ? B.head : y > 0.95 ? B.torso : B.pelvis || body.root; }
+    if (!parent && hits.length) { const B = body.bones || {}; parent = head ? B.head : (S.st === 2 ? al < 0.75 : S.st === 1 ? y > 0.6 : y > 0.95) ? B.torso : B.pelvis || body.root; }
     const mk = parent ? havoc.hole(head ? 'crack' : 'suit', at, n, head ? 0.26 : 0.12, parent) : null;   // (no mark where the round only grazed the suit's outline)
     if (mk) { if (!marksOf.has(body)) marksOf.set(body, []); marksOf.get(body).push(mk); vents.push({ mk, until: performance.now() / 1000 + (head ? 4 : 3), next: 0 }); }
     havoc.thud('iBody', at, 0.3); havoc.hiss(at, head ? 1.3 : 1);
@@ -496,7 +519,15 @@ export function createArms(o) {
     #armsDown .by { font:13px/1.4 "IBM Plex Mono",ui-monospace,monospace; opacity:.8; margin:4px 0 16px; }
     #armsDown .row { display:flex; gap:12px; } #armsDown button { font:14px "IBM Plex Mono",ui-monospace,monospace; color:#e9e4da; background:rgba(20,18,16,.72); border:1px solid rgba(233,228,218,.45); border-radius:22px; padding:11px 18px; cursor:pointer; }
     #armsDown button:hover { background:rgba(60,54,48,.85); } #armsDown button:disabled { opacity:.35; cursor:default; } #armsDown kbd { opacity:.6; font-size:11px; margin-left:6px; }
-    #armsCrack { position:fixed; inset:0; z-index:5; pointer-events:none; opacity:0; transition:opacity .15s; }`;
+    #armsCrack { position:fixed; inset:0; z-index:5; pointer-events:none; opacity:0; transition:opacity .15s; }
+    #armsScope { position:fixed; inset:0; z-index:5; pointer-events:none; opacity:0; --r:min(44vh, 44vw);
+      background:radial-gradient(circle at 50% 50%, transparent 0, transparent calc(var(--r) - 6px), rgba(0,0,0,.65) calc(var(--r) - 2px), #000 calc(var(--r) + 10px)); }
+    #armsScope i { position:absolute; left:50%; top:50%; background:#0b0b0b; } #armsScope .h { width:calc(var(--r) * 2); height:1.5px; transform:translate(-50%, -50%); }
+    #armsScope .v { height:calc(var(--r) * 2); width:1.5px; transform:translate(-50%, -50%); }
+    #armsScope .hb, #armsScope .vb { background:#0b0b0b; } #armsScope .hb { width:calc(var(--r) * 0.62); height:5px; transform:translate(-50%, -50%); } #armsScope .hb.l { margin-left:calc(var(--r) * -0.69); } #armsScope .hb.r { margin-left:calc(var(--r) * 0.69); }
+    #armsScope .vb { height:calc(var(--r) * 0.62); width:5px; transform:translate(-50%, -50%); margin-top:calc(var(--r) * 0.69); }
+    #armsScope b { position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px; border-radius:50%; background:#c2221a; box-shadow:0 0 4px #ff4a2a; }
+    #armsScope em { position:absolute; left:50%; top:50%; width:3px; height:3px; border-radius:50%; background:#0b0b0b; }`;
   document.head.append(css);
   const hudEl = document.createElement('div'); hudEl.id = 'armsHud'; const cross = document.createElement('div'); cross.id = 'armsCross';
   const hurtEl = document.createElement('div'); hurtEl.id = 'armsHurt'; const downEl = document.createElement('div'); downEl.id = 'armsDown';
@@ -504,6 +535,9 @@ export function createArms(o) {
   for (const b of downEl.querySelectorAll('button')) { const go = e => { e.preventDefault(); e.stopPropagation(); getUp(b.dataset.up === 'gate'); }; b.addEventListener('click', go); b.addEventListener('touchend', go); b.addEventListener('mousedown', e => e.stopPropagation()); b.addEventListener('pointerdown', e => e.stopPropagation()); }
   // a head shot cracks your visor: the cracks stay until you're up again
   const crackEl = document.createElement('div'); crackEl.id = 'armsCrack';
+  // a sniper's optic, wound up past what the gun's own glass can show: through it you see the scope's picture (reticle, mil dots, a red dot)
+  const scopeEl = document.createElement('div'); scopeEl.id = 'armsScope';
+  scopeEl.innerHTML = '<i class="h"></i><i class="v"></i><i class="hb l"></i><i class="hb r"></i><i class="vb"></i><b></b>' + [-4, -3, -2, -1, 1, 2, 3, 4].map(k => `<em style="margin:-1.5px 0 0 calc(${k} * var(--r) * 0.075 - 1.5px)"></em><em style="margin:calc(${k} * var(--r) * 0.075 - 1.5px) 0 0 -1.5px"></em>`).join('');
   function crack(on) {
     if (!on) { crackEl.style.opacity = 0; crackEl.innerHTML = ''; return; }
     const W = innerWidth, H = innerHeight, cx = W * (0.3 + 0.4 * Math.random()), cy = H * (0.25 + 0.4 * Math.random()); let d = '';
@@ -512,7 +546,7 @@ export function createArms(o) {
     crackEl.innerHTML += `<svg width="${W}" height="${H}" style="position:absolute;inset:0"><path d="${d}" fill="none" stroke="rgba(235,245,255,.75)" stroke-width="1.2"/><path d="${d}" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="2.6" transform="translate(1,1)"/></svg>`;
     crackEl.style.opacity = 1;
   }
-  document.body.append(hudEl, cross, hurtEl, downEl, crackEl);
+  document.body.append(hudEl, cross, hurtEl, downEl, crackEl, scopeEl);
   function hud(state) {
     const on = !!(held && held.drawn) || hp < HP;
     hudEl.style.opacity = on ? 1 : 0;
@@ -528,7 +562,7 @@ export function createArms(o) {
     for (const L of lying.values()) if (L.fall) { L.vy -= 4.2 * dt; L.mesh.position.y += L.vy * dt; const floor = L.gy + L.mesh.userData.lift; if (L.mesh.position.y <= floor) { L.mesh.position.y = floor; if (L.vy < -2) havoc.thud('iHard', L.mesh.position); L.fall = false; } }
     // the one you could pick up
     const nu = !downUntil && o.free() ? nearest() : null;
-    if (nu !== hintFor) { hintFor = nu; if (nu === 'crate') o.hint(`Q · take a gun from the crate (${WEAPONS[crateGun()].name}${held ? `, for the ${held.name}` : ''})`, 3000); else if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
+    if (nu !== hintFor) { hintFor = nu; if (crateOf(nu)) { const c = crateOf(nu); o.hint(`Q · take a gun from the ${c.name} (${WEAPONS[crateGun(c)].name}${held ? `, for the ${held.name}` : ''})`, 3000); } else if (nu) o.hint(`Q · pick up the ${WEAPONS[lying.get(nu).w].name}${held ? ` (puts down the ${held.name})` : ''}`, 3000); }
     // down, and up again
     if (downUntil) { downEl.style.opacity = 1; downEl.style.pointerEvents = 'auto'; const ready = now - downAt > 1.2; for (const b of downEl.querySelectorAll('button')) b.disabled = !ready; }
     else if (hp < HP && now - hurtAt > 4) { hp = Math.min(HP, hp + 12 * dt); if (hp >= HP) hud(); else if (Math.random() < 0.1) hud(); }
@@ -537,7 +571,9 @@ export function createArms(o) {
     recoil *= Math.exp(-dt * 8);
     // the gun in hand
     const drawn = !!(held && held.drawn && !downUntil && o.free(true));
-    cross.style.opacity = drawn && !o.selfView() && !(held && held.rl) ? (1 - aiming * 0.7) : 0;
+    const scoped = drawn && held && SCOPE[held.w] && !o.selfView() ? Math.max(0, Math.min(1, (aiming - 0.75) / 0.2)) : 0;
+    scopeEl.style.opacity = scoped.toFixed(3);
+    cross.style.opacity = drawn && !o.selfView() && !(held && held.rl) ? (1 - aiming * 0.7) * (1 - scoped) : 0;
     if (held) {
       const h = held, ud = h.ud;
       // the reload's timeline
@@ -547,6 +583,10 @@ export function createArms(o) {
         if (R.t >= R.dur) { h.mag = ud.tube ? ud.magSize : R.tac ? ud.magSize + 1 : ud.magSize; h.rl = null; hud(); }
       }
       aiming += ((drawn && aimOn && !h.rl ? 1 : 0) - aiming) * Math.min(1, dt * 10);
+      { // through a magnifying sight the aim wanders with your pulse and breathing: a slow figure of eight, smaller the steadier you are
+        const mag = 70 / (SCOPE[h.w] || ud.adsFov || 55), A = aiming * Math.max(0, mag - 1.4) * 0.0011 * (o.steady ? o.steady() : 1);
+        swayT += dt; const nx = A * Math.sin(swayT * 0.9), ny = A * 0.7 * Math.sin(swayT * 1.8 + 0.6);
+        if (o.kick && A > 0) o.kick(ny - swayY, nx - swayX); swayX = A > 0 ? nx : 0; swayY = A > 0 ? ny : 0; }
       if (drawn && trigger && now >= h.nextAt) { fire(); if (!ud.auto) trigger = false; }
       // the magazine: in the well, in the left hand, or both (a tactical reload)
       const st = h.rl ? h.rl.o.magState : 'in';
@@ -567,7 +607,7 @@ export function createArms(o) {
         _q.setFromEuler(_e.set(mySpec.rot.x, mySpec.rot.y, mySpec.rot.z, 'XYZ')).premultiply(camera.quaternion);
         h.gun.matrix.compose(_v.copy(mySpec.off).applyQuaternion(camera.quaternion).add(camera.position), _q, _w.set(1, 1, 1)); placed = true;
       }
-      h.gun.visible = drawn && placed; h.gun.matrixWorldNeedsUpdate = true;
+      h.gun.visible = drawn && placed && scoped < 0.5; h.gun.matrixWorldNeedsUpdate = true;   // (behind the scope's picture the gun itself is not seen)
     } else if (o.body && o.body.setArmed) o.body.setArmed(false, null);
     if (o.body && o.body.setDown) o.body.setDown(!!downUntil, myDir[0], myDir[1]);
     stepOthers(dt); stepVapor(dt);
@@ -639,7 +679,7 @@ export function createArms(o) {
       });
     }
     else if (m.a === 'hit') {
-      if (m.to === (o.myId ? o.myId() : '')) { if (o.canBeShot() && !downUntil) { onHit(from, m); if (o.body) { const me = o.me(); bodyHit(o.body, { x: me.x, gy: me.gy, z: me.z }, m); } } }
+      if (m.to === (o.myId ? o.myId() : '')) { if (o.canBeShot() && !downUntil) { onHit(from, m); if (o.body) { const me = o.me(); bodyHit(o.body, { x: me.x, gy: me.gy, z: me.z, yaw: me.yaw, st: me.st || 0 }, m); } } }
       else { const p = othersList.find(q => q.id === m.to); if (p && p.body) { bodyHit(p.body, p, m); if (isFinite(m.dx)) theirDir.set(p.id, [+m.dx, +m.dz]); } }
     }
     else if (m.a === 'down') { if (isFinite(m.dx) && isFinite(m.dz)) theirDir.set(from, [+m.dx, +m.dz]); if (o.onDown) o.onDown(from, m.by); }
@@ -653,7 +693,7 @@ export function createArms(o) {
     get held() { return held && held.drawn ? held.w : ''; }, get down() { return !!downUntil; }, get hp() { return hp; }, get aiming() { return aiming; },
     get armed() { return !!(held && held.drawn); }, has: () => !!held, get reloading() { return !!(held && held.rl); }, get rounds() { return held ? held.mag : 0; }, get fired() { return fired; },
     /** How much the view narrows, aiming: 1 at the hip, the gun's own sight field (Betamax's adsFov, of 70°) aimed. */
-    get zoom() { return held ? 1 + ((held.ud.adsFov || 55) / 70 - 1) * aiming : 1; },
+    get zoom() { return held ? 1 + (((SCOPE[held.w] || held.ud.adsFov || 55)) / 70 - 1) * aiming : 1; },
     net: {
       snapshot() { return { seq: store.seq, lying: store.lying }; },
       adopt(w, mine) { if (!guest && !mine) save(); guest = !mine; store = { seq: +((w && w.seq) || 0), lying: (w && Array.isArray(w.lying) ? w.lying : []).filter(okL) }; if (mine) own = store; redraw(); save(); },
@@ -664,8 +704,8 @@ export function createArms(o) {
     /** For tests: a gun in hand at once. */
     give(w) { if (okW(w)) take(w); },
     lyingCount: () => lying.size,
-    /** The demo crate by the gate (tests): where it is, and what Q would give from it. */
-    get crate() { return crate && { x: crate.x, z: crate.z, next: crateGun() }; }, near: () => nearest(),
+    /** The crates (tests): where each is, what's in it, and what Q would give from it. The first is the one by the gate. */
+    get crate() { const c = crates[0]; return c && { x: c.x, z: c.z, next: crateGun(c) }; }, get crates() { return crates.map(c => ({ x: c.x, z: c.z, name: c.name, guns: c.order.slice(), next: crateGun(c) })); }, near: () => nearest(),
     get fallDir() { const l = Math.hypot(myDir[0], myDir[1]) || 1; return [myDir[0] / l, myDir[1] / l]; }, get cracked() { return crackEl.style.opacity === '1'; },
     get lastRay() { return lastRay; }, getUp, bodyHit: (body, p, m) => bodyHit(body, p, m), get marks() { let n = 0; for (const L of marksOf.values()) n += L.length; return n; },
     havoc, get gun() { return held && held.gun; }, reload, trace: (O, D) => held && trace(O, D, held.ud, true), lampsOut: () => [...lampOut], felled: () => [...felled],

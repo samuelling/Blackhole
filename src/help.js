@@ -6,7 +6,7 @@
 const K = (...k) => k;   // a row: [keys..., what it does]; a key written 'a|b' is drawn as two caps that do the same thing
 const SECTIONS = [
   { id: 'walk', title: 'Walking and looking', rows: [
-    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'run'), K('Space', 'jump (gravity here is a little under half the Earth’s)'), K('climb', 'walk into a tree trunk and keep going: W up, S down, A D round it, Space lets go'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
+    K('W|A|S|D', 'arrows', 'walk'), K('Shift', 'run'), K('Space', 'jump (gravity here is a little under half the Earth’s) · stand up'), K('C', 'crouch, or stand · hold it: lie down and crawl (into long grass to hide)'), K('climb', 'walk into a tree trunk and keep going: W up, S down, A D round it, Space lets go'), K('mouse', 'look · click the garden first to take the pointer, Esc gives it back'),
     K('Shift+V', 'see yourself from outside'), K('Z', 'the space view: the whole bubble from outside'), K('Shift+F', 'full screen'),
     K('I', 'talk to Brodie, the little sphere at your shoulder: company, and lessons (“teach me…”)'), K('O', 'settings'), K('M', 'sound on / off'), K('F', 'frame rate'), K('?', 'this sheet') ] },
   { id: 'gesture', title: 'Gestures and bearing', rows: [
@@ -24,9 +24,9 @@ const SECTIONS = [
     K('Space', 'hold: press it down'), K('G', 'hold: pass through the other stones'),
     K('H', 'hearting: pour small stone into the middle'), K('N', 'more stone'), K('Backspace', 'undo the last stone'),
     K('P', 'put the stint away, as it stands'), K('Enter', 'twice: finish the stint · what stands is fixed') ] },
-  { id: 'guns', title: 'Guns', note: 'Betamax\'s guns come through the wormhole when the Shred Hole sends them (its Arsenal shelf): they land by the junk heap. For now there\'s also a crate of them just inside the gate.', rows: [
+  { id: 'guns', title: 'Guns', note: 'Betamax\'s guns come through the wormhole when the Shred Hole sends them (its Arsenal shelf): they land by the junk heap. For now there are crates of them too: the whole arsenal just inside the gate, a marksman\'s crate in the wood, a heavy crate in the east field, a close-quarters crate on the west lawn. Crouched you shoot steadier, lying down steadier still; up a tree, with a rifle, you sit on a branch.', rows: [
     K('Q', 'pick up the gun you look at (swapping for yours) · draw or put away your own'), K('Shift+Q', 'put it down'),
-    K('click', 'fire (hold, for the automatics)'), K('right button', 'aim'), K('R', 'reload'),
+    K('click', 'fire (hold, for the automatics)'), K('right button', 'aim · the CSASS has a 12× scope (hold your breath: crouch, lie down, or sit in a tree)'), K('R', 'reload'),
     K('rounds', 'leave craters and holes and throw real debris; shoot through a plant and it\'s gone (Settings → Garden puts the garden\'s own back); cut through a tree you planted and it falls; lamps can be shot out'),
     K('in a room', 'others can be shot, and so can you: hits flinch you, hole your suit (it leaks) and crack your visor; down at nothing left, you choose when to get up: E here, G at the gate (Settings → Garden turns being shot off for you)') ] },
   { id: 'stars', title: 'Star navigation', note: 'The first step to getting the ship\'s nav back. The sky is the real one. The Shred Hole fabricates a bubble sextant (its Instruments shelf): it comes through the wormhole and lands by the junk heap.', rows: [
@@ -46,11 +46,11 @@ const SECTIONS = [
   { id: 'space', title: 'The space view', rows: [
     K('Z', 'go out, and come back inside'), K('drag', 'turn the view round the bubble'), K('wheel', 'nearer / farther') ] },
   { id: 'room', title: 'Together', note: 'Up to six of you in one garden: that of whoever was in the room first.', rows: [
-    K('Shift+G', 'the room: name, suit, colours, who is here'), K('`', 'hold to talk (or tick open mic in the room panel)'),
+    K('Shift+G', 'the room: name, suit, colours, who is here'), K('H', 'hide your name tag from the others (or not) · lying down hides it anyway'), K('`', 'hold to talk (or tick open mic in the room panel)'),
     K('B', 'at a place someone else is building: join them') ] },
 ];
 const TOUCH = [
-  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('jump', 'the big button, or a quick flick up on the walking side'),
+  { id: 'walk', title: 'Walking and looking', rows: [K('drag left', 'walk · the further you drag, the faster, up to a run'), K('drag right', 'look'), K('jump', 'the big button, or a quick flick up on the walking side · stands you up'), K('crouch', 'tap: crouch or stand · hold: lie down and crawl'),
     K('climb', 'walk into a tree trunk and keep pushing: up the stick climbs, down comes down, sideways goes round · jump lets go'),
     K('rail', 'down the right edge: walk, plant, build, space, me (see yourself), gesture · tap the lit one to come back to walking')] },
   { id: 'guns', title: 'Guns', note: 'Near a gun by the junk heap, “gun: pick up” takes it; with one in hand the pad has fire (hold), aim (hold), reload and put away. Aim by looking (drag right).', rows: [] },

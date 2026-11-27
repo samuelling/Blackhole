@@ -1080,12 +1080,38 @@ let jumpY = 0, jumpV = 0; const JUMP_G = 4.2, JUMP_V = 3.4;
 // climbing (any tree's trunk): walk into it and keep pushing, and you go up it. Up and down the stick or W S, round it sideways;
 // Space lets go, a little out from the bark, and you fall in the bubble's weak pull. Your height on the trunk is jumpY, held.
 let climb = null, climbPush = 0, climbAgain = 0, offV = null, climbHinted = false; const CLIMB_V = 0.9;
+// crouching and lying down: C crouches (and stands again); held, you go down flat and crawl. Space stands you up. Each is slower, lower and
+// steadier for a gun; lying in long grass you are hard to see, and your name tag isn't shown to the others.
+let stance = 0, stanceC = 0, stanceP = 0, cDownAt = 0, cTimer = 0, stanceHinted = 0;
+const STANCE_SPEED = [WALK, 1.0, 0.5], STANCE_RUN = [RUN, 1.6, 0.75];
+const eyeFor = (c, p) => 1.65 - 0.56 * c - 1.27 * p;   // (body.js holds the gun from the same eye)
+function setStance(n, quiet) {
+  n = n === 1 || n === 2 ? n : 0; if (n === stance) return; stance = n; if (body && body.setStance) body.setStance(n);
+  if (A.ctx && A.on) { const ac = A.ctx, g = ac.createGain(), f = ac.createBiquadFilter(), t = ac.currentTime;   // cloth and kit settling
+    const nb = ac.createBuffer(1, ac.sampleRate * 0.25, ac.sampleRate), d = nb.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+    const src = ac.createBufferSource(); src.buffer = nb; f.type = 'bandpass'; f.frequency.value = n === 2 ? 600 : 1200; f.Q.value = 0.8; g.gain.value = 0.08; src.connect(f); f.connect(g); g.connect(A.master); src.start(t); }
+  if (!quiet && stanceHinted < 2 && n) { stanceHinted++; setHint(n === 1 ? (isTouch ? 'crouched · “crouch” again stands · hold it to lie down' : 'crouched · C stands · hold C to lie down and crawl · Space stands') : (isTouch ? 'lying down · crawl with the stick · “crouch” to come up' : 'lying down · crawl with WASD · C to come up on one knee · Space stands'), 5000); }
+}
+const stanceFree = () => started && !spaceOn && !climb && !walling.busy && !planter.open && !(arms && arms.down) && !(drawer && drawer.isOpen) && !(help && help.isOpen);
+addEventListener('keydown', e => {
+  if (e.code !== 'KeyC' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !stanceFree()) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
+  cDownAt = e.timeStamp || performance.now(); clearTimeout(cTimer);   // (the event's own time: a slow frame between down and up isn't a hold) cTimer = setTimeout(() => { if (cDownAt) { cDownAt = 0; setStance(2); } }, 380);   // held: down flat
+});
+addEventListener('keydown', e => {   // H: your name tag, shown or hidden (in a room)
+  if (e.code !== 'KeyH' || e.repeat || e.metaKey || e.ctrlKey || e.altKey || !started || walling.busy || !multi || !multi.inRoom) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
+  multi.hideName = !multi.hideName; setHint(multi.hideName ? 'your name is hidden from the others · H shows it' : 'your name shows over you again · H hides it', 3500); if (drawer) drawer.sync('hideName');
+});
+addEventListener('keyup', e => {
+  if (e.code !== 'KeyC' || !cDownAt) return; const held = (e.timeStamp || performance.now()) - cDownAt; cDownAt = 0; clearTimeout(cTimer); if (!stanceFree()) return;
+  if (held >= 380) setStance(2);   // (held, and the timer hadn't had its turn)
+  else setStance(stance === 0 ? 1 : stance === 1 ? 0 : 1);   // tapped: crouch, or stand; lying down, up onto one knee
+});
 function letGo(push = 2.2) {
   if (!climb) return; const c = climb; climb = null; climbAgain = performance.now() + 900;
   offV = { x: Math.cos(c.th) * push, z: Math.sin(c.th) * push }; jumpV = c.h > 0.15 ? JUMP_V * 0.5 : 0;
 }
 function seekClimb(dt, f, mz) {
-  if (!started || spaceOn || walling.busy || planter.armed || planter.open || mz < 0.5 || performance.now() < climbAgain) { climbPush = 0; return; }
+  if (!started || spaceOn || walling.busy || planter.armed || planter.open || stance || mz < 0.5 || performance.now() < climbAgain) { climbPush = 0; return; }
   const T = garden.trunkNear(player.x, player.z, 0.62); if (!T) { climbPush = 0; return; }
   const dx = T.x - player.x, dz = T.z - player.z, d = Math.hypot(dx, dz); if (d < 1e-3 || (dx * f.x + dz * f.z) / d < 0.55) { climbPush = 0; return; }
   climbPush += dt; if (climbPush < (jumpY > 0.25 ? 0 : 0.3)) return;   // in the air you catch hold at once
@@ -1107,7 +1133,7 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   if (!started) return;
   if (e.code === 'KeyE') { openVoid(); e.preventDefault(); }
-  if (e.code === 'Space') { e.preventDefault(); if (climb) { if (!e.repeat) letGo(); } else if (!e.repeat && !planter.open && !spaceOn && jumpY === 0) jumpV = JUMP_V; }   // a jump (the wall and free builds take Space before this sees it)
+  if (e.code === 'Space') { e.preventDefault(); if (climb) { if (!e.repeat) letGo(); } else if (stance) { if (!e.repeat) setStance(0); } else if (!e.repeat && !planter.open && !spaceOn && jumpY === 0) jumpV = JUMP_V; }   // a jump (the wall and free builds take Space before this sees it)
   if (e.code === 'KeyM') setSound(!A.on);
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -1592,6 +1618,7 @@ const SETTINGS = [
   { id: 'brodieRobot', tab: 'garden', group: 'Brodie', label: 'Robot in his voice', kind: 'range', min: 0, max: 1, fmt: fmtPct, get: () => S.brodieRobot ?? 0.5, set: v => { S.brodieRobot = v; save(); }, note: 'a harmonizer on Brodie’s own voice (and his telling of the story): 0 is his plain voice, 50% half and half, 100% all machine' },
   { id: 'brodieKey', tab: 'garden', group: 'Brodie', label: 'Use my own Anthropic API key', kind: 'action', set: () => { const k = prompt('Your Anthropic API key, so Brodie can really talk (Claude Haiku). It stays in this browser and goes only to Anthropic. Leave it empty to forget it.', ''); if (k === null) return; try { if (k.trim()) localStorage.setItem('gd.brodie.key', k.trim()); else localStorage.removeItem('gd.brodie.key'); } catch (e) {} setHint(k.trim() ? 'Brodie will talk with your key' : 'your key is forgotten', 3000); } },
   { id: 'brodieInfo', tab: 'garden', group: 'Brodie', label: '', kind: 'info', get: () => { let k = ''; try { k = localStorage.getItem('gd.brodie.key') || ''; } catch (e) {} return k ? 'Brodie talks with your own key (Claude Haiku, straight from this browser)' : 'Brodie talks with the garden’s key when the sphere Worker is up, and from his written lines otherwise'; } },
+  { id: 'hideName', tab: 'garden', group: 'Guns', label: 'Hide my name from the others (H)', kind: 'toggle', get: () => !!(multi && multi.hideName), set: v => { if (multi) multi.hideName = !!v; }, note: 'in a room: your name tag isn’t shown over you. Lying down, it never is' },
   { id: 'canBeShot', tab: 'garden', group: 'Guns', label: 'Others can shoot me', kind: 'toggle', get: () => S.canBeShot !== false, set: v => { S.canBeShot = !!v; }, note: 'in a room: off, their rounds pass through you (your own gun still works)' },
   { id: 'saveInfo', tab: 'garden', group: 'Keeping your garden', label: '', kind: 'info', get: () => `Kept in this browser, and online: ${worlds ? worlds.status : 'not yet'}. Open your garden's link on another device to build there. A room keeps its own garden online, by its code.` },
   { id: 'saveLink', tab: 'garden', label: 'Copy the link to your garden', kind: 'action', set: () => worlds && worlds.copyLink(), note: 'open it on another device (an iPad, say) and your garden is there; keep it to yourself' },
@@ -1726,11 +1753,17 @@ drawer = createDrawer({
     lamps: () => garden.lampHeads, breakLamp: i => breakLamp(i),
     audio: () => A, hint: (t, ms) => setHint(t, ms), players: () => window.__fakePlayers || (multi && multi.inRoom ? multi.players() : []),   // (__fakePlayers, __sent: tests)
     send: m => { if (window.__sent) window.__sent.push(m); if (multi && multi.inRoom) multi.event(m); }, myId: () => multi ? multi.myId : '', nameOf: id => multi ? multi.nameOf(id) : '',
-    heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }), crateSpot: QS.has('nocrate') ? null : () => ({ x: layout.gate.x + 1.9, z: layout.start.z - 2.3, yaw: 0.35 }),   // (the demo crate, just inside the gate)
-    respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; },
+    heapSpot: () => ({ x: junk.heap.x, z: junk.heap.z }), crateSpots: QS.has('nocrate') ? null : () => [   // crates of guns (arms.js): the whole arsenal just inside the gate, and a kind each out in the field
+      { x: layout.gate.x + 1.9, z: layout.start.z - 2.3, yaw: 0.35, name: 'crate' },
+      { x: -23.6, z: -43.4, yaw: -0.6, name: 'marksman’s crate', guns: ['csass', 'm7', 'hk416'], color: 0x5f6a48 },      // under one of the tallest trees: up it, and look out
+      { x: 46.2, z: 11.6, yaw: 1.1, name: 'heavy crate', guns: ['m250', 'ng7', 'x95'], color: 0x4b5560 },                // by the wormhole's clearing
+      { x: -44, z: 10, yaw: 2.3, name: 'close-quarters crate', guns: ['m1014', 'mp7', 'm18', 'g17'], color: 0x7a4632 },  // out west, in the long grass
+    ],
+    respawn: () => { player.set(layout.start.x, 1.65, layout.start.z); jumpY = 0; jumpV = 0; climb = null; offV = null; setStance(0, true); },
     kick: (dp, dy) => { pitch = Math.min(1.45, pitch + dp); yaw += dy; }, canBeShot: () => S.canBeShot !== false,
-    me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
-    free: () => started && !spaceOn && !climb && !(nav && nav.out) && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
+    me: () => ({ x: player.x, gy: heightAt(player.x, player.z) + jumpY, z: player.z, yaw, pitch, st: stance }), selfView: () => selfView, moving: () => lastPace > 0 ? 1 : 0,
+    steady: () => climb ? 0.55 : [1, 0.65, 0.35][stance],   // how much the sights wander: braced up a tree, crouched, lying down
+    free: () => started && !spaceOn && !(nav && nav.out) && !walling.busy && !planter.open && !planter.armed && !(drawer && drawer.isOpen) && !(help && help.isOpen),
     onDown: (id, by) => { if (multi) setHint(by === (multi.myId || '') ? `you got ${multi.nameOf(id)}` : `${multi.nameOf(id)} is down`, 3000); } });
   addEventListener('keydown', e => { if (!started || e.metaKey || e.ctrlKey || e.altKey) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
     if (nav && !arms.down && !walling.busy && !planter.open && ['KeyN', 'KeyK', 'KeyL', 'KeyR', 'KeyQ', 'Enter', 'Escape'].includes(e.code) && nav.key(e.code, true)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
@@ -1805,7 +1838,7 @@ function update(dt, t) {
   if (pd.on !== padAim) { padAim = pd.on; if (padAim) $('aim').classList.add('on'); }   // a controller has no pointer to lock: the aim point shows once it is in use
   // keys walk, and run with Shift; a stick or a thumb goes at whatever pace it is pushed to
   const ml = Math.hypot(mx, mz); if (ml > 0) { mx /= ml; mz /= ml; }
-  const speed = byKey ? ((keys.has('ShiftLeft') || keys.has('ShiftRight')) ? RUN : WALK) : paceFor(Math.min(1, ml));
+  const speed = (byKey ? ((keys.has('ShiftLeft') || keys.has('ShiftRight')) ? STANCE_RUN[stance] : STANCE_SPEED[stance]) : paceFor(Math.min(1, ml)) * (stance ? STANCE_SPEED[stance] / WALK : 1));
   const move = f.clone().multiplyScalar(mz * speed).addScaledVector(r, mx * speed); lastPace = ml > 0 ? speed : 0;
   if (climb) stepClimb(dt, mx, mz, speed); else seekClimb(dt, f, mz);
 
@@ -1877,11 +1910,14 @@ function update(dt, t) {
   bobPhase += dt * moving * speed * 2.2;
   // with a body, the eye bobs with its footfalls; without one, the old slow sway
   if (body && body.setClimb) body.setClimb(climb ? { x: climb.T.x, z: climb.T.z, r: climb.T.r(climb.h + 1) } : null);
-  const bob = body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving;
-  player.y = groundY + 1.65; camera.position.set(player.x, groundY + 1.65 + bob, player.z);
+  if (stance && (climb || (arms && arms.down))) setStance(0, true);
+  { const k = Math.min(1, dt * 7); stanceC += ((stance === 1 ? 1 : 0) - stanceC) * k; stanceP += ((stance === 2 ? 1 : 0) - stanceP) * k; if (stanceC < 1e-3) stanceC = 0; if (stanceP < 1e-3) stanceP = 0; }
+  const eyeH = eyeFor(stanceC, stanceP);
+  const bob = (body ? body.update(dt, { x: player.x, z: player.z, gy: groundY, yaw, pitch, t }) : Math.sin(bobPhase) * 0.035 * moving) * (1 - 0.7 * stanceP);
+  player.y = groundY + eyeH; camera.position.set(player.x, groundY + eyeH + bob, player.z);
   camera.rotation.set(pitch, yaw, 0);
   camera.fov = (70 + 7 * near) * (arms ? arms.zoom : 1) * (nav ? nav.zoom : 1);
-  stepSpaceView(dt, groundY + 1.65 + bob);
+  stepSpaceView(dt, groundY + eyeH + bob);
   // shot down: the view steps out of you and slowly circles where you lie, until you get up
   if (arms && arms.down && !spaceOn) { if (!deathCam) { deathCam = { on: selfView, ang: selfAng, dist: selfDist }; selfView = true; selfAng = 2.2; selfDist = 3.8; } selfAng += dt * 0.22; }
   else if (deathCam) { selfView = deathCam.on; selfAng = deathCam.ang; selfDist = deathCam.dist; deathCam = null; }
@@ -2106,14 +2142,14 @@ function stepWalling(dt, t) {
   if (sphere) sphere.update(dt);
   { const near = started && !spaceOn && !walling.busy && Math.hypot(player.x - junk.heap.x, player.z - junk.heap.z) < 16;   // at the wormhole's clearing: a way to the Shred Hole
     if (near !== shredNear) { shredNear = near; shredB.style.opacity = near ? 1 : 0; shredB.style.pointerEvents = near ? 'auto' : 'none'; if (near && !shredB.dataset.told) { shredB.dataset.told = 1; setHint('the junk comes from the Shred Hole: shred something there and it falls through this wormhole', 6000); } } }
-  walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && document.pointerLockElement === canvas && !(drawer && drawer.isOpen);
+  walling.idle = started && !spaceOn && !planter.armed && !planter.open && !walling.busy && (document.pointerLockElement === canvas || window.__forceIdle) && !(drawer && drawer.isOpen);   // (__forceIdle: headless tests have no pointer lock)
   if (body && body.enabled) { const a = walling.busy ? walling.aim(_aimW) : null; body.setWork(walling.busy, a); body.palm(walling.hand); body.setGesture(walling.busy ? walling.gesture : null); body.point(planter.armed && !planter.open ? 1 : 0);
     body.tune.paneX = Math.max(0.02, Math.min(0.2, 0.42 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect - 0.12)); }   // keep the console inside a narrow window
   else walling.hand.set(0.22, -0.3, -0.45).applyMatrix4(camera.matrixWorld);
   walling.update(dt, t, player.x, player.z);
-  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: nav && nav.out ? 'sextant' : arms ? arms.held : '', down: arms ? arms.down : false, climb: climb ? [climb.T.x, climb.T.z, climb.T.r(climb.h + 1)] : null, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null });
+  if (multi) multi.update(dt, t, { x: player.x, z: player.z, gy: heightAt(player.x, player.z) + jumpY, yaw, pitch, arm: nav && nav.out ? 'sextant' : arms ? arms.held : '', down: arms ? arms.down : false, climb: climb ? [climb.T.x, climb.T.z, climb.T.r(climb.h + 1)] : null, work: walling.busy, aim: walling.busy ? walling.aim(_mpAim) : null, gesture: walling.busy ? walling.gesture : null, point: planter.armed && !planter.open ? 1 : 0, hold: walling.net.holdState(), emote: body ? body.emoting : null, st: stance });
   { const ih = walling.idleHover, key = ih ? (ih.name || ih.cls) : '';
-    if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (building starts here)${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
+    if (key !== idleKey) { idleKey = key; if (ih) setHint(`${ih.name ? ih.name.toLowerCase() + ' · ' + (ih.kg < 10 ? ih.kg.toFixed(1) : ih.kg.toFixed(0)) + ' kg' : 'fieldstone · ' + ih.cls} · click to lift it (${ih.site != null ? (ih.free ? 'your free build here opens again' : `stint ${ih.site + 1} opens again as you left it`) : 'building starts here'})${ih.junk ? ' · X vaporizes it' : ''}`, 5000); } }
   if (!walling.busy && t - wallPromptAt > 0.5) { wallPromptAt = t;
     const st = started ? walling.nearest(player.x, player.z) : null, id = st ? st.id : -1;
     if (id !== wallPrompt) { wallPrompt = id; if (st) { const k = isTouch ? 'build ▦' : 'B'; setHint(st.state === 'paused' ? `${k} · take up stint ${id + 1} again` : `${k} · build this length of wall (stint ${id + 1} of ${walling.stints.length})`, 7000); } } }
@@ -2196,4 +2232,4 @@ window.__umbra = { // debug handle
   collapse(i, hold) { const v = voidSlots[i]; if (!v) return false; collapseVoid(v); if (hold != null) v.evap.hold = hold; return true; }, reformQ,
   setHour(h) { manualHour = h; timeMode = 'manual'; refreshTimeUI(); }, voidSlots, player, body, S, WX, G, GPU, garden, renderer, doy: d => jumpToDoy(d),
   weather(o) { S.weather = 'set'; Object.assign(S, o); const T = weatherTarget(); Object.assign(WX, T); snowAcc = S.snowGround; wetAcc = o.wet != null ? o.wet : (S.rain > 0 ? 1 : 0); },   // headless testing: set the weather at once
-  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get nav() { return nav; }, get film() { return film; }, get sphere() { return sphere; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };
+  get started() { return started; }, set view(v) { yaw = v[0]; pitch = v[1]; }, get arms() { return arms; }, get nav() { return nav; }, get film() { return film; }, get sphere() { return sphere; }, get worlds() { return worlds; }, gardenWorld, get climb() { return climb && { h: climb.h, top: climb.T.top, th: climb.th }; }, get jumpY() { return jumpY; }, get stance() { return stance; }, set stance(n) { setStance(n, true); }, forceStart() { started = true; spaceOn = false; spaceT = 0; titleK = 0; $('aim').style.visibility = ''; bSpace.textContent = 'space view'; document.body.classList.add('ready'); $('intro').classList.add('gone'); } };

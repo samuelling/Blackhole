@@ -211,6 +211,7 @@ export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, li
 
   // stones: along the water's edge, in the stream on the steep run, round the pond
   const mul = seed => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const loose = [];   // the ones a suit can lift: walling.js lays these as fieldstone you can take for building; only the boulders stay here
   { const rnd = mul(77123), R = [];
     const add = (x, z, r, sink) => { if (B.onDeck(x, z)) return; R.push([x, ground(x, z) + r * (0.28 - sink), z, r, rnd(), rnd(), rnd(), rnd()]); };
     for (let i = first + 2; i < B.n - 1; i++) { const nx = -B.TZ[i], nz = B.TX[i], steep = i > B.quiet + 8, inGarden = Math.abs(B.X[i]) < 27.4;
@@ -220,10 +221,11 @@ export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, li
     const rg = new THREE.IcosahedronGeometry(1, 2), rp = rg.attributes.position;
     for (let i = 0; i < rp.count; i++) { const x = rp.getX(i), y = rp.getY(i), z = rp.getZ(i), k = 1 + 0.16 * Math.sin(x * 2.7 + y * 1.3) * Math.sin(z * 3.1 - y * 2.2) + 0.09 * Math.sin(x * 5.3 - z * 4.1 + y * 6.0); rp.setXYZ(i, x * k, y * k, z * k); }
     rg.computeVertexNormals();
-    const rocks = new THREE.InstancedMesh(rg, P.std({ color: 0xffffff, normalMap: gravel.nor, roughness: 0.94 }, { key: 'brookrock' }), R.length), M = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), c = new THREE.Color();
+    for (let i = R.length - 1; i >= 0; i--) if (R[i][3] <= 0.34) loose.unshift(R.splice(i, 1)[0]);
+    const rocks = new THREE.InstancedMesh(rg, P.std({ color: 0xffffff, normalMap: gravel.nor, roughness: 0.94 }, { key: 'brookrock' }), Math.max(1, R.length)), M = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), c = new THREE.Color();
     R.forEach(([x, y, z, r, a, b, d, f], i) => { e.set((a - 0.5) * 0.9, b * 6.283, (d - 0.5) * 0.9); q.setFromEuler(e); M.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(r * (0.85 + 0.5 * a), r * (0.5 + 0.35 * b), r * (0.85 + 0.5 * d))); rocks.setMatrixAt(i, M);
       const g = 0.55 + 0.6 * f; rocks.setColorAt(i, c.setRGB(0.4 * g, 0.39 * g, 0.36 * g)); });   // grey fieldstone, some paler
-    rocks.castShadow = rocks.receiveShadow = true; rocks.frustumCulled = false; group.add(rocks); }
+    rocks.count = R.length; rocks.castShadow = rocks.receiveShadow = true; rocks.frustumCulled = false; group.add(rocks); }
 
   // lily pads on the still side of the pond
   { const rnd = mul(4411), pads = [], out = Math.atan2(B.Z[first] - B.POND.z, B.X[first] - B.POND.x);
@@ -315,7 +317,7 @@ export function createBrookView({ brook: B, U, COMMON, P, gravel, wn, ground, li
     koi.instanceMatrix.needsUpdate = true; A.needsUpdate = true; D.needsUpdate = true;
   }
   update(0.016, 0, 1e6, 1e6);
-  return { group, water, banks, update, kois, setSize(h) { group.userData.mist.material.uniforms.uPx.value = h * 0.9; } };
+  return { group, water, banks, update, kois, loose, setSize(h) { group.userData.mist.material.uniforms.uPx.value = h * 0.9; } };
 }
 
 // Timber footbridges (tools/blender/build_bridge.py): a kit of boards, stringers, sills, posts and rails, laid out here to each crossing's

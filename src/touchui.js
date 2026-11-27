@@ -38,9 +38,9 @@ body.tui #aim.on { width:14px; height:14px; margin:-7px 0 0 -7px; border:1.5px s
 // what each mode's pad holds: [label, what it sends, how it behaves]. 'click' is the tap where you are looking; '+' repeats while held;
 // 'hold' keeps the key down while the finger is; 'shift' is a toggle for finer turns.
 const PADS = {
-  walk: [['jump', 'Space', 'big'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click'], ['gun: pick up / draw', 'KeyQ'], ['sextant', 'KeyN']],
+  walk: [['jump / stand', 'Space', 'big'], ['crouch · hold: lie down', 'KeyC', 'hold'], ['open a void', 'KeyE'], ['vaporize junk', 'KeyX'], ['lift a stone', 'click'], ['gun: pick up / draw', 'KeyQ'], ['sextant', 'KeyN']],
   sextant: [['sight', 'KeyK', 'big'], ['raise / lower', 'KeyL'], ['work the fix', 'KeyR'], ['put away', 'KeyN'], ['jump', 'Space']],
-  armed: [['fire', 'KeyK', 'bighold'], ['aim', 'KeyL', 'hold'], ['reload', 'KeyR'], ['put away', 'KeyQ'], ['jump', 'Space']],
+  armed: [['fire', 'KeyK', 'bighold'], ['aim', 'KeyL', 'hold'], ['reload', 'KeyR'], ['crouch · hold: lie down', 'KeyC', 'hold'], ['put away', 'KeyQ'], ['jump / stand', 'Space']],
   build: [['lift / set', 'click', 'big'], ['turn ⟲', 'KeyQ', 'repeat'], ['turn ⟳', 'KeyE', 'repeat'], ['fine', 'shift', 'toggle'],
     ['tip', 'KeyR'], ['roll', 'KeyV'], ['length in', 'KeyT'], ['on edge', 'KeyC'], ['press', 'Space', 'hold'], ['pass through', 'KeyG', 'hold'],
     ['hearting', 'KeyH'], ['more stone', 'KeyN'], ['glue', 'KeyJ'], ['undo', 'Backspace'], ['finish (twice)', 'Enter'], ['put away', 'KeyP']],

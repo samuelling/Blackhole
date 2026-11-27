@@ -244,12 +244,32 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
       const core = new THREE.Mesh(cg, matOf('newengland', false)); core.castShadow = core.receiveShadow = true; rec.group.add(core);
       queueBuilt(null, rec, 'heap', 'newengland', list); garden.blockRound(hx, hz, R * 0.82);
     });
+    // and the stones along the brook (brook.js leaves only its boulders): fieldstone lying loose at the water's edge and in the stream,
+    // each where the brook had one, as big as it was. Taken like a heap stone, remembered like one.
+    const loose = (garden.brook && garden.brook.loose) || [];
+    if (loose.length) {
+      const hi = HEAPS.length, rng = mulberry(9100 + hi * 131), list = [], meta = [];
+      for (const [x, y, z, r, a, b, d] of loose) {
+        const ci = r >= 0.22 ? 0 : r >= 0.1 ? 1 : 4;
+        _hq.setFromEuler(new THREE.Euler((a - 0.5) * 0.4, b * 6.283, (d - 0.5) * 0.4, 'YXZ'));
+        const gy = y - r * 0.2, py = gy + THICK[ci] * 0.4;
+        list.push([ci, 80000 + list.length, +x.toFixed(3), +py.toFixed(3), +z.toFixed(3), +_hq.x.toFixed(4), +_hq.y.toFixed(4), +_hq.z.toFixed(4), +_hq.w.toFixed(4)]);
+        meta.push([x, py, z, DETAIL.heap[CLS[ci]] ? RAD[ci] * 0.9 : 0]);
+      }
+      const rec = { group: new THREE.Group(), type: 'newengland', list, meta, hi, loose: true, taken: new Set(store.heapTaken[hi] || []) }; root.add(rec.group); heaps.push(rec);
+      queueBuilt(null, rec, 'heap', 'newengland', list);
+    }
   }
   /** The heap stone a world ray hits first within maxT: { hi, idx, t } or null. */
   function pickHeap(o, d, maxT) {
     // walk the ray until it meets the heap's skin (the mound, plus the stones lying on it), then take the stone lying nearest there
     let best = null;
     for (const h of heaps) {
+      if (h.loose) {   // the brook's: each stone on its own, a sphere about where it lies
+        h.meta.forEach(([x, y, z, r], i) => { if (!r || h.taken.has(i)) return; const R2 = (r + 0.06) ** 2, ox = x - o.x, oy = y - o.y, oz = z - o.z, tc = ox * d.x + oy * d.y + oz * d.z;
+          if (tc < 0 || tc > maxT) return; const d2 = ox * ox + oy * oy + oz * oz - tc * tc; if (d2 > R2) return; const t = tc - Math.sqrt(R2 - d2); if (!best || t < best.t) best = { hi: h.hi, idx: i, t }; });
+        continue;
+      }
       const [hx, hz, R] = HEAPS[h.hi], g = heightAt(hx, hz); let t = 0.3, p = null;
       for (; t < maxT; t += 0.06) { const x = o.x + d.x * t, z = o.z + d.z * t; if ((x - hx) ** 2 + (z - hz) ** 2 > (R * 1.4) ** 2) continue; const y = o.y + d.y * t; if (y < g + moundAt(h.hi, x, z) + 0.12) { p = [x, y, z]; break; } }
       if (!p || (best && best.t < t)) continue;
@@ -499,9 +519,12 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   function look(st, hot) { st.mesh.material = st.type === 'junk' ? (hot ? junkHot : junk.material) : hot ? hotMat(st.type || A.type) : matOf(st.type || A.type, false); }
   // ---------------------------------------------------------------- stone in the heaps and the junk: pointed at, lifted out
   const ghost = new THREE.Mesh(new THREE.BufferGeometry(), junkHot); ghost.visible = false; ghost.renderOrder = 4; scene.add(ghost);
-  const keyOf = h => h ? (h.ext === 'heap' ? 'h' + h.hi + ':' + h.idx : h.ext === 'junk' ? 'j' + h.id : h) : null;
+  const keyOf = h => h ? (h.ext === 'heap' ? 'h' + h.hi + ':' + h.idx : h.ext === 'junk' ? 'j' + h.id : h.ext === 'built' ? 'b' + h.sid + ':' + h.idx : h) : null;
   function showGhost(h) {
     ghost.geometry.dispose(); ghost.visible = false; if (!h) return;
+    if (h.ext === 'built') { const rec = built.get(h.sid), e = rec && rec.list[h.idx], g = e && geomOf(e, rec.type, 2); if (!g) { ghost.geometry = new THREE.BufferGeometry(); return; }
+      ghost.geometry = e[9] && e[9].j ? g : g.clone(); ghost.material = e[9] && e[9].j ? junkHot : hotMat(srcType(e, rec.type)); rec.group.updateMatrixWorld();
+      ghost.position.set(e[2], e[3], e[4]).applyMatrix4(rec.group.matrixWorld); ghost.quaternion.set(e[5], e[6], e[7], e[8]).premultiply(rec.group.getWorldQuaternion(new THREE.Quaternion())); ghost.scale.setScalar(1.02); ghost.visible = true; return; }
     if (h.ext === 'heap') { const e = heaps[h.hi].list[h.idx]; ghost.geometry = stoneAt('newengland', CLS[e[0]], e[1], DETAIL.heap[CLS[e[0]]] || 1).geometry; ghost.material = hotMat('newengland'); ghost.position.set(e[2], e[3], e[4]); ghost.quaternion.set(e[5], e[6], e[7], e[8]); }
     else { const d = junk && junk.stoneData(h.id), e = junk && junk.where(h.id); if (!d || !e) { ghost.geometry = new THREE.BufferGeometry(); return; } ghost.geometry = d.geometry; ghost.material = junkHot; ghost.position.set(e[1], e[2], e[3]); ghost.quaternion.set(e[4], e[5], e[6], e[7]); }
     ghost.scale.setScalar(1.02); ghost.visible = true;
@@ -514,10 +537,21 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
     if (hover && !hover.ext) look(hover, true); else if (hover) showGhost(hover);
   }
   const _wo = new THREE.Vector3(), _wd = new THREE.Vector3();
-  function pickExt(maxT) {   // the nearest heap or junk stone along your line of sight
+  function pickExt(maxT) {   // the nearest heap or junk stone along your line of sight (and, with nothing open, a stone of a site put away)
     camera.getWorldPosition(_wo); camera.getWorldDirection(_wd);
-    const a = pickHeap(_wo, _wd, maxT), b = junk ? junk.pick(_wo, _wd, a ? a.t : maxT) : null;
-    return b ? { ext: 'junk', id: b.id, t: b.t } : a ? { ext: 'heap', hi: a.hi, idx: a.idx, t: a.t } : null;
+    const a = pickHeap(_wo, _wd, maxT), b = junk ? junk.pick(_wo, _wd, a ? a.t : maxT) : null, c = A ? null : pickBuilt(_wo, _wd, b ? b.t : a ? a.t : maxT);
+    return c ? c : b ? { ext: 'junk', id: b.id, t: b.t } : a ? { ext: 'heap', hi: a.hi, idx: a.idx, t: a.t } : null;
+  }
+  const BRAD = [0.3, 0.18, 0.32, 0.17, 0.05, 0.06], _bp = new THREE.Vector3();
+  function pickBuilt(o, d, maxT) {
+    let best = null;
+    for (const rec of built.values()) {
+      const s = rec.s; if (!s || s.state !== 'paused' || rec.dead) continue; rec.group.updateMatrixWorld();
+      rec.list.forEach((e, i) => { const r = e[9] && e[9].j ? 0.25 : BRAD[e[0]] || 0.15; if (r < 0.1) return;   // (not the hearting and the pins: a big stone, or nothing)
+        _bp.set(e[2], e[3], e[4]).applyMatrix4(rec.group.matrixWorld); const ox = _bp.x - o.x, oy = _bp.y - o.y, oz = _bp.z - o.z, tc = ox * d.x + oy * d.y + oz * d.z; if (tc < 0 || tc > maxT) return;
+        const d2 = ox * ox + oy * oy + oz * oz - tc * tc, R2 = (r * 0.85) ** 2; if (d2 > R2) return; const t = tc - Math.sqrt(R2 - d2); if (!best || t < best.t) best = { ext: 'built', sid: s.id, idx: i, t, type: rec.type }; });
+    }
+    return best;
   }
   function pluck(x) {
     let pos, q, src, cls = 'builder', seed = 0;
@@ -533,6 +567,12 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   async function pluckIdle(px, pz, yaw) {
     const x = idleHover; if (!x || A) return false;
     idleHover = null; showGhost(null);
+    if (x.ext === 'built') {   // a stone of a site put away: that site opens again as it was left, and the stone comes up
+      const s = stints.find(q => q.id === x.sid) || freeSites.find(q => q.id === x.sid); if (!s || !(await start(s)) || !A) return true;
+      while (A.queue.length) { const [cls, seed, qx, qz, qyaw, oo] = A.queue.shift(); addStone(cls, seed, qx, qz, qyaw, oo); }
+      const st = A.stones.find(q => q.gi === x.idx); if (st) { setHover(null); pick(st); }
+      return true;
+    }
     if (!(await begin(px, pz, yaw)) || !A) return true;
     const st = pluck(x); if (st) { setHover(null); pick(st); }
     return true;
@@ -952,7 +992,7 @@ export function createWalling({ scene, camera, U, patchFrag, garden, junk = null
   }
   /** Where the suit is reaching, world space (the stone held or pointed at), or null. */
   function aim(out) { if (!A) return null; if (!held && hover && hover.ext) return out.copy(ghost.position); const tgt = held || hover; if (!tgt) return null; return out.copy(tgt.mesh.position).applyMatrix4(A.group.matrixWorld); }
-  function hoverInfo(h) { if (h.ext === 'heap') { const e = heaps[h.hi].list[h.idx]; return { cls: CLS[e[0]], kg: null, heap: true }; } if (h.ext === 'junk') { const d = junk.stoneData(h.id); return d ? { cls: d.cls, kg: d.massKg, name: d.name, junk: h.id } : null; } return { cls: h.cls, kg: h.mass, name: h.name || null }; }
+  function hoverInfo(h) { if (h.ext === 'built') { const rec = built.get(h.sid), e = rec && rec.list[h.idx]; if (e && e[9] && e[9].j) { const d = junk.stoneData(e[9].j); if (d) return { cls: d.cls, kg: d.massKg, name: d.name, site: h.sid }; } return { cls: e ? CLS[e[0]] : 'builder', kg: null, site: h.sid, free: rec && rec.s.free }; } if (h.ext === 'heap') { const e = heaps[h.hi].list[h.idx]; return { cls: CLS[e[0]], kg: null, heap: true }; } if (h.ext === 'junk') { const d = junk.stoneData(h.id); return d ? { cls: d.cls, kg: d.massKg, name: d.name, junk: h.id } : null; } return { cls: h.cls, kg: h.mass, name: h.name || null }; }
 
   // ---------------------------------------------------------------- input (main.js hands these on while the pointer is locked)
   function onDown(button) {

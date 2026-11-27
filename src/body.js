@@ -222,9 +222,27 @@ export function createBody({ model, U, COMMON }) {
   // the trunk's side and pulls down as the other goes up; the feet push against it lower down, knees out, soles flat to the bark,
   // the same rhythm half a beat behind; the body leans in, head tipped back to look up. The rhythm is driven by how far you've
   // climbed (a cycle every 0.55 m), so going down plays it backwards and hanging still holds a grip, breathing.
-  const clim = { on: false, x: 0, z: 0, r: 0.2, w: 0, ph: 0, lastY: null }, cQ = new THREE.Quaternion(), cN = v3(), cP = v3(), cH = v3(), qFoot = new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), -1.05);
+  const clim = { on: false, x: 0, z: 0, r: 0.2, w: 0, ph: 0, lastY: null, perch: 0 }, cQ = new THREE.Quaternion(), cN = v3(), cP = v3(), cH = v3(), qFoot = new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), -1.05);
+  // Up a tree with a gun drawn: a sniper's perch. Your back to the trunk, sitting in the crook of a branch, facing where you look,
+  // thighs out along it, shins hanging, both hands on the gun (solveGun, after).
+  function perchPose(s, w) {
+    w = w * w * (3 - 2 * w); const pel = B.pelvis, tor = B.torso;
+    root.position.y += 0.4 * w;                                                                    // the seat is the branch: the body sits on it
+    pel.position.copy(rest.pelvis); pel.position.y -= 0.4 * w; pel.position.z -= 0.05 * w; pel.quaternion.slerp(sQ.setFromAxisAngle(XA, -0.12), w); qP.copy(pel.quaternion);
+    tor.position.copy(rest.torso); tor.quaternion.slerp(sQ.setFromAxisAngle(XA, 0.08), w);
+    qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+    for (const [sd, sx] of [['L', 1], ['R', -1]]) {
+      H.copy(hipRest[sd]).applyQuaternion(qP).add(pel.position);
+      A.set(sx * 0.2, H.y - 0.45, H.z + L1 * 0.9); pole.set(sx * 0.2, 0.4, 1); q.setFromEuler(eul.set(0.35, sx * 0.15, 0));
+      const tq = B['thigh_' + sd].quaternion.clone(), sq = B['shin_' + sd].quaternion.clone(), fq = B['foot_' + sd].quaternion.clone();
+      solveLeg(sd);
+      if (w < 0.999) { B['thigh_' + sd].quaternion.copy(tq.slerp(B['thigh_' + sd].quaternion, w)); B['shin_' + sd].quaternion.copy(sq.slerp(B['shin_' + sd].quaternion, w)); B['foot_' + sd].quaternion.copy(fq.slerp(B['foot_' + sd].quaternion, w)); }
+    }
+  }
   function climbPose(dt, s, gunW = 0) {
-    clim.w += ((clim.on ? 1 : 0) - clim.w) * Math.min(1, dt * 7); const w = clim.w * clim.w * (3 - 2 * clim.w);
+    clim.w += ((clim.on ? 1 : 0) - clim.w) * Math.min(1, dt * 7); clim.perch += ((clim.on && gunW > 0.5 ? 1 : 0) - clim.perch) * Math.min(1, dt * 5);
+    if (clim.perch > 0.5) { perchPose(s, clim.w * gunW); return; }
+    const w = clim.w * clim.w * (3 - 2 * clim.w);
     const gy = s.gy || 0; if (clim.lastY == null) clim.lastY = gy; const dy = gy - clim.lastY; clim.lastY = gy;
     if (Math.abs(dy) < 0.5) clim.ph += dy / 0.55 * Math.PI * 2;
     // face the trunk (root about your own feet: in first person the camera stays where it is)
@@ -265,6 +283,67 @@ export function createBody({ model, U, COMMON }) {
       if (w < 0.999) { B['thigh_' + sd].quaternion.copy(tq.slerp(B['thigh_' + sd].quaternion, w)); B['shin_' + sd].quaternion.copy(sq.slerp(B['shin_' + sd].quaternion, w)); B['foot_' + sd].quaternion.copy(fq.slerp(B['foot_' + sd].quaternion, w)); }
     }
   }
+  // Crouched and lying down (main.js: C). Both are laid over the pose the walk has made, after it has made it.
+  // Crouched: the hips sink and sit back, the knees take it (the feet stay where the stride put them, so you still walk), the spine
+  // leans in over the thighs and the head comes up to keep looking ahead. Lying: the whole body goes down flat on its front, head where
+  // your eyes are and feet behind; crawling, a knee draws up and out to the side as the opposite elbow reaches ahead (the commando's
+  // crawl), driven by how far you've moved, so standing still holds it. Holding a gun, the arms are the gun's (solveGun, after).
+  const sta = { c: 0, p: 0, want: 0, ph: 0, px: null, pz: null }, sQ = new THREE.Quaternion(), sQ2 = new THREE.Quaternion(), sW = v3(), sR = new THREE.Quaternion();
+  /** Eye height above the ground for a stance's weights (main.js keeps the camera there; the gun is held from it). */
+  const eyeFor = (c, p) => EYE.y - 0.56 * c - 1.27 * p;
+  function stanceStep(dt) {
+    const tc = sta.want === 1 ? 1 : 0, tp = sta.want === 2 ? 1 : 0, k = Math.min(1, dt * 7);
+    sta.c += (tc - sta.c) * k; sta.p += (tp - sta.p) * k; if (sta.c < 1e-3) sta.c = 0; if (sta.p < 1e-3) sta.p = 0;
+  }
+  function crouchPose(s, gunW) {
+    const w = sta.c * sta.c * (3 - 2 * sta.c); if (w < 0.002) return;
+    root.updateMatrixWorld(true); sR.copy(root.quaternion).invert();
+    const feet = {}, fq = {};
+    for (const sd of ['L', 'R']) { const f = B['foot_' + sd]; f.getWorldPosition(sW); feet[sd] = root.worldToLocal(sW.clone()); f.getWorldQuaternion(sQ); fq[sd] = sR.clone().multiply(sQ); }
+    const pel = B.pelvis, tor = B.torso;
+    pel.position.y -= 0.43 * w; pel.position.z -= 0.1 * w;                                          // down, and back over the heels
+    pel.quaternion.multiply(sQ.setFromAxisAngle(XA, 0.42 * w)); qP.copy(pel.quaternion);           // folding at the hips
+    tor.quaternion.multiply(sQ.setFromAxisAngle(XA, (gunW > 0 ? -0.2 : 0.05) * w));                 // (held up straighter behind a gun)
+    B.head.quaternion.multiply(sQ.setFromAxisAngle(XA, -0.45 * w));                                 // still looking ahead
+    for (const sd of ['L', 'R']) {
+      const sx = sd === 'L' ? 1 : -1; H.copy(hipRest[sd]).applyQuaternion(qP).add(pel.position);
+      A.copy(feet[sd]); A.x += sx * 0.05 * w; A.z += 0.04 * w; A.y = Math.max(A.y, ANKLE);              // the feet a little wider
+      pole.set(sx * 0.35, 0.2, 1); q.copy(fq[sd]); solveLeg(sd);
+    }
+  }
+  function pronePose(dt, s, gunW) {
+    const w = sta.p * sta.p * (3 - 2 * sta.p); if (w < 0.002) return;
+    // how far you have crawled drives the crawl
+    if (sta.px != null) { const d = Math.hypot(s.x - sta.px, s.z - sta.pz); if (d < 0.5) sta.ph += d / 0.55 * Math.PI; } sta.px = s.x; sta.pz = s.z;
+    const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw), lie = Math.PI / 2 * w;
+    // down on your front: the body turned about its feet till it lies along the ground, slid back so the head is where you are
+    root.position.lerp(sW.set(s.x - fx * 1.58, (s.gy || 0) + 0.16, s.z - fz * 1.58), w);
+    root.rotation.set(0, s.yaw + Math.PI, 0); root.quaternion.multiply(sQ.setFromAxisAngle(XA, lie));
+    const pel = B.pelvis, tor = B.torso, sw = Math.sin(sta.ph), still = 0.02 * Math.sin(nowT * 1.2);
+    pel.position.lerp(rest.pelvis, w); pel.quaternion.slerp(sQ.setFromAxisAngle(UP, 0.12 * sw), w); qP.copy(pel.quaternion);   // the hips roll a little with the drawn-up knee
+    tor.position.lerp(rest.torso, w); tor.quaternion.slerp(sQ.setFromAxisAngle(UP, -0.1 * sw), w);
+    B.head.quaternion.slerp(sQ.setFromAxisAngle(XA, -1.15 - 0.35 * (s.pitch || 0)), w);          // chin up, looking along the ground
+    qTW.copy(qP).multiply(tor.quaternion); qI.copy(qTW).invert();
+    // the legs out behind, toes in the ground; crawling, one knee draws up and out along the ground
+    for (const [sd, sx, off] of [['L', 1, 0], ['R', -1, Math.PI]]) {
+      const draw = Math.max(0, Math.sin(sta.ph + off)) * Math.min(1, Math.abs(sw) * 3 + 0.0);
+      H.copy(hipRest[sd]).applyQuaternion(qP).add(pel.position);
+      A.set(sx * (0.13 + 0.32 * draw), ANKLE + 0.02 + 0.42 * draw, 0.06 - 0.04 * draw);
+      pole.set(sx * (0.3 + 0.9 * draw), 0, 1); q.setFromEuler(eul.set(0.5 * (1 - draw), sx * 0.1, 0));
+      const tq = B['thigh_' + sd].quaternion.clone(), sq = B['shin_' + sd].quaternion.clone(), fq = B['foot_' + sd].quaternion.clone();
+      solveLeg(sd);
+      if (w < 0.999) { B['thigh_' + sd].quaternion.copy(tq.slerp(B['thigh_' + sd].quaternion, w)); B['shin_' + sd].quaternion.copy(sq.slerp(B['shin_' + sd].quaternion, w)); B['foot_' + sd].quaternion.copy(fq.slerp(B['foot_' + sd].quaternion, w)); }
+    }
+    // the arms (with nothing in them): forearms flat on the ground ahead, elbows out, the opposite elbow to the knee reaching
+    const sh = rest.pelvis.y + rest.torso.y + rest.armU_R.y;
+    for (const [sd, sx, off] of [['R', -1, 0], ['L', 1, Math.PI]]) {
+      const reach = 0.5 + 0.5 * Math.sin(sta.ph + off + Math.PI);
+      palm.set(sx * (0.17 + 0.04 * reach), sh + 0.34 + 0.16 * reach + still, 0.13);   // out past the helmet and down on the ground, under your eyes (not across them)
+      xh.set(0, 0, sd === 'R' ? 1 : -1); yh.set(0, -1, 0); zh.crossVectors(xh, yh);                 // palm down, fingers ahead
+      B['armU_' + sd].position.copy(rest['armU_' + sd]);
+      armTo(sd, palm, pole.set(sx * 1, -0.2, 0.7), w * (1 - gunW));
+    }
+  }
   const axisFor = (dx, dz, out) => { const l = Math.hypot(dx, dz) || 1; return out.set(dz / l, 0, -dx / l); };   // tipping about this carries the top along (dx, dz)
   let gunSpec = null, gunOk = false; const gunM = new THREE.Matrix4(), gunShort = { L: 0, R: 0 };
   const gP = v3(), gQ = new THREE.Quaternion(), eQ = new THREE.Quaternion(), eP = v3(), rQi = new THREE.Quaternion(), lQ = new THREE.Quaternion(), lP = v3(), gF = v3(), gU = v3(), gR = v3(),
@@ -287,17 +366,17 @@ export function createBody({ model, U, COMMON }) {
   function solveGun(w, s, bobNow, climbK = 0) {
     const G = gunSpec;
     // the eye in the world (exactly where the camera is put), and the gun from it
-    eQ.setFromEuler(eE.set(s.pitch || 0, s.yaw || 0, 0, 'YXZ')); eP.set(s.x, (s.gy || 0) + EYE.y + bobNow, s.z);
+    eQ.setFromEuler(eE.set(s.pitch || 0, s.yaw || 0, 0, 'YXZ')); eP.set(s.x, (s.gy || 0) + eyeFor(sta.c, sta.p) + bobNow * (1 - sta.p) + (s.lift || 0), s.z);
     gQ.setFromEuler(eE.set(G.rot.x, G.rot.y, G.rot.z, 'XYZ')).premultiply(eQ); gP.copy(G.off).applyQuaternion(eQ).add(eP);
     gunM.compose(gP, gQ, ONE); gunOk = true;
     // the same in the body's own frame (as it finally stands this frame)
-    rQi.setFromAxisAngle(UPY, -root.rotation.y); lP.copy(gP).sub(root.position).applyQuaternion(rQi); lQ.copy(rQi).multiply(gQ);
+    rQi.copy(root.quaternion).invert(); lP.copy(gP).sub(root.position).applyQuaternion(rQi); lQ.copy(rQi).multiply(gQ);   // (the body's own frame, lying down included)
     gR.set(1, 0, 0).applyQuaternion(lQ); gU.set(0, 1, 0).applyQuaternion(lQ); gF.set(0, 0, -1).applyQuaternion(lQ);
     const onGun = (v, out) => out.copy(v).applyQuaternion(lQ).add(lP);
     const onEye = (v, out) => out.copy(v).applyQuaternion(eQ).add(eP).sub(root.position).applyQuaternion(rQi);
     // bladed: the torso turns a little to the right, the head back the other way; the left shoulder comes forward
     // a gun held is held steady: the spine comes upright out of whatever the idle was doing (a slouch, a look at the feet)
-    const tor = B.torso, wb = w * (1 - climbK) * (G.oneHand ? 0.4 : 1), tw = 0.42 * wb; qP.copy(B.pelvis.quaternion); qTW.copy(qP).multiply(tor.quaternion);   // (on a trunk the climb has set the spine)
+    const tor = B.torso, wb = w * (1 - climbK) * (G.oneHand ? 0.4 : 1) * (1 - 0.6 * sta.p), tw = 0.42 * wb; qP.copy(B.pelvis.quaternion); qTW.copy(qP).multiply(tor.quaternion);   // (on a trunk the climb has set the spine)
     if (wb > 0.001) {
       ptmp.set(0, 1, 0).applyQuaternion(qTW); qX.setFromUnitVectors(ptmp, UP); qH.identity().slerp(qX, 0.85 * wb); qTW.premultiply(qH); tor.quaternion.copy(qP).invert().multiply(qTW);
       // bladed into it: the torso turned a little to the right (the head turned back), the left shoulder forward
@@ -592,8 +671,10 @@ export function createBody({ model, U, COMMON }) {
     hp.applyAxisAngle(UPY, root.rotation.y); root.position.x -= hp.x; root.position.z -= hp.z;
     // up a tree with something in your hand (a sextant): the climb first (one hand stays on the bark), then the hold
     const gunNow = gunSpec && armed > 0.002 && work < 0.98, gunW = gunNow ? armed * armed * (3 - 2 * armed) * (1 - work) : 0;
-    if (clim.on || clim.w > 0.002) climbPose(dt, s, gunW); else clim.w = 0;
-    if (gunNow) solveGun(gunW, s, bob, clim.w); else gunOk = false;
+    stanceStep(dt); if (clim.on) { sta.c = sta.p = 0; }
+    crouchPose(s, gunW); pronePose(dt, s, gunW);
+    if (clim.on || clim.w > 0.002) climbPose(dt, s, gunW); else { clim.w = 0; clim.perch = 0; }
+    if (gunNow) solveGun(gunW, s, bob, clim.perch > 0.5 ? 0 : clim.w); else gunOk = false;
     tipOver(dt);
     return bob;
   }
@@ -640,6 +721,8 @@ export function createBody({ model, U, COMMON }) {
     /** Hit: flinch away along the round's way (dx, dz in the world), harder for a heavier round (k ~ 1). */
     react(dx, dz, k = 1) { axisFor(dx, dz, tip.ax); tip.v += 2.4 * Math.max(0.2, Math.min(2, k)); },
     /** Down (shot down) or up again; falling the round's way (dx, dz). */
+    /** 0 standing, 1 crouched, 2 lying down (crawling). */
+    setStance(n) { sta.want = n === 1 || n === 2 ? n : 0; }, get stance() { return { c: sta.c, p: sta.p }; }, eyeHeight: () => eyeFor(sta.c, sta.p),
     setDown(on, dx = 0, dz = 1) { if (on && !tip.down) { axisFor(dx, dz, tip.fax); tip.th = 0.02; tip.om = 0.4; } tip.down = !!on; },
     get isDown() { return tip.down; },
     /** Where the held gun is this frame (world): false if it isn't held. */
